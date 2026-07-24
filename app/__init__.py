@@ -1,0 +1,1 @@
+"""TikTok Shop operations application."""
