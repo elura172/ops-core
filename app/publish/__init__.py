@@ -1,0 +1,1 @@
+"""Approval-gated publishing adapters."""
