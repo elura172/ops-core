@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from typing import Iterable
+from datetime import datetime
 
 from app.domain.orders import Order, OrderStatus
 
@@ -37,7 +37,11 @@ class OrderStore:
         return True
 
     def active(self) -> list[Order]:
-        return [o for o in self.orders.values() if o.status not in {OrderStatus.DELIVERED, OrderStatus.CANCELLED}]
+        return [
+            o
+            for o in self.orders.values()
+            if o.status not in {OrderStatus.DELIVERED, OrderStatus.CANCELLED}
+        ]
 
 
 def reconcile(local: Iterable[Order], remote: Iterable[tuple[str, OrderStatus]]) -> list[str]:

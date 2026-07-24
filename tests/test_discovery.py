@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -8,7 +8,18 @@ from app.discovery.sources import StaticTrendSource
 
 
 def trend(candidate_id, *, likes=5000, comments=400, shares=200, views=100000, market="GB"):
-    return TrendCandidate(candidate_id, "licensed-test", market, datetime.now(timezone.utc), "product-ref", "https://example.test/source", views, likes, comments, shares)
+    return TrendCandidate(
+        candidate_id,
+        "licensed-test",
+        market,
+        datetime.now(UTC),
+        "product-ref",
+        "https://example.test/source",
+        views,
+        likes,
+        comments,
+        shares,
+    )
 
 
 def test_ranker_filters_and_sorts():

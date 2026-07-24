@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import StrEnum
 
 
@@ -19,7 +19,7 @@ class CustomerProfile:
     marketing_consent: ConsentStatus = ConsentStatus.UNKNOWN
     transactional_consent: ConsentStatus = ConsentStatus.UNKNOWN
     suppressed: bool = False
-    updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
     def can_receive(self, channel: str, marketing: bool) -> bool:
         if self.suppressed:
@@ -49,4 +49,3 @@ class MessagePlan:
     template: str
     marketing: bool
     variables: dict[str, str]
-

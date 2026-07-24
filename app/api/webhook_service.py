@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from app.api.webhooks import reduce_order_event, verify_signature
 from app.domain.order_store import OrderEvent
@@ -15,7 +15,8 @@ def handle_order_webhook(body: bytes, signature: str, secret: str, repository) -
         payload = json.loads(body)
         event_id, order_id, status = reduce_order_event(payload)
         from app.domain.orders import OrderStatus
-        event = OrderEvent(event_id, order_id, OrderStatus(status), datetime.now(timezone.utc))
+
+        event = OrderEvent(event_id, order_id, OrderStatus(status), datetime.now(UTC))
         applied = repository.apply(event)
     except (ValueError, KeyError, json.JSONDecodeError) as exc:
         return {"accepted": False, "status": 400, "error": str(exc)}

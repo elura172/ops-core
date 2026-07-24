@@ -1,13 +1,17 @@
-from decimal import Decimal
-
 import pytest
 
-from app.ai.product_copy import LocalCopyProvider, ProductCopy, ProductCopyRequest, validate_generated_copy
-from app.domain.products import ProductSKU
+from app.ai.product_copy import (
+    LocalCopyProvider,
+    ProductCopy,
+    ProductCopyRequest,
+    validate_generated_copy,
+)
 
 
 def test_local_provider_is_grounded_and_deterministic():
-    result = LocalCopyProvider().generate(ProductCopyRequest("Storage Box", ("Glass", "Stackable"), "GB"))
+    result = LocalCopyProvider().generate(
+        ProductCopyRequest("Storage Box", ("Glass", "Stackable"), "GB")
+    )
     assert result.claims == ()
     assert result.source_facts == ("Glass", "Stackable")
 

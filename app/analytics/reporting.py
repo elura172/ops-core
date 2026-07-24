@@ -19,7 +19,9 @@ def revenue_by_campaign(events: Iterable[AnalyticsEvent]) -> dict[str, Decimal]:
     return dict(totals)
 
 
-def deterministic_assignment(experiment_id: str, subject_id: str, variants: tuple[str, ...]) -> ExperimentAssignment:
+def deterministic_assignment(
+    experiment_id: str, subject_id: str, variants: tuple[str, ...]
+) -> ExperimentAssignment:
     if not experiment_id or not subject_id or not variants:
         raise ValueError("experiment ID, subject ID, and variants are required")
     index = sum(ord(char) for char in f"{experiment_id}:{subject_id}") % len(variants)

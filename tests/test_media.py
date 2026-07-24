@@ -5,11 +5,24 @@ from app.media.pipeline import DisabledMediaRenderer, DryRunMediaRenderer
 
 
 def asset(asset_id="a-1", match=True):
-    return MediaAsset(asset_id, "https://assets.example/product.jpg", "image", AssetLicense.SUPPLIER_AUTHORIZED, product_match_confirmed=match)
+    return MediaAsset(
+        asset_id,
+        "https://assets.example/product.jpg",
+        "image",
+        AssetLicense.SUPPLIER_AUTHORIZED,
+        product_match_confirmed=match,
+    )
 
 
 def draft(assets=None):
-    return AdDraft("ad-1", "product-1", tuple(assets or [asset()]), "See the difference", "Stackable glass storage.", "Shop now")
+    return AdDraft(
+        "ad-1",
+        "product-1",
+        tuple(assets or [asset()]),
+        "See the difference",
+        "Stackable glass storage.",
+        "Shop now",
+    )
 
 
 def test_asset_ledger_requires_product_match():

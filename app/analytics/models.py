@@ -29,7 +29,16 @@ class CostLedger:
 
     @property
     def contribution_margin_gbp(self) -> Decimal:
-        return self.revenue_gbp - sum((self.supplier_cost_gbp, self.shipping_cost_gbp, self.platform_fees_gbp, self.ad_spend_gbp, self.refunds_gbp), Decimal("0"))
+        return self.revenue_gbp - sum(
+            (
+                self.supplier_cost_gbp,
+                self.shipping_cost_gbp,
+                self.platform_fees_gbp,
+                self.ad_spend_gbp,
+                self.refunds_gbp,
+            ),
+            Decimal("0"),
+        )
 
     @property
     def margin_ratio(self) -> Decimal:
@@ -41,4 +50,3 @@ class ExperimentAssignment:
     experiment_id: str
     subject_id: str
     variant: str
-

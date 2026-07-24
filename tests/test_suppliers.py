@@ -23,7 +23,9 @@ def test_select_offer_rejects_no_valid_stock_or_sla():
 
 def test_dry_run_fulfillment_keeps_only_address_reference():
     supplier = DryRunSupplier([offer()])
-    result = supplier.create_fulfillment_order(FulfillmentRequest("o-1", "s-1", 1, "vault://address/o-1"))
+    result = supplier.create_fulfillment_order(
+        FulfillmentRequest("o-1", "s-1", 1, "vault://address/o-1")
+    )
     assert result.dry_run
     assert supplier.requests[0].recipient_address_ref == "vault://address/o-1"
 

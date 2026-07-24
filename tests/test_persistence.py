@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from app.api.webhook_service import handle_order_webhook
 from app.db.sqlite import SQLiteOrderRepository
@@ -8,7 +8,7 @@ from app.domain.orders import OrderStatus
 
 def test_sqlite_repository_is_durable(tmp_path):
     path = tmp_path / "orders.db"
-    event = OrderEvent("e-1", "o-1", OrderStatus.PAID, datetime.now(timezone.utc))
+    event = OrderEvent("e-1", "o-1", OrderStatus.PAID, datetime.now(UTC))
     repo = SQLiteOrderRepository(path)
     assert repo.apply(event)
     repo.close()
@@ -18,7 +18,9 @@ def test_sqlite_repository_is_durable(tmp_path):
 
 
 def test_webhook_handler_verifies_and_deduplicates():
-    import hashlib, hmac
+    import hashlib
+    import hmac
+
     body = b'{"event_id":"e-1","order_id":"o-1","status":"PAID"}'
     signature = hmac.new(b"secret", body, hashlib.sha256).hexdigest()
     repo = SQLiteOrderRepository(":memory:")

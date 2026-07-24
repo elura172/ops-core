@@ -6,7 +6,6 @@ from dataclasses import dataclass
 from app.agents.models import AGENT_SPECS, AgentRole, AgentTask, Handoff, TaskStatus
 from app.domain.audit import AuditEvent, AuditLog
 
-
 Handler = Callable[[dict], dict]
 
 
@@ -36,7 +35,15 @@ class AgentOrchestrator:
         task = self.tasks[task_id]
         handler = self.handlers[(task.role, task.operation)]
         task.status = TaskStatus.RUNNING
-        self.audit.record(AuditEvent("agent.task.started", task.role.value, "started", task.task_id, {"correlation_id": task.correlation_id}))
+        self.audit.record(
+            AuditEvent(
+                "agent.task.started",
+                task.role.value,
+                "started",
+                task.task_id,
+                {"correlation_id": task.correlation_id},
+            )
+        )
         try:
             output = handler(task.input)
             if not isinstance(output, dict):
@@ -45,11 +52,27 @@ class AgentOrchestrator:
                 raise ValueError("agent output exceeds configured limit")
             task.output = output
             task.status = TaskStatus.COMPLETED
-            self.audit.record(AuditEvent("agent.task.completed", task.role.value, "completed", task.task_id, {"correlation_id": task.correlation_id}))
+            self.audit.record(
+                AuditEvent(
+                    "agent.task.completed",
+                    task.role.value,
+                    "completed",
+                    task.task_id,
+                    {"correlation_id": task.correlation_id},
+                )
+            )
         except Exception as exc:  # noqa: BLE001 - task boundary records failure
             task.status = TaskStatus.FAILED
             task.error = str(exc)
-            self.audit.record(AuditEvent("agent.task.failed", task.role.value, "failed", task.task_id, {"correlation_id": task.correlation_id}))
+            self.audit.record(
+                AuditEvent(
+                    "agent.task.failed",
+                    task.role.value,
+                    "failed",
+                    task.task_id,
+                    {"correlation_id": task.correlation_id},
+                )
+            )
         return task
 
     def handoff(self, task_id: str, to_role: AgentRole, purpose: str, payload: dict) -> Handoff:
@@ -58,5 +81,13 @@ class AgentOrchestrator:
             raise ValueError("only completed tasks may hand off")
         handoff = Handoff(task_id, to_role, purpose, payload)
         self.handoffs.append(handoff)
-        self.audit.record(AuditEvent("agent.handoff", task.role.value, "created", task_id, {"to_role": to_role.value, "correlation_id": task.correlation_id}))
+        self.audit.record(
+            AuditEvent(
+                "agent.handoff",
+                task.role.value,
+                "created",
+                task_id,
+                {"to_role": to_role.value, "correlation_id": task.correlation_id},
+            )
+        )
         return handoff

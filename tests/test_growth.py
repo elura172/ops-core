@@ -2,22 +2,33 @@ from decimal import Decimal
 
 import pytest
 
-from app.growth.attribution import can_spend, campaign_url, rank_creatives
+from app.growth.attribution import campaign_url, can_spend, rank_creatives
 from app.growth.channels import DisabledSocialChannel
 from app.growth.models import Campaign, Channel, Creative, CreativePerformance
 
 
 def campaign():
-    return Campaign("c-1", "cr-1", Channel.TIKTOK, Decimal("10"), Decimal("100"), "https://shop.example/p/1")
+    return Campaign(
+        "c-1", "cr-1", Channel.TIKTOK, Decimal("10"), Decimal("100"), "https://shop.example/p/1"
+    )
 
 
 def test_campaign_url_preserves_existing_query():
-    url = campaign_url("https://shop.example/p?ref=x", source="tiktok", medium="organic", campaign="c-1", creative="cr-1")
+    url = campaign_url(
+        "https://shop.example/p?ref=x",
+        source="tiktok",
+        medium="organic",
+        campaign="c-1",
+        creative="cr-1",
+    )
     assert "ref=x" in url and "utm_content=cr-1" in url
 
 
 def test_rank_creatives_prefers_roas():
-    items = [CreativePerformance("a", 1000, 100, 2, Decimal("10"), Decimal("20")), CreativePerformance("b", 1000, 50, 2, Decimal("10"), Decimal("50"))]
+    items = [
+        CreativePerformance("a", 1000, 100, 2, Decimal("10"), Decimal("20")),
+        CreativePerformance("b", 1000, 50, 2, Decimal("10"), Decimal("50")),
+    ]
     assert rank_creatives(items)[0].creative_id == "b"
 
 

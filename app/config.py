@@ -13,7 +13,7 @@ class Settings:
     dry_run: bool = True
 
     @classmethod
-    def from_env(cls) -> "Settings":
+    def from_env(cls) -> Settings:
         def required(name: str) -> str:
             value = os.getenv(name, "").strip()
             if not value:
@@ -21,7 +21,9 @@ class Settings:
             return value
 
         return cls(
-            required("TTS_APP_KEY"), required("TTS_APP_SECRET"),
-            required("TTS_ACCESS_TOKEN"), required("TTS_SHOP_ID"),
+            required("TTS_APP_KEY"),
+            required("TTS_APP_SECRET"),
+            required("TTS_ACCESS_TOKEN"),
+            required("TTS_SHOP_ID"),
             os.getenv("DRY_RUN", "true").lower() not in {"0", "false", "no"},
         )

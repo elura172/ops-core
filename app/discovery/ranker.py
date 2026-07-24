@@ -14,10 +14,14 @@ class DiscoveryPolicy:
     min_share_ratio: float = 0.001
 
 
-def rank_candidates(candidates: Iterable[TrendCandidate], policy: DiscoveryPolicy = DiscoveryPolicy()) -> list[TrendCandidate]:
+def rank_candidates(
+    candidates: Iterable[TrendCandidate], policy: DiscoveryPolicy | None = None
+) -> list[TrendCandidate]:
     """Rank signals only; this does not claim product-market fit or authorize listing."""
+    policy = policy or DiscoveryPolicy()
     selected = [
-        candidate for candidate in candidates
+        candidate
+        for candidate in candidates
         if candidate.views >= policy.min_views
         and candidate.like_ratio >= policy.min_like_ratio
         and candidate.comment_ratio >= policy.min_comment_ratio

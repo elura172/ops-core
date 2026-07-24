@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 
 from app.analytics.models import AnalyticsEvent, CostLedger
@@ -6,7 +6,9 @@ from app.analytics.reporting import anomaly, deterministic_assignment, funnel, r
 
 
 def event(name, value="0", campaign="c-1"):
-    return AnalyticsEvent(name, name, datetime.now(timezone.utc), campaign_id=campaign, value_gbp=Decimal(value))
+    return AnalyticsEvent(
+        name, name, datetime.now(UTC), campaign_id=campaign, value_gbp=Decimal(value)
+    )
 
 
 def test_funnel_and_campaign_revenue():

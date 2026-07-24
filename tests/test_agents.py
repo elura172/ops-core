@@ -8,7 +8,9 @@ from app.domain.audit import AuditLog
 def test_orchestrator_runs_bounded_role_task_and_audits():
     audit = AuditLog()
     orchestrator = AgentOrchestrator(audit)
-    orchestrator.register(AgentRole.DISCOVERY, "rank_trends", lambda data: {"count": len(data["items"])})
+    orchestrator.register(
+        AgentRole.DISCOVERY, "rank_trends", lambda data: {"count": len(data["items"])}
+    )
     task = orchestrator.submit(AgentRole.DISCOVERY, "rank_trends", {"items": [1, 2]})
     result = orchestrator.run(task.task_id)
     assert result.status == TaskStatus.COMPLETED
@@ -23,7 +25,9 @@ def test_unallowlisted_operation_cannot_register():
 
 def test_failed_task_cannot_handoff():
     orchestrator = AgentOrchestrator(AuditLog())
-    orchestrator.register(AgentRole.ANALYTICS, "report_margin", lambda _: (_ for _ in ()).throw(RuntimeError("bad")))
+    orchestrator.register(
+        AgentRole.ANALYTICS, "report_margin", lambda _: (_ for _ in ()).throw(RuntimeError("bad"))
+    )
     task = orchestrator.submit(AgentRole.ANALYTICS, "report_margin", {})
     orchestrator.run(task.task_id)
     assert task.status == TaskStatus.FAILED

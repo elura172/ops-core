@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from app.domain.audit import AuditEvent, AuditLog
 from app.workers.jobs import Job, JobRunner
@@ -14,7 +14,7 @@ def test_job_retries_then_succeeds():
             raise RuntimeError("temporary")
 
     runner.enqueue(Job("j-1", "sync", task))
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     assert runner.run_due(now) == []
     assert runner.run_due(now + timedelta(seconds=2)) == ["j-1"]
     assert len(runner.dead_letter) == 0
@@ -22,8 +22,10 @@ def test_job_retries_then_succeeds():
 
 def test_failed_job_moves_to_dead_letter():
     runner = JobRunner()
-    runner.enqueue(Job("j-2", "sync", lambda: (_ for _ in ()).throw(RuntimeError("bad")), max_attempts=2))
-    now = datetime.now(timezone.utc)
+    runner.enqueue(
+        Job("j-2", "sync", lambda: (_ for _ in ()).throw(RuntimeError("bad")), max_attempts=2)
+    )
+    now = datetime.now(UTC)
     runner.run_due(now)
     runner.run_due(now + timedelta(seconds=2))
     assert not runner.pending

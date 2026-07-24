@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import StrEnum
 
 
@@ -19,7 +19,7 @@ class ReviewItem:
     status: ReviewStatus = ReviewStatus.PENDING
     reviewer: str | None = None
     reason: str | None = None
-    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     decided_at: datetime | None = None
 
 
@@ -35,7 +35,9 @@ class ReviewQueue:
         self.items[item.review_id] = item
         return item
 
-    def decide(self, review_id: str, *, approve: bool, reviewer: str, reason: str = "") -> ReviewItem:
+    def decide(
+        self, review_id: str, *, approve: bool, reviewer: str, reason: str = ""
+    ) -> ReviewItem:
         if not reviewer.strip():
             raise ValueError("reviewer is required")
         item = self.items.get(review_id)
@@ -46,7 +48,7 @@ class ReviewQueue:
         item.status = ReviewStatus.APPROVED if approve else ReviewStatus.REJECTED
         item.reviewer = reviewer
         item.reason = reason
-        item.decided_at = datetime.now(timezone.utc)
+        item.decided_at = datetime.now(UTC)
         return item
 
     def pending(self) -> list[ReviewItem]:

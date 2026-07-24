@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from app.retention.models import CustomerProfile, LifecycleEvent, MessagePlan
 
-
 TEMPLATES = {
     "order_paid": ("order_paid", False),
     "order_shipped": ("order_shipped", False),
@@ -15,7 +14,9 @@ class RetentionEngine:
     def __init__(self) -> None:
         self.processed_events: set[str] = set()
 
-    def plan(self, event: LifecycleEvent, profile: CustomerProfile, channel: str = "email") -> MessagePlan | None:
+    def plan(
+        self, event: LifecycleEvent, profile: CustomerProfile, channel: str = "email"
+    ) -> MessagePlan | None:
         if event.event_id in self.processed_events:
             return None
         template_info = TEMPLATES.get(event.name)
@@ -33,4 +34,3 @@ class RetentionEngine:
             marketing,
             {"order_id": event.order_id or ""},
         )
-

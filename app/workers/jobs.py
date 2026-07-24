@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
-from typing import Callable
+from datetime import UTC, datetime, timedelta
 
 
 @dataclass
@@ -12,7 +12,7 @@ class Job:
     run: Callable[[], None]
     max_attempts: int = 3
     attempts: int = 0
-    next_attempt_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    next_attempt_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     last_error: str | None = None
 
 
@@ -31,7 +31,7 @@ class JobRunner:
         self.pending[job.job_id] = job
 
     def run_due(self, now: datetime | None = None) -> list[str]:
-        now = now or datetime.now(timezone.utc)
+        now = now or datetime.now(UTC)
         completed: list[str] = []
         for job_id, job in list(self.pending.items()):
             if job.next_attempt_at > now:

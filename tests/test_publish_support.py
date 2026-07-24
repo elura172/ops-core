@@ -20,11 +20,19 @@ def test_publish_requires_approval_and_enablement():
 
 def test_email_dry_run_requires_approval_and_blocks_credentials():
     mailer = DryRunMailer()
-    response = CustomerResponse("r-1", "buyer@example.test", "Order update", "Your order is being processed.", approved=True)
+    response = CustomerResponse(
+        "r-1", "buyer@example.test", "Order update", "Your order is being processed.", approved=True
+    )
     mailer.send(response)
     assert len(mailer.sent) == 1
     with pytest.raises(ValueError):
-        CustomerResponse("r-2", "buyer@example.test", "Help", "Please send your credit card number", approved=True).validate()
+        CustomerResponse(
+            "r-2",
+            "buyer@example.test",
+            "Help",
+            "Please send your credit card number",
+            approved=True,
+        ).validate()
 
 
 def test_himalaya_is_disabled_by_default():

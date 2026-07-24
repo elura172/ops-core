@@ -1,6 +1,6 @@
 from collections.abc import Callable, Iterable
 
-from app.domain.orders import Order, SLAEvaluation, OrderStatus, evaluate_sla
+from app.domain.orders import Order, OrderStatus, SLAEvaluation, evaluate_sla
 
 
 class SLAWatchdog:
@@ -10,7 +10,9 @@ class SLAWatchdog:
         self.sla_hours = sla_hours
         self.warning_ratio = warning_ratio
 
-    def audit(self, orders: Iterable[Order], alert: Callable[[SLAEvaluation], None]) -> list[SLAEvaluation]:
+    def audit(
+        self, orders: Iterable[Order], alert: Callable[[SLAEvaluation], None]
+    ) -> list[SLAEvaluation]:
         evaluations: list[SLAEvaluation] = []
         terminal = {OrderStatus.DELIVERED, OrderStatus.CANCELLED}
         for order in orders:

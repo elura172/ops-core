@@ -8,7 +8,9 @@ from app.review.queue import ReviewItem, ReviewStatus
 
 
 def test_signing_is_deterministic():
-    assert sign_request("secret", "/product", {"b": "2", "a": "1"}) == sign_request("secret", "/product", {"a": "1", "b": "2"})
+    assert sign_request("secret", "/product", {"b": "2", "a": "1"}) == sign_request(
+        "secret", "/product", {"a": "1", "b": "2"}
+    )
 
 
 def test_sandbox_captures_request_without_network():
@@ -20,7 +22,9 @@ def test_sandbox_captures_request_without_network():
 
 def test_executor_requires_approval_and_audits():
     class Client:
-        def create_product_draft(self, payload): return {"dry_run": True, "payload": payload}
+        def create_product_draft(self, payload):
+            return {"dry_run": True, "payload": payload}
+
     audit = AuditLog()
     executor = ApprovedActionExecutor(Client(), audit)
     pending = ReviewItem("r-1", "create_product_draft", {"title": "Box"})

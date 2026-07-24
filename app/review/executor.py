@@ -22,5 +22,9 @@ class ApprovedActionExecutor:
             result = self.client.update_prices(item.payload["changes"])
         else:
             raise ValueError(f"operation is not allowlisted: {item.operation}")
-        self.audit.record(AuditEvent("approved_action.execute", item.reviewer or "unknown", "completed", item.review_id))
+        self.audit.record(
+            AuditEvent(
+                "approved_action.execute", item.reviewer or "unknown", "completed", item.review_id
+            )
+        )
         return result

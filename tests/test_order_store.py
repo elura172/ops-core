@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -8,7 +8,7 @@ from app.domain.orders import OrderStatus
 
 
 def event(event_id="e-1", status=OrderStatus.PAID):
-    return OrderEvent(event_id, "o-1", status, datetime.now(timezone.utc))
+    return OrderEvent(event_id, "o-1", status, datetime.now(UTC))
 
 
 def test_events_are_idempotent():
@@ -28,11 +28,15 @@ def test_invalid_transition_is_rejected_without_marking_processed():
 
 def test_signature_and_payload_reduction():
     body = b'{"order_id":"o-1"}'
-    import hashlib, hmac
+    import hashlib
+    import hmac
+
     sig = hmac.new(b"secret", body, hashlib.sha256).hexdigest()
     assert verify_signature(body, sig, "secret")
     assert not verify_signature(body, "bad", "secret")
-    assert reduce_order_event({"event_id": "e", "order_id": "o", "status": "PAID", "recipient_address": "secret"}) == ("e", "o", "PAID")
+    assert reduce_order_event(
+        {"event_id": "e", "order_id": "o", "status": "PAID", "recipient_address": "secret"}
+    ) == ("e", "o", "PAID")
 
 
 def test_reconcile_returns_status_drift():

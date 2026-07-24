@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-import json
 import sqlite3
-from datetime import datetime, timezone
+from datetime import UTC
 from pathlib import Path
 
-from app.domain.order_store import OrderEvent, OrderStore
+from app.domain.order_store import OrderEvent
 from app.domain.orders import OrderStatus
 
 
@@ -44,7 +43,7 @@ class SQLiteOrderRepository:
             "SELECT status, created_at FROM orders WHERE order_id = ?", (event.order_id,)
         ).fetchone()
         if row is None:
-            created_at = event.occurred_at.astimezone(timezone.utc).isoformat()
+            created_at = event.occurred_at.astimezone(UTC).isoformat()
             current = OrderStatus.RECEIVED
             self.connection.execute(
                 "INSERT INTO orders(order_id, created_at, status, updated_at) VALUES (?, ?, ?, ?)",
@@ -54,16 +53,18 @@ class SQLiteOrderRepository:
             current = OrderStatus(row["status"])
         if event.status != current:
             from app.domain.orders import ALLOWED_TRANSITIONS
+
             if event.status not in ALLOWED_TRANSITIONS[current]:
                 self.connection.rollback()
                 raise ValueError(f"invalid order transition: {current} -> {event.status}")
-        updated = event.occurred_at.astimezone(timezone.utc).isoformat()
+        updated = event.occurred_at.astimezone(UTC).isoformat()
         self.connection.execute(
             "UPDATE orders SET status = ?, updated_at = ? WHERE order_id = ?",
             (event.status.value, updated, event.order_id),
         )
         self.connection.execute(
-            "INSERT INTO processed_events(event_id, order_id, status, occurred_at) VALUES (?, ?, ?, ?)",
+            "INSERT INTO processed_events(event_id, order_id, status, occurred_at) "
+            "VALUES (?, ?, ?, ?)",
             (event.event_id, event.order_id, event.status.value, updated),
         )
         self.connection.commit()

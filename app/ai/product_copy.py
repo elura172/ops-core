@@ -42,7 +42,9 @@ class LocalCopyProvider:
         )
 
 
-def copy_to_candidate(copy: ProductCopy, *, category_id: str, attributes: dict[str, str], skus, image_urls) -> ProductCandidate:
+def copy_to_candidate(
+    copy: ProductCopy, *, category_id: str, attributes: dict[str, str], skus, image_urls
+) -> ProductCandidate:
     """Convert structured output into the existing policy-gated domain model."""
     if not copy.source_facts or any(claim.strip() == "" for claim in copy.claims):
         raise ValueError("AI output must contain grounded facts and non-empty claims")
@@ -60,6 +62,8 @@ def validate_generated_copy(copy: ProductCopy) -> tuple[str, ...]:
     """Return policy reasons; callers must block output when non-empty."""
     if not copy.title.strip() or not copy.description.strip():
         return ("AI output has an empty title or description",)
-    candidate = ProductCandidate(copy.title, copy.description, "validation", {}, (), ("https://invalid",))
+    candidate = ProductCandidate(
+        copy.title, copy.description, "validation", {}, (), ("https://invalid",)
+    )
     result = ProductPolicyGate().check(candidate, CategorySchema("validation"))
     return result.reasons

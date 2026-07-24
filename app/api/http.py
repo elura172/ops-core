@@ -21,11 +21,17 @@ class Decision(BaseModel):
     reason: str = ""
 
 
-def create_app(operator: OperatorService | None = None, order_repository: Any | None = None) -> FastAPI:
+def create_app(
+    operator: OperatorService | None = None, order_repository: Any | None = None
+) -> FastAPI:
     operator = operator or OperatorService(
-        ReviewQueue(), ApprovedActionExecutor(
-            TikTokClient(os.getenv("TTS_ACCESS_TOKEN", ""), os.getenv("TTS_SHOP_ID", ""), dry_run=True), AuditLog()
-        )
+        ReviewQueue(),
+        ApprovedActionExecutor(
+            TikTokClient(
+                os.getenv("TTS_ACCESS_TOKEN", ""), os.getenv("TTS_SHOP_ID", ""), dry_run=True
+            ),
+            AuditLog(),
+        ),
     )
     order_repository = order_repository or SQLiteOrderRepository(os.getenv("ORDER_DB", ":memory:"))
     app = FastAPI(title="TikTok Ops", version="0.1.0")

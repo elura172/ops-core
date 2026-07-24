@@ -6,7 +6,6 @@ from urllib.request import Request, urlopen
 
 from app.ai.product_copy import CopyProvider, ProductCopy, ProductCopyRequest
 
-
 COPY_SCHEMA = {
     "type": "object",
     "properties": {
@@ -31,11 +30,25 @@ class OpenAIResponsesCopyProvider(CopyProvider):
         if not self.api_key:
             raise ValueError("api_key is required")
         facts = "\n".join(f"- {fact}" for fact in request.verified_facts)
+        instructions = (
+            "Write factual product copy. Use only verified facts. Do not invent "
+            "benefits, certifications, brands, delivery promises, or health claims."
+        )
+        user_input = (
+            f"Market: {request.market}\nProduct: {request.product_name}\nVerified facts:\n{facts}"
+        )
         body = {
             "model": self.model,
-            "instructions": "Write factual product copy. Use only verified facts. Do not invent benefits, certifications, brands, delivery promises, or health claims.",
-            "input": f"Market: {request.market}\nProduct: {request.product_name}\nVerified facts:\n{facts}",
-            "text": {"format": {"type": "json_schema", "name": "product_copy", "strict": True, "schema": COPY_SCHEMA}},
+            "instructions": instructions,
+            "input": user_input,
+            "text": {
+                "format": {
+                    "type": "json_schema",
+                    "name": "product_copy",
+                    "strict": True,
+                    "schema": COPY_SCHEMA,
+                }
+            },
         }
         http_request = Request(
             f"{self.base_url.rstrip('/')}/responses",

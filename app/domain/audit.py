@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
 import json
+from dataclasses import asdict, dataclass, field
+from datetime import UTC, datetime
 
 
 @dataclass(frozen=True)
@@ -12,7 +12,7 @@ class AuditEvent:
     outcome: str
     resource_id: str | None = None
     detail: dict[str, str] | None = None
-    occurred_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    occurred_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
     def to_json(self) -> str:
         data = asdict(self)
