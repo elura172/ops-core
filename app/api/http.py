@@ -1,70 +1,195 @@
 from __future__ import annotations
 
-import os
+from collections.abc import Awaitable, Callable
+from datetime import timedelta
 from typing import Any
 
-from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
+from starlette.concurrency import run_in_threadpool
 
 from app.api.operator import OperatorService
+from app.api.security import (
+    DECIDE,
+    EXECUTE,
+    READ,
+    AuthenticationNotConfigured,
+    Principal,
+    TokenRegistry,
+    bearer_token,
+)
 from app.api.tiktok_client import TikTokClient
 from app.api.webhook_service import handle_order_webhook
+from app.config import Settings
+from app.db.review_store import SQLiteReviewStore
 from app.db.sqlite import SQLiteOrderRepository
-from app.domain.audit import AuditLog
-from app.review.executor import ApprovedActionExecutor
-from app.review.queue import ReviewQueue
+from app.observability.logging import (
+    configure_logging,
+    get_logger,
+    new_correlation_id,
+    set_correlation_id,
+)
+from app.ops.launch import LaunchGate
+from app.publish.layer import DryRunPublisher, PublishGate
+from app.review.executor import ApprovedActionExecutor, ExecutionFailed
+
+logger = get_logger("http")
+
+CORRELATION_HEADER = "X-Correlation-Id"
 
 
 class Decision(BaseModel):
+    """Reviewer identity is taken from the bearer token, never from the body."""
+
     approve: bool
-    reviewer: str
     reason: str = ""
 
 
+def _authorize(tokens: TokenRegistry, permission: str) -> Callable[[str], Principal]:
+    def dependency(authorization: str = Header(default="")) -> Principal:
+        token = bearer_token(authorization)
+        if not token:
+            raise HTTPException(401, "bearer token required", {"WWW-Authenticate": "Bearer"})
+        try:
+            principal = tokens.resolve(token)
+        except AuthenticationNotConfigured:
+            # Fail closed and loudly: an unconfigured registry is a deployment fault,
+            # not an invitation to serve the endpoint unauthenticated.
+            logger.error("auth.not_configured", permission=permission)
+            raise HTTPException(503, "operator authentication is not configured") from None
+        if principal is None:
+            logger.warning("auth.token_rejected", permission=permission)
+            raise HTTPException(401, "invalid token", {"WWW-Authenticate": "Bearer"})
+        if not principal.can(permission):
+            logger.warning("auth.forbidden", principal=principal.name, permission=permission)
+            raise HTTPException(403, f"principal lacks {permission}")
+        return principal
+
+    return dependency
+
+
 def create_app(
-    operator: OperatorService | None = None, order_repository: Any | None = None
+    operator: OperatorService | None = None,
+    order_repository: Any | None = None,
+    settings: Settings | None = None,
 ) -> FastAPI:
-    operator = operator or OperatorService(
-        ReviewQueue(),
-        ApprovedActionExecutor(
-            TikTokClient(
-                os.getenv("TTS_ACCESS_TOKEN", ""), os.getenv("TTS_SHOP_ID", ""), dry_run=True
+    configure_logging()
+    settings = settings or Settings.from_env_permissive()
+
+    if not settings.dry_run:
+        # The gate runs before a live client can be constructed, so an
+        # unattested deployment fails to boot rather than failing at the
+        # first mutation.
+        checklist = settings.launch_checklist()
+        LaunchGate(checklist, explicitly_enabled=settings.live_enabled).assert_live_allowed()
+        logger.warning(
+            "launch.live_mode_enabled",
+            publish_enabled=settings.publish_enabled,
+            checklist=[field for field in checklist.__dataclass_fields__],
+        )
+
+    if operator is None:
+        # The durable store writes its own audit trail inside each transaction, so
+        # the executor is given no second sink.
+        review_store = SQLiteReviewStore(settings.review_db)
+        recovered = review_store.recover_stale_executions(timedelta(minutes=15))
+        if recovered:
+            logger.warning(
+                "reviews.stale_executions_recovered",
+                review_ids=[item.review_id for item in recovered],
+            )
+        operator = OperatorService(
+            review_store,
+            ApprovedActionExecutor(
+                TikTokClient(
+                    settings.tts_access_token, settings.tts_shop_id, dry_run=settings.dry_run
+                ),
+                publish_gate=PublishGate(DryRunPublisher(), enabled=settings.publish_enabled),
             ),
-            AuditLog(),
-        ),
-    )
-    order_repository = order_repository or SQLiteOrderRepository(os.getenv("ORDER_DB", ":memory:"))
-    app = FastAPI(title="TikTok Ops", version="0.1.0")
+        )
+    if order_repository is None:
+        order_repository = SQLiteOrderRepository(settings.order_db)
+
+    require_read = _authorize(settings.tokens, READ)
+    require_decide = _authorize(settings.tokens, DECIDE)
+    require_execute = _authorize(settings.tokens, EXECUTE)
+
+    app = FastAPI(title="TikTok Ops", version="0.2.0")
+
+    @app.middleware("http")
+    async def correlate(
+        request: Request, call_next: Callable[[Request], Awaitable[Response]]
+    ) -> Response:
+        correlation_id = request.headers.get(CORRELATION_HEADER) or new_correlation_id()
+        set_correlation_id(correlation_id)
+        response = await call_next(request)
+        response.headers[CORRELATION_HEADER] = correlation_id
+        return response
 
     @app.get("/health")
     def health() -> dict[str, str]:
         return operator.health()
 
     @app.get("/reviews")
-    def reviews(pending_only: bool = False) -> list[dict]:
+    def list_reviews(
+        pending_only: bool = False, _: Principal = Depends(require_read)
+    ) -> list[dict[str, Any]]:
         return operator.list_reviews(pending_only)
 
     @app.post("/reviews/{review_id}/decision")
-    def decision(review_id: str, decision: Decision) -> dict:
+    def decision(
+        review_id: str, decision: Decision, principal: Principal = Depends(require_decide)
+    ) -> dict[str, Any]:
         try:
-            return operator.decide(review_id, decision.approve, decision.reviewer, decision.reason)
-        except (KeyError, ValueError) as exc:
-            raise HTTPException(400, str(exc)) from exc
+            return operator.decide(review_id, decision.approve, principal.name, decision.reason)
+        except KeyError as exc:
+            raise HTTPException(404, "review not found") from exc
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
 
     @app.post("/reviews/{review_id}/execute")
-    def execute(review_id: str) -> dict:
+    def execute(review_id: str, principal: Principal = Depends(require_execute)) -> dict[str, Any]:
         try:
-            return operator.execute(review_id)
-        except (KeyError, PermissionError, ValueError) as exc:
-            raise HTTPException(400, str(exc)) from exc
+            return operator.execute(review_id, actor=principal.name)
+        except KeyError as exc:
+            raise HTTPException(404, "review not found") from exc
+        except PermissionError as exc:
+            raise HTTPException(403, str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        except ExecutionFailed as exc:
+            # The item is terminal; a retry would risk duplicating a partial mutation.
+            raise HTTPException(
+                502, f"execution failed and needs re-approval: {exc.error}"
+            ) from exc
+
+    @app.get("/orders/quarantined")
+    def quarantined(_: Principal = Depends(require_read)) -> list[dict[str, Any]]:
+        if not hasattr(order_repository, "quarantined"):
+            raise HTTPException(501, "repository does not expose quarantined events")
+        return order_repository.quarantined()
+
+    @app.post("/orders/quarantined/{event_id}/resolve")
+    def resolve_quarantined(
+        event_id: str, principal: Principal = Depends(require_decide)
+    ) -> dict[str, Any]:
+        if not hasattr(order_repository, "resolve_quarantined"):
+            raise HTTPException(501, "repository does not support resolution")
+        if not order_repository.resolve_quarantined(event_id):
+            raise HTTPException(404, "quarantined event not found")
+        logger.info("order.quarantine.resolved", event_id=event_id, actor=principal.name)
+        return {"event_id": event_id, "resolved": True, "resolved_by": principal.name}
 
     @app.post("/webhooks/orders")
-    async def order_webhook(request: Request, x_signature: str = Header(default="")) -> dict:
-        secret = os.getenv("TTS_WEBHOOK_SECRET", "")
+    async def order_webhook(
+        request: Request, x_signature: str = Header(default="")
+    ) -> JSONResponse:
         body = await request.body()
-        return handle_order_webhook(body, x_signature, secret, order_repository)
+        # Persistence is synchronous; keep it off the event loop.
+        result = await run_in_threadpool(
+            handle_order_webhook, body, x_signature, settings.webhook_secret, order_repository
+        )
+        return JSONResponse(result.body, status_code=result.status)
 
     return app
-
-
-app = create_app()
