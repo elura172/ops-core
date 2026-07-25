@@ -2,11 +2,12 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Any
 
 from app.agents.models import AGENT_SPECS, AgentRole, AgentTask, Handoff, TaskStatus
 from app.domain.audit import AuditEvent, AuditLog
 
-Handler = Callable[[dict], dict]
+Handler = Callable[[dict[str, Any]], dict[str, Any]]
 
 
 @dataclass
@@ -24,7 +25,7 @@ class AgentOrchestrator:
             raise ValueError(f"operation is not allowed for {role}: {operation}")
         self.handlers[(role, operation)] = handler
 
-    def submit(self, role: AgentRole, operation: str, input: dict) -> AgentTask:
+    def submit(self, role: AgentRole, operation: str, input: dict[str, Any]) -> AgentTask:
         if (role, operation) not in self.handlers:
             raise ValueError("no registered handler for agent operation")
         task = AgentTask(str(len(self.tasks) + 1), role, operation, input)
@@ -75,7 +76,9 @@ class AgentOrchestrator:
             )
         return task
 
-    def handoff(self, task_id: str, to_role: AgentRole, purpose: str, payload: dict) -> Handoff:
+    def handoff(
+        self, task_id: str, to_role: AgentRole, purpose: str, payload: dict[str, Any]
+    ) -> Handoff:
         task = self.tasks[task_id]
         if task.status != TaskStatus.COMPLETED:
             raise ValueError("only completed tasks may hand off")
