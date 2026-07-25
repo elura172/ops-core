@@ -5,3 +5,6 @@ __pycache__/
 tokens.json
 .venv/
 *.egg-info/
+build/
+dist/
+.mypy_cache/
