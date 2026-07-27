@@ -159,9 +159,10 @@ def _word_pattern(term: str) -> re.Pattern[str]:
     Bare substring matching is unusable on product titles: "led" appears inside
     "non-sealed", "filled" and "handled", and matched a ceramic garlic keeper as
     an electronic product. A trailing plural is allowed, since titles say
-    "Toothpicks" where the keyword says "toothpick".
+    "Toothpicks" where the keyword says "toothpick", and "Glasses" where it says
+    "glass".
     """
-    return re.compile(rf"(?<![a-z0-9]){re.escape(term)}s?(?![a-z0-9])", re.IGNORECASE)
+    return re.compile(rf"(?<![a-z0-9]){re.escape(term)}(?:e?s)?(?![a-z0-9])", re.IGNORECASE)
 
 
 ASIN_PATTERN = re.compile(r"\bB0[A-Z0-9]{8}\b")
