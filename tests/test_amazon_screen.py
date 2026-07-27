@@ -7,6 +7,11 @@ from app.amazon.fees import FeeSchedule, LandedCost, SizeTier
 from app.amazon.models import AmazonListing, RankPoint
 from app.amazon.screen import ScreenPolicy, rejection_summary, screen
 
+
+def codes(rejected, asin="B000TEST01"):
+    return {r.code for r in rejected[asin]}
+
+
 VERIFIED = FeeSchedule(verified=True)
 START = date(2026, 1, 1)
 
@@ -64,7 +69,15 @@ def test_every_rejection_reason_is_reported_not_just_the_first():
     see which."""
     bad = listing(review_count=4, rating=Decimal("4.9"), seller_count=40)
     _, rejected = run([bad])
-    assert len(rejected["B000TEST01"]) >= 3
+    assert codes(rejected) >= {"demand_unproven", "no_quality_gap", "crowded_listing"}
+
+
+def test_rejections_carry_both_a_stable_code_and_the_specific_numbers():
+    """The code is countable across candidates; the message says why this one."""
+    _, rejected = run([listing(seller_count=25)])
+    crowded = next(r for r in rejected["B000TEST01"] if r.code == "crowded_listing")
+    assert "25 sellers" in crowded.message
+    assert str(crowded) == crowded.message
 
 
 def test_spiky_seasonal_demand_is_rejected():
@@ -72,7 +85,7 @@ def test_spiky_seasonal_demand_is_rejected():
     eleven months."""
     seasonal = listing(rank_history=ranks(200_000, 180_000, 150_000, 800, 190_000, 210_000))
     _, rejected = run([seasonal])
-    assert any("spiky or seasonal" in r for r in rejected["B000TEST01"])
+    assert "unstable_demand" in codes(rejected)
 
 
 def test_steady_demand_scores_above_spiky_demand_of_equal_volume():
@@ -86,30 +99,30 @@ def test_steady_demand_scores_above_spiky_demand_of_equal_volume():
 def test_a_beloved_incumbent_is_rejected_for_having_no_gap():
     """4.8 stars means there is nothing for an improved product to fix."""
     _, rejected = run([listing(rating=Decimal("4.8"))])
-    assert any("no quality gap" in r for r in rejected["B000TEST01"])
+    assert "no_quality_gap" in codes(rejected)
 
 
 def test_crowded_listings_are_rejected():
     _, rejected = run([listing(seller_count=25)])
-    assert any("reseller pile-on" in r for r in rejected["B000TEST01"])
+    assert "crowded_listing" in codes(rejected)
 
 
 def test_brand_registered_incumbents_are_rejected_by_default():
     _, rejected = run([listing(brand_registered=True)])
-    assert any("brand-registered" in r for r in rejected["B000TEST01"])
+    assert "brand_registered" in codes(rejected)
 
 
 def test_missing_landed_cost_is_rejected_not_assumed_cheap():
     """Without a supplier quote there is no honest margin, so no guess is made."""
     _, rejected = run([listing()], costs={})
-    assert any("no landed-cost estimate" in r for r in rejected["B000TEST01"])
+    assert "no_landed_cost" in codes(rejected)
 
 
 def test_thin_margin_is_rejected_even_when_demand_is_perfect():
     expensive = {"B000TEST01": landed(fob_unit_cost=Decimal("19.00"))}
     survivors, rejected = run([listing()], costs=expensive)
     assert survivors == []
-    assert any("margin" in r or "ROI" in r for r in rejected["B000TEST01"])
+    assert codes(rejected) & {"margin_too_thin", "roi_too_low"}
 
 
 def test_tariffs_alone_can_kill_a_candidate():
@@ -124,7 +137,7 @@ def test_tariffs_alone_can_kill_a_candidate():
     passes, _ = run([listing()], costs={"B000TEST01": marginal})
     fails, rejected = run([listing()], costs={"B000TEST01": tariffed})
     assert passes and not fails
-    assert any("margin" in r for r in rejected["B000TEST01"])
+    assert "margin_too_thin" in codes(rejected)
 
 
 def test_survivors_are_ranked_best_first():
@@ -141,8 +154,8 @@ def test_rejection_summary_shows_which_constraint_dominates():
     crowd = [listing(asin=f"B{i:09d}", seller_count=30) for i in range(6)]
     _, rejected = run(crowd)
     summary = rejection_summary(rejected)
-    assert next(iter(summary)).startswith("sellers on the listing")
-    assert summary[next(iter(summary))] == 6
+    assert next(iter(summary)) == "crowded_listing"
+    assert summary["crowded_listing"] == 6
 
 
 def test_screening_an_empty_corpus_is_not_an_error():

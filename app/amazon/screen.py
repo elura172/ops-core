@@ -12,6 +12,22 @@ logger = get_logger("amazon_screen")
 
 
 @dataclass(frozen=True)
+class Rejection:
+    """Why a candidate failed.
+
+    Carries a stable `code` beside the human message so failures can be counted
+    and compared without parsing prose — the message contains the specific numbers
+    and is therefore unique per candidate.
+    """
+
+    code: str
+    message: str
+
+    def __str__(self) -> str:
+        return self.message
+
+
+@dataclass(frozen=True)
 class ScreenPolicy:
     """Thresholds a candidate must clear. Every default is deliberately strict:
     the scanner's job is to reject, and a screen that passes everything has
@@ -36,32 +52,36 @@ class ScreenPolicy:
             raise ValueError("min_reviews must be below max_reviews")
 
 
-def _rejections(listing: AmazonListing, policy: ScreenPolicy) -> list[str]:
+def _rejections(listing: AmazonListing, policy: ScreenPolicy) -> list[Rejection]:
     """Every reason a listing fails, not just the first — a candidate rejected for
     one marginal reason is worth revisiting, one rejected for five is not."""
-    out: list[str] = []
+    out: list[Rejection] = []
+
+    def fail(code: str, message: str) -> None:
+        out.append(Rejection(code, message))
+
     if listing.price < policy.min_price:
-        out.append(f"price {listing.price} below floor {policy.min_price}")
+        fail("price_too_low", f"price {listing.price} below floor {policy.min_price}")
     if listing.price > policy.max_price:
-        out.append(f"price {listing.price} above ceiling {policy.max_price}")
+        fail("price_too_high", f"price {listing.price} above ceiling {policy.max_price}")
     if listing.review_count < policy.min_reviews:
-        out.append(f"only {listing.review_count} reviews — demand unproven")
+        fail("demand_unproven", f"only {listing.review_count} reviews — demand unproven")
     if listing.review_count > policy.max_reviews:
-        out.append(f"{listing.review_count} reviews — entrenched incumbent")
+        fail("entrenched_incumbent", f"{listing.review_count} reviews — entrenched incumbent")
     if listing.rating > policy.max_rating:
-        out.append(f"rating {listing.rating} leaves no quality gap to attack")
+        fail("no_quality_gap", f"rating {listing.rating} leaves no quality gap to attack")
     if listing.seller_count > policy.max_sellers:
-        out.append(f"{listing.seller_count} sellers on the listing — reseller pile-on")
+        fail("crowded_listing", f"{listing.seller_count} sellers on the listing — reseller pile-on")
     if policy.reject_brand_registered and listing.brand_registered:
-        out.append("incumbent is brand-registered")
+        fail("brand_registered", "incumbent is brand-registered")
     stability = listing.rank_stability
     if stability < policy.min_rank_stability:
-        out.append(f"rank stability {stability:.2f} — demand is spiky or seasonal")
+        fail("unstable_demand", f"rank stability {stability:.2f} — demand is spiky or seasonal")
     median = listing.median_rank
     if median is None:
-        out.append("no rank history — demand cannot be estimated")
+        fail("no_rank_history", "no rank history — demand cannot be estimated")
     elif median > policy.max_median_rank:
-        out.append(f"median rank {median:,} — too little volume")
+        fail("too_little_volume", f"median rank {median:,} — too little volume")
     return out
 
 
@@ -82,7 +102,7 @@ def screen(
     policy: ScreenPolicy | None = None,
     fees: FeeSchedule | None = None,
     accept_estimates: bool = False,
-) -> tuple[list[Opportunity], dict[str, list[str]]]:
+) -> tuple[list[Opportunity], dict[str, list[Rejection]]]:
     """Screen candidates. Returns survivors ranked best-first, plus every rejection
     reason keyed by ASIN so a thin result set is explainable rather than mysterious.
 
@@ -93,13 +113,15 @@ def screen(
     policy = policy or ScreenPolicy()
     fees = fees or FeeSchedule()
     survivors: list[Opportunity] = []
-    rejected: dict[str, list[str]] = {}
+    rejected: dict[str, list[Rejection]] = {}
 
     for listing in listings:
         reasons = _rejections(listing, policy)
         landed = landed_cost_for.get(listing.asin)
         if landed is None:
-            reasons.append("no landed-cost estimate — cannot compute margin")
+            reasons.append(
+                Rejection("no_landed_cost", "no landed-cost estimate — cannot compute margin")
+            )
         if reasons:
             rejected[listing.asin] = reasons
             continue
@@ -123,13 +145,20 @@ def screen(
             cubic_feet=listing.cubic_feet,
         )
 
-        economic_reasons: list[str] = []
+        economic_reasons: list[Rejection] = []
         if economics.margin < policy.min_margin:
             economic_reasons.append(
-                f"margin {economics.margin:.1%} below floor {policy.min_margin:.0%}"
+                Rejection(
+                    "margin_too_thin",
+                    f"margin {economics.margin:.1%} below floor {policy.min_margin:.0%}",
+                )
             )
         if economics.roi < policy.min_roi:
-            economic_reasons.append(f"ROI {economics.roi:.1%} below floor {policy.min_roi:.0%}")
+            economic_reasons.append(
+                Rejection(
+                    "roi_too_low", f"ROI {economics.roi:.1%} below floor {policy.min_roi:.0%}"
+                )
+            )
         if economic_reasons:
             rejected[listing.asin] = economic_reasons
             continue
@@ -160,13 +189,14 @@ def screen(
     return survivors, rejected
 
 
-def rejection_summary(rejected: dict[str, list[str]]) -> dict[str, int]:
-    """Which constraint is doing the killing. If one reason dominates, the policy
-    may be miscalibrated rather than the market being empty."""
+def rejection_summary(rejected: dict[str, list[Rejection]]) -> dict[str, int]:
+    """Which constraint is doing the killing, counted by code.
+
+    If one reason dominates, the policy may be miscalibrated rather than the market
+    empty — that distinction decides whether to widen a filter or leave a category.
+    """
     counts: dict[str, int] = {}
     for reasons in rejected.values():
         for reason in reasons:
-            key = reason.split(" —")[0].split(" below")[0].split(" above")[0]
-            key = "".join(c for c in key if not c.isdigit()).strip(" ,").replace("  ", " ")
-            counts[key] = counts.get(key, 0) + 1
+            counts[reason.code] = counts.get(reason.code, 0) + 1
     return dict(sorted(counts.items(), key=lambda kv: -kv[1]))
