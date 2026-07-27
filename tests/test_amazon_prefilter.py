@@ -122,3 +122,37 @@ def test_several_products_on_one_line_are_split():
     assert [c.price for c in parsed] == [Decimal("16.99"), Decimal("39.99")]
     assert "Okavango" in parsed[1].title
     assert "DAYYET" not in parsed[1].title
+
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        "Ceramic Garlic Keeper with Non-Sealed Acacia Wood Lid",
+        "Oil Bottle with Controlled Pour Spout",
+        "Handled Storage Basket for Pantry",
+    ],
+)
+def test_keywords_match_whole_words_only(title):
+    """'led' inside 'non-sealed' matched a ceramic garlic keeper as an electronic
+    product. Substring matching is unusable on product titles."""
+    assert "battery_or_electronic" not in codes(prefilter(candidate(title, price="24.99")))
+
+
+def test_real_electronics_still_match():
+    for title in ("LED Desk Lamp Dimmable", "Rechargeable LED Book Light"):
+        assert "battery_or_electronic" in codes(prefilter(candidate(title, price="24.99")))
+
+
+def test_brand_matching_needs_a_word_boundary_too():
+    assert "dominant_brand" in codes(prefilter(candidate("3M Command Hooks Large", price="19.99")))
+    # "bic" must not fire on "fabric" or "bicycle".
+    assert "dominant_brand" not in codes(prefilter(candidate("Fabric Storage Bins", price="19.99")))
+    assert "dominant_brand" not in codes(
+        prefilter(candidate("Bicycle Repair Stand", price="49.99"))
+    )
+
+
+def test_plural_titles_still_match_singular_keywords():
+    """Titles say 'Toothpicks' where the keyword says 'toothpick'."""
+    assert "ingestible" in codes(prefilter(candidate("Mint Flavored Toothpicks", price="19.99")))
+    assert "fragile" in codes(prefilter(candidate("Drinking Glasses Set of 4", price="29.99")))

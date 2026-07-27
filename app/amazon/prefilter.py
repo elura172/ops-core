@@ -88,7 +88,7 @@ EXCLUSIONS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     (
         "fragile",
         "fragile — breakage in FBA and on the way to it",
-        ("glass ", "ceramic", "porcelain", "crystal", "mirror"),
+        ("glass", "ceramic", "porcelain", "crystal", "mirror", "terracotta", "stoneware"),
     ),
 )
 
@@ -152,6 +152,18 @@ SATURATED: tuple[tuple[str, ...], ...] = (
     ("garlic press", "silicone spatula", "measuring cup"),
 )
 
+
+def _word_pattern(term: str) -> re.Pattern[str]:
+    """Match a keyword as a whole word.
+
+    Bare substring matching is unusable on product titles: "led" appears inside
+    "non-sealed", "filled" and "handled", and matched a ceramic garlic keeper as
+    an electronic product. A trailing plural is allowed, since titles say
+    "Toothpicks" where the keyword says "toothpick".
+    """
+    return re.compile(rf"(?<![a-z0-9]){re.escape(term)}s?(?![a-z0-9])", re.IGNORECASE)
+
+
 ASIN_PATTERN = re.compile(r"\bB0[A-Z0-9]{8}\b")
 PRICE_PATTERN = re.compile(r"\$\s*([0-9]+(?:\.[0-9]{2})?)")
 MULTIPACK_PATTERN = re.compile(r"\b(\d{2,})\s*(?:pcs|pc|count|pack|ct)\b", re.IGNORECASE)
@@ -171,12 +183,16 @@ class QuickCandidate:
         return " ".join(self.title.split()[:2]).lower().strip(",")
 
 
+_EXCLUSION_PATTERNS = tuple(
+    (code, why, tuple((kw, _word_pattern(kw)) for kw in keywords))
+    for code, why, keywords in EXCLUSIONS
+)
+_SATURATED_PATTERNS = tuple(tuple((kw, _word_pattern(kw)) for kw in group) for group in SATURATED)
+_BRAND_PATTERNS = tuple((brand, _word_pattern(brand)) for brand in sorted(DOMINANT_BRANDS))
+
+
 def _matched_brand(title: str) -> str | None:
-    lowered = title.lower()
-    for brand in DOMINANT_BRANDS:
-        if lowered.startswith(brand) or f" {brand} " in lowered:
-            return brand
-    return None
+    return next((brand for brand, pattern in _BRAND_PATTERNS if pattern.search(title)), None)
 
 
 def prefilter(
@@ -211,14 +227,13 @@ def prefilter(
     if brand:
         out.append(Rejection("dominant_brand", f"'{brand}' owns this shelf — unwinnable"))
 
-    lowered = title.lower()
-    for code, why, keywords in EXCLUSIONS:
-        hit = next((k for k in keywords if k in lowered), None)
+    for code, why, patterns in _EXCLUSION_PATTERNS:
+        hit = next((kw for kw, pattern in patterns if pattern.search(title)), None)
         if hit:
-            out.append(Rejection(code, f"'{hit.strip()}' — {why}", soft=code in SOFT_CODES))
+            out.append(Rejection(code, f"'{hit}' — {why}", soft=code in SOFT_CODES))
 
-    for group in SATURATED:
-        hit = next((k for k in group if k in lowered), None)
+    for group in _SATURATED_PATTERNS:
+        hit = next((kw for kw, pattern in group if pattern.search(title)), None)
         if hit:
             out.append(
                 Rejection(
