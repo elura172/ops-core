@@ -115,7 +115,7 @@ def create_app(
     require_decide = _authorize(settings.tokens, DECIDE)
     require_execute = _authorize(settings.tokens, EXECUTE)
 
-    app = FastAPI(title="TikTok Ops", version="0.2.0")
+    app = FastAPI(title="Ops Core", version="0.3.0")
 
     @app.middleware("http")
     async def correlate(

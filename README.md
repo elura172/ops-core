@@ -1,6 +1,15 @@
-# TikTok Ops MVP
+# Ops Core
 
-Dry-run-first operations core for an authorized TikTok Shop integration.
+Dry-run-first commerce operations core. One control plane, two pipelines:
+
+- **TikTok Shop** — an authorized integration, documented below.
+- **Amazon private label** — demand screening and unit economics in `app/amazon/`,
+  mapped against this system in `docs/amazon-pipeline-map.md`.
+
+Both share the same spine: every consequential action becomes a review item, a
+human approves it, and an allowlisted executor performs it exactly once. The
+sections below describe that spine as the TikTok pipeline exercises it; the
+Amazon pipeline reuses it unchanged.
 
 ## Safety defaults
 

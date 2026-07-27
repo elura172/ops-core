@@ -12,7 +12,7 @@ _correlation_id: ContextVar[str] = ContextVar("correlation_id", default="")
 
 #: Context fields are emitted verbatim. Only identifiers, statuses, and counts may be
 #: passed; never buyer names, addresses, emails, or raw webhook payloads.
-_LOGGER_NAME = "tiktok_ops"
+_LOGGER_NAME = "ops_core"
 
 
 def new_correlation_id() -> str:
