@@ -168,3 +168,43 @@ def test_policy_bounds_are_validated():
         ScreenPolicy(min_price=Decimal("80"), max_price=Decimal("20"))
     with pytest.raises(ValueError):
         ScreenPolicy(min_reviews=900, max_reviews=100)
+
+
+def _run_cli(monkeypatch, *argv):
+    import scripts.screen_candidate as cli
+
+    monkeypatch.setattr("sys.argv", ["screen_candidate.py", *argv])
+    return cli, cli.main()
+
+
+def test_cli_without_a_terminal_explains_the_file_flow(monkeypatch, capsys):
+    """Agent shells and CI have no stdin; the CLI must say so rather than raise
+    EOFError from input() on the first field."""
+    monkeypatch.setattr("sys.stdin.isatty", lambda: False)
+    _, code = _run_cli(monkeypatch)
+    assert code == 2
+    out = capsys.readouterr().out
+    assert "--template" in out and "--json" in out
+
+
+def test_cli_example_passes(monkeypatch, capsys):
+    _, code = _run_cli(monkeypatch, "--example")
+    assert code == 0
+    assert "PASS" in capsys.readouterr().out
+
+
+def test_cli_template_is_valid_input_for_the_json_flow(monkeypatch, capsys, tmp_path):
+    """The blank the CLI emits must round-trip through its own --json path."""
+    import json
+
+    _, code = _run_cli(monkeypatch, "--template")
+    assert code == 0
+    blank = json.loads(capsys.readouterr().out)
+    assert isinstance(blank, list) and "asin" in blank[0]
+
+    path = tmp_path / "c.json"
+    path.write_text(json.dumps(blank))
+    _, code = _run_cli(monkeypatch, "--json", str(path))
+    # An unfilled template has no usable candidate, and that is reported cleanly.
+    assert code == 2
+    assert "no usable candidates" in capsys.readouterr().out

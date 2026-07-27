@@ -90,7 +90,24 @@ PROMPTS: list[tuple[str, str, str]] = [
 ]
 
 
+class NotInteractive(RuntimeError):
+    """Raised when prompting is impossible — no TTY attached."""
+
+
 def _ask() -> dict[str, Any]:
+    # Prompting needs a real terminal. Agent shells, CI, and piped input have no
+    # stdin, and input() raises EOFError on the first field; say so usefully
+    # instead of dying with a traceback.
+    if not sys.stdin.isatty():
+        raise NotInteractive(
+            "no terminal attached, so there is nothing to type into.\n"
+            "  Use the file-based flow instead:\n"
+            "    python scripts/screen_candidate.py --template > candidates.json\n"
+            "    # fill candidates.json in, then\n"
+            "    python scripts/screen_candidate.py --json candidates.json\n"
+            "  Or see a worked example:\n"
+            "    python scripts/screen_candidate.py --example"
+        )
     print(f"{BOLD}Screen one candidate{RESET}  {DIM}(blank accepts the default){RESET}\n")
     data: dict[str, Any] = {}
     for key, label, default in PROMPTS:
@@ -205,7 +222,14 @@ def main() -> int:
         loaded = json.loads(args.json.read_text())
         records = loaded if isinstance(loaded, list) else [loaded]
     else:
-        records = [_ask()]
+        try:
+            records = [_ask()]
+        except NotInteractive as exc:
+            print(f"  {YELLOW}{exc}{RESET}")
+            return 2
+        except (EOFError, KeyboardInterrupt):
+            print(f"\n  {DIM}cancelled{RESET}")
+            return 130
 
     listings: list[AmazonListing] = []
     costs: dict[str, LandedCost] = {}
