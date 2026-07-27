@@ -122,6 +122,15 @@ Name, positioning, palette, logo, packaging direction, listing copy, A+ content.
   policy requires (the main image must be the real product, not a render).
 - **Doesn't transfer:** `AdDraft` is 9:16 short-form video. Amazon listing imagery
   is a different spec entirely.
+- **Higgsfield** is the right generator for secondary images, A+ modules, brand
+  store assets, packaging concepts and off-Amazon ad creative — and it is already
+  connected. **It cannot produce the main image.** Amazon requires the primary
+  image to be an actual photograph of the actual product on pure white; a render
+  or a generated composite is a listing-suppression risk and, arguably, a
+  misrepresentation. That is precisely what `MediaAsset.product_match_confirmed`
+  already exists to track: generated assets stay `product_match_confirmed=False`
+  and are barred from the primary slot until a real photo of a received sample
+  replaces them.
 - **`GATE` — trademark registration.** Brand Registry requires a registered or
   pending trademark. Months and real money. No API removes it, and without it
   there is no A+ content, no brand store, and no protection from hijackers —
@@ -189,10 +198,13 @@ more expensive — a bad listing can lose an account, and an account holds inven
 
 ## Order of work
 
-1. **Opportunity scanner, standalone.** Keepa client + `AmazonOpportunity` model +
-   fee-aware landed-cost screen. Run it over a few thousand candidates. If nothing
-   clears a real margin, nothing downstream matters and we have learned that for
-   the price of an API key rather than a container of stock.
+1. **Opportunity scanner, standalone.** ✅ Economics and screening built
+   (`app/amazon/`): `LandedCost` with duty and Section 301, `FeeSchedule` as
+   versioned data, `unit_economics` / `break_even_price`, and a `ScreenPolicy`
+   that reports every rejection reason. Remaining: the Keepa client to feed it
+   real ASINs. Run it over a few thousand candidates; if nothing clears a real
+   margin, nothing downstream matters and we learned it for the price of an API
+   key rather than a container of stock.
 2. **Review mining** on whatever survives, because the improvement spec determines
    whether there is a business, not just a listing.
 3. Only then: SP-API, brand generation, and the listing path behind the existing
