@@ -182,7 +182,22 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--json", type=Path, help="candidate JSON file (object or list)")
     parser.add_argument("--example", action="store_true", help="run a worked example")
+    parser.add_argument(
+        "--template", action="store_true", help="print a blank JSON candidate to fill in"
+    )
     args = parser.parse_args()
+
+    if args.template:
+        blank = {
+            k: ("" if k not in ("ranks", "brand_registered") else ([] if k == "ranks" else False))
+            for k in EXAMPLE
+        }
+        blank["freight_per_unit"] = "1.40"
+        blank["duty_rate"] = "0.03"
+        blank["tariff_rate"] = "0.25"
+        blank["prep_per_unit"] = "0.60"
+        print(json.dumps([blank], indent=2))
+        return 0
 
     if args.example:
         records = [EXAMPLE]
