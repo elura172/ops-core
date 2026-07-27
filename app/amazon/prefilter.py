@@ -245,32 +245,32 @@ def prefilter(
 def parse_bulk(text: str) -> list[QuickCandidate]:
     """Parse a pasted export tolerantly.
 
-    Bulk exports vary wildly in column order and count, so nothing is assumed
-    positionally: the ASIN, the prices and the title are each found by shape.
-    Rows without all three are skipped rather than guessed at.
+    Segments on the ASIN rather than on newlines: exports arrive with one product
+    per line, several per line, or wrapped arbitrarily by whatever copied them,
+    and the ASIN is the only reliable end-of-record marker. Column order is never
+    assumed either — prices and title are found by shape. Records missing an ASIN,
+    a price or a title are skipped rather than guessed at.
     """
     candidates: list[QuickCandidate] = []
-    for block in text.split("\n"):
-        line = block.strip()
-        if not line:
+    cursor = 0
+    for match in ASIN_PATTERN.finditer(text):
+        segment = text[cursor : match.start()]
+        cursor = match.end()
+
+        prices = [Decimal(p) for p in PRICE_PATTERN.findall(segment)]
+        if not prices:
             continue
-        asin_match = ASIN_PATTERN.search(line)
-        prices = [Decimal(p) for p in PRICE_PATTERN.findall(line)]
-        if not asin_match or not prices:
-            continue
-        # The title is the longest comma-separated field that is neither a URL
-        # list nor a price nor the ASIN.
-        fields = [f.strip() for f in line.split(",")]
+        fields = [f.strip() for f in re.split(r"[,\n]", segment)]
         titles = [
             f
             for f in fields
-            if len(f) > 20 and "http" not in f and "$" not in f and not ASIN_PATTERN.fullmatch(f)
+            if len(f) > 20 and "http" not in f and "$" not in f and not ASIN_PATTERN.search(f)
         ]
         if not titles:
             continue
         candidates.append(
             QuickCandidate(
-                asin=asin_match.group(0),
+                asin=match.group(0),
                 # Commas inside a title split it; rejoin the long fragments.
                 title=", ".join(titles),
                 # Exports list list-price, deal price and current price. The

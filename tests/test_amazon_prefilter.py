@@ -106,3 +106,19 @@ def test_saturated_categories_flag_softly():
 def test_an_ordinary_product_trips_neither():
     findings = prefilter(candidate("Gooseneck Pour-Over Kettle Stainless Steel", price="32.99"))
     assert not [f for f in findings if f.code in {"dominant_brand", "saturated_category"}]
+
+
+def test_several_products_on_one_line_are_split():
+    """Copied exports do not reliably carry newlines between records; the ASIN is
+    the only dependable boundary."""
+    one_line = (
+        "https://x.jpg,DAYYET Garlic Keeper for Counter Ceramic with Acacia Wood Lid,"
+        "$ 16.99,,White,Small,B0BGNWQLC8 "
+        "https://y.jpg,Okavango Garlic Keeper Terracotta Container Countertop,"
+        "$ 39.99,,Ivory,16oz,B0DJHFR2GT"
+    )
+    parsed = parse_bulk(one_line)
+    assert [c.asin for c in parsed] == ["B0BGNWQLC8", "B0DJHFR2GT"]
+    assert [c.price for c in parsed] == [Decimal("16.99"), Decimal("39.99")]
+    assert "Okavango" in parsed[1].title
+    assert "DAYYET" not in parsed[1].title
