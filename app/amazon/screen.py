@@ -22,6 +22,11 @@ class Rejection:
 
     code: str
     message: str
+    #: A soft finding needs a human look rather than an automatic reject. Amazon
+    #: titles are keyword-stuffed, so matching on words alone produces false
+    #: positives — a garden spade whose title ends "Kids Sand Beach Shovels" is
+    #: not a children's product.
+    soft: bool = False
 
     def __str__(self) -> str:
         return self.message
