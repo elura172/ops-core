@@ -86,3 +86,23 @@ def test_bulk_parsing_takes_the_lowest_price():
 def test_rows_without_an_asin_or_price_are_skipped_not_guessed():
     assert parse_bulk("just some text with no identifiers\n") == []
     assert parse_bulk("A title long enough to qualify but no asin,$ 19.99\n") == []
+
+
+def test_dominant_drinkware_brands_are_recognised():
+    """Simple Modern and Owala own drinkware the way BIC owns pens. The first
+    version of this list omitted them and passed a Simple Modern bottle."""
+    for brand in ("Simple Modern Ceramic-Lined Water Bottle", "Owala FreeSip Insulated"):
+        assert "dominant_brand" in codes(prefilter(candidate(brand, price="29.97")))
+
+
+def test_saturated_categories_flag_softly():
+    """Demand is real and enormous; that is the problem. A differentiator can
+    still win, so this warns rather than rejects."""
+    findings = prefilter(candidate("Insulated Water Bottle 32oz Stainless", price="24.99"))
+    saturated = [f for f in findings if f.code == "saturated_category"]
+    assert saturated and saturated[0].soft is True
+
+
+def test_an_ordinary_product_trips_neither():
+    findings = prefilter(candidate("Gooseneck Pour-Over Kettle Stainless Steel", price="32.99"))
+    assert not [f for f in findings if f.code in {"dominant_brand", "saturated_category"}]

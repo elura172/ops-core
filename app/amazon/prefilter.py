@@ -124,10 +124,32 @@ DOMINANT_BRANDS: frozenset[str] = frozenset(
         "contigo",
         "thermos",
         "tupperware",
+        "simple modern",
+        "owala",
+        "iron flask",
+        "brumate",
+        "nalgene",
+        "klean kanteen",
+        "takeya",
+        "s'well",
+        "camelbak",
         "nike",
         "adidas",
         "under armour",
     }
+)
+
+#: Categories so thoroughly private-labelled that a new entrant competes with
+#: thousands of near-identical listings and a handful of brands with real
+#: recognition. Demand is genuine and enormous; that is exactly the problem.
+#: Soft, because a real differentiator can still work — but the bar is much
+#: higher than the numbers alone suggest.
+SATURATED: tuple[tuple[str, ...], ...] = (
+    ("water bottle", "tumbler", "drinkware", "insulated bottle"),
+    ("phone case", "screen protector"),
+    ("yoga mat", "resistance band", "foam roller"),
+    ("laptop stand", "phone holder", "ring light"),
+    ("garlic press", "silicone spatula", "measuring cup"),
 )
 
 ASIN_PATTERN = re.compile(r"\bB0[A-Z0-9]{8}\b")
@@ -194,6 +216,19 @@ def prefilter(
         hit = next((k for k in keywords if k in lowered), None)
         if hit:
             out.append(Rejection(code, f"'{hit.strip()}' — {why}", soft=code in SOFT_CODES))
+
+    for group in SATURATED:
+        hit = next((k for k in group if k in lowered), None)
+        if hit:
+            out.append(
+                Rejection(
+                    "saturated_category",
+                    f"'{hit}' — one of the most heavily private-labelled shelves;"
+                    " needs a real differentiator, not just better numbers",
+                    soft=True,
+                )
+            )
+            break
 
     multipack = MULTIPACK_PATTERN.search(title)
     if multipack and int(multipack.group(1)) >= 40:
