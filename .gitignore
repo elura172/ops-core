@@ -8,3 +8,10 @@ tokens.json
 build/
 dist/
 .mypy_cache/
+
+# graphify: build state is machine-specific or regenerable.
+# The graph itself (graph.json, graph.html, GRAPH_REPORT.md) is committed.
+graphify-out/cache/
+graphify-out/manifest.json
+graphify-out/cost.json
+graphify-out/.graphify_*
