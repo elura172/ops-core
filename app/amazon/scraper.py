@@ -22,7 +22,8 @@ from app.observability.logging import get_logger
 
 logger = get_logger("amazon_scraper")
 
-BASE_URL = "https://api.amazonscraperapi.com/api/v1/amazon/product"
+PRODUCT_URL = "https://api.amazonscraperapi.com/api/v1/amazon/product"
+SEARCH_URL = "https://api.amazonscraperapi.com/api/v1/amazon/search"
 RETRYABLE_STATUS = frozenset({408, 425, 429, 500, 502, 503, 504})
 
 SCHEMA = """
@@ -303,6 +304,60 @@ def to_listing(snapshot: Snapshot, history: tuple[RankPoint, ...]) -> AmazonList
     )
 
 
+@dataclass(frozen=True)
+class SearchResult:
+    """A row from a search page. Enough to triage 60 products for one request."""
+
+    asin: str
+    title: str
+    price: Decimal
+    rating: Decimal
+    reviews_count: int
+    seller_count: int
+    #: Amazon's "N+ bought in past month" badge, parsed to an integer. Absent on
+    #: most listings; when present it is a far more direct demand signal than rank.
+    monthly_sales: int | None
+    is_sponsored: bool
+    is_best_seller: bool
+
+
+_VOLUME = re.compile(r"([\d,.]+)\s*(K|M)?\+?\s*bought", re.IGNORECASE)
+
+
+def _monthly_sales(raw: Any) -> int | None:
+    if not raw:
+        return None
+    match = _VOLUME.search(str(raw))
+    if not match:
+        return None
+    amount = Decimal(match.group(1).replace(",", ""))
+    scale = {"k": 1_000, "m": 1_000_000}.get((match.group(2) or "").lower(), 1)
+    return int(amount * scale)
+
+
+def to_search_results(payload: dict[str, Any]) -> list[SearchResult]:
+    """Map a search page, skipping rows too incomplete to judge."""
+    out: list[SearchResult] = []
+    for row in payload.get("products") or []:
+        price = _decimal(row.get("price")) if row.get("price") is not None else Decimal("0")
+        if not row.get("asin") or price <= 0:
+            continue
+        out.append(
+            SearchResult(
+                asin=str(row["asin"]),
+                title=str(row.get("title") or ""),
+                price=price,
+                rating=_decimal(row.get("rating")),
+                reviews_count=int(row.get("reviews_count") or 0),
+                seller_count=int(row.get("pricing_count") or 1),
+                monthly_sales=_monthly_sales(row.get("sales_volume")),
+                is_sponsored=bool(row.get("is_sponsored")),
+                is_best_seller=bool(row.get("best_seller")),
+            )
+        )
+    return out
+
+
 @dataclass
 class AmazonScraperClient:
     """Boundary for the scraper API, with the monthly allowance enforced.
@@ -324,9 +379,9 @@ class AmazonScraperClient:
     def remaining(self) -> int:
         return max(0, self.monthly_budget - self.store.requests_this_month())
 
-    def _get(self, asin: str) -> dict[str, Any]:
-        query = urlencode({"api_key": self.api_key, "query": asin, "domain": self.domain})
-        request = Request(f"{BASE_URL}?{query}", method="GET")
+    def _get(self, term: str, url: str = PRODUCT_URL) -> dict[str, Any]:
+        query = urlencode({"api_key": self.api_key, "query": term, "domain": self.domain})
+        request = Request(f"{url}?{query}", method="GET")
         try:
             with urlopen(request, timeout=self.timeout) as response:
                 if response.status in RETRYABLE_STATUS:
@@ -344,8 +399,7 @@ class AmazonScraperClient:
             raise TerminalScraperError("scraper returned an unexpected body")
         return payload
 
-    def fetch(self, asin: str) -> Snapshot:
-        """Fetch, persist, and return one snapshot. Costs one request."""
+    def _spend(self, label: str) -> None:
         if not self.api_key:
             raise ValueError("api_key is required")
         if not self.live:
@@ -356,11 +410,24 @@ class AmazonScraperClient:
             raise RequestBudgetExceeded(
                 f"monthly allowance of {self.monthly_budget} requests is spent"
             )
+        # Logged before the call: a request that fails still consumed quota.
+        self.store.log_request(label, "attempted")
 
+    def search(self, term: str) -> list[SearchResult]:
+        """One request, up to sixty candidates. The cheapest way to find things."""
+        self._spend(f"search:{term}")
+        payload = self._get(term, SEARCH_URL)
+        results = to_search_results(payload)
+        logger.info(
+            "amazon.search.completed", term=term, results=len(results), remaining=self.remaining
+        )
+        return results
+
+    def fetch(self, asin: str) -> Snapshot:
+        """Fetch, persist, and return one snapshot. Costs one request."""
         last: Exception | None = None
         for attempt in range(1, self.retries.max_attempts + 1):
-            # Logged before the call: a request that fails still consumed quota.
-            self.store.log_request(asin, "attempted")
+            self._spend(asin)
             try:
                 payload = self._get(asin)
                 # Mapping is inside the retry: a partial page is only detectable

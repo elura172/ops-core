@@ -175,3 +175,59 @@ def test_nothing_is_recorded_when_every_attempt_is_partial(store, monkeypatch):
     with pytest.raises(TransientScraperError):
         client(store, retries=RetryPolicy(max_attempts=2)).fetch("B0DJHFR2GT")
     assert store.rank_history("B0DJHFR2GT") == ()
+
+
+SEARCH_PAYLOAD = {
+    "page": 1,
+    "products": [
+        {
+            "asin": "B0GOOD00001",
+            "title": "Corner Bread Box Bamboo Countertop",
+            "price": 31.95,
+            "rating": 4.3,
+            "reviews_count": 800,
+            "pricing_count": 1,
+            "sales_volume": "400+ bought in past month",
+            "is_sponsored": False,
+        },
+        {
+            "asin": "B0SPON00002",
+            "title": "Sponsored Bread Box",
+            "price": 29.99,
+            "rating": 4.2,
+            "reviews_count": 500,
+            "pricing_count": 1,
+            "sales_volume": "2K+ bought in past month",
+            "is_sponsored": True,
+        },
+        {"asin": "B0NULL00003", "title": "No price row", "price": None, "rating": 4.1},
+    ],
+}
+
+
+def test_search_maps_rows_and_skips_unusable_ones():
+    from app.amazon.scraper import to_search_results
+
+    results = to_search_results(SEARCH_PAYLOAD)
+    assert [r.asin for r in results] == ["B0GOOD00001", "B0SPON00002"]
+    assert results[0].monthly_sales == 400
+    assert results[1].monthly_sales == 2000  # "2K+" scales
+    assert results[1].is_sponsored is True
+
+
+def test_search_spends_exactly_one_request(store, monkeypatch):
+    """Sixty candidates for one request is the whole point of searching first."""
+    monkeypatch.setattr("app.amazon.scraper.urlopen", _fake_urlopen(SEARCH_PAYLOAD))
+    results = client(store).search("bread box")
+    assert len(results) == 2
+    assert store.requests_this_month() == 1
+
+
+def test_sponsored_rows_are_triaged_out():
+    """A paid placement says the seller has an ad budget, not that buyers want it."""
+    from scripts.scan import triage
+    from app.amazon.scraper import to_search_results
+
+    organic, sponsored = to_search_results(SEARCH_PAYLOAD)
+    assert triage(organic) == []
+    assert any("sponsored" in r for r in triage(sponsored))
