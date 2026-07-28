@@ -3,8 +3,16 @@
 Dry-run-first commerce operations core. One control plane, two pipelines:
 
 - **TikTok Shop** — an authorized integration, documented below.
-- **Amazon private label** — demand screening and unit economics in `app/amazon/`,
-  mapped against this system in `docs/amazon-pipeline-map.md`.
+- **Amazon private label** — demand screening, unit economics and launch
+  budgeting in `app/amazon/`, mapped against this system in
+  `docs/amazon-pipeline-map.md`.
+
+```bash
+python scripts/scan.py "bread box" "plant mister"   # search, triage, shortlist
+python scripts/prefilter_batch.py export.txt        # structural triage, no API
+python scripts/budget.py --units 300 --fob 7.50 --price 31.95
+python scripts/screen_candidate.py --example        # full screen on one product
+```
 
 Both share the same spine: every consequential action becomes a review item, a
 human approves it, and an allowlisted executor performs it exactly once. The

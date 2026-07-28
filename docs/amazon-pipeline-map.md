@@ -50,9 +50,16 @@ sellers on the listing, seasonality, and whether the top listings are brand-regi
 - **Doesn't transfer:** `TrendCandidate` is engagement-shaped (`views`, `likes`,
   `comments`, `shares`, `engagement_score`). Amazon demand is rank-and-price shaped.
   This needs a sibling model, not a field rename.
-- **New:** a Keepa client (BSR + price history is what actual demand estimation
-  needs; Amazon's own PA-API does not expose it usefully), and an
-  `AmazonOpportunity` model with its own ranking policy.
+- **Built.** `app/amazon/scraper.py` wraps a third-party scraper API. Its search
+  endpoint returns up to sixty products for one request, carrying price, rating,
+  review count, seller count and Amazon's "bought in past month" badge — enough to
+  triage without a per-product call. `scripts/scan.py` turns a list of search
+  terms into a shortlist.
+- **The gap:** the API returns a moment, not a history, and rank *stability* is
+  what separates a business from a seasonal trap. Every fetch is therefore
+  persisted, so history accumulates — run it daily and a month later there are
+  thirty rank points per product. Keepa sells that history outright and remains
+  the shortcut if the wait is not acceptable.
 
 ### 2. Opportunity screen — automatable, and this is where most candidates die
 
@@ -185,8 +192,8 @@ Rough line counts of the current `app/` (3,675 lines total):
 | TikTok/social-specific — discovery, suppliers, media, growth, retention, publish, support | 646 | ~20%, mostly protocol shapes |
 
 So roughly **2,300 of 3,675 lines carry over**, and the new work concentrates in
-four API clients (Keepa, SP-API, Alibaba, trademark search) plus the review-mining
-reasoning.
+four API clients (product data, SP-API, Alibaba, trademark search) plus the
+review-mining reasoning. The product-data client is built; the rest are not.
 
 The thing being reused is not really the code. It is the *stance*: every
 consequential action becomes a review item, execution is once-only and audited,
@@ -198,13 +205,18 @@ more expensive — a bad listing can lose an account, and an account holds inven
 
 ## Order of work
 
-1. **Opportunity scanner, standalone.** ✅ Economics and screening built
-   (`app/amazon/`): `LandedCost` with duty and Section 301, `FeeSchedule` as
-   versioned data, `unit_economics` / `break_even_price`, and a `ScreenPolicy`
-   that reports every rejection reason. Remaining: the Keepa client to feed it
-   real ASINs. Run it over a few thousand candidates; if nothing clears a real
-   margin, nothing downstream matters and we learned it for the price of an API
-   key rather than a container of stock.
+1. **Opportunity scanner.** ✅ Built and running. `LandedCost` with duty and
+   Section 301, `FeeSchedule` as versioned data, `unit_economics` /
+   `break_even_price`, a `ScreenPolicy` reporting every rejection reason, a
+   structural pre-filter, and a live scraper client with budget accounting.
+   First real scan: five search terms, five requests, 274 products, 17 worth a
+   closer look.
+2. **Launch budget.** ✅ `app/amazon/launch_budget.py`. The finding that changes
+   the plan: a 27%-margin product at 300 units still loses money on the first
+   order, because one-off brand costs cannot amortise over a small MOQ.
+   Break-even lands at 305 of 300 units. Money is made on the reorder.
+3. **Blocked on capital, not code.** ~$4,200 lean, ~$6,200 standard, with cash
+   locked roughly 209 days. Research continues for free; the launch does not.
 2. **Review mining** on whatever survives, because the improvement spec determines
    whether there is a business, not just a listing.
 3. Only then: SP-API, brand generation, and the listing path behind the existing
@@ -214,8 +226,9 @@ more expensive — a bad listing can lose an account, and an account holds inven
 
 Written against knowledge with a mid-2026 cutoff. Before committing to a design,
 confirm: SP-API developer registration and the current Listings Items
-requirements; Brand Registry's trademark criteria per office; Keepa's current API
-terms and pricing; Amazon's dropshipping policy wording; whether a North America
+requirements; Brand Registry's trademark criteria per office; whether USPTO
+still requires foreign-domiciled applicants to use a US attorney (budgeted as
+mandatory); Amazon's dropshipping policy wording; whether a North America
 unified account still covers a Canadian resident selling on amazon.com; and the
 import/tax specifics for whichever fork is chosen.
 
