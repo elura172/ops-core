@@ -15,3 +15,6 @@ graphify-out/cache/
 graphify-out/manifest.json
 graphify-out/cost.json
 graphify-out/.graphify_*
+
+# Local scraper snapshot history (rebuildable, machine-specific)
+snapshots.db

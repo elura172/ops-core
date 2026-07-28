@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import random
 import re
 import time
 from collections.abc import Callable
@@ -23,6 +22,7 @@ from app.ai.product_copy import (
     enforce_policy,
 )
 from app.ai.usage import UsageLedger
+from app.net import RetryPolicy
 from app.observability.logging import get_logger
 
 logger = get_logger("openai")
@@ -57,23 +57,6 @@ MAX_FACT_CHARS = 500
 
 def _sanitize_fact(fact: str) -> str:
     return _CONTROL_CHARS.sub("", fact).strip()[:MAX_FACT_CHARS]
-
-
-@dataclass(frozen=True)
-class RetryPolicy:
-    max_attempts: int = 3
-    base_delay: float = 0.5
-    max_delay: float = 8.0
-
-    def __post_init__(self) -> None:
-        if self.max_attempts < 1 or self.base_delay <= 0 or self.max_delay < self.base_delay:
-            raise ValueError("retry policy bounds are invalid")
-
-    def backoff(self, attempt: int, retry_after: float | None = None) -> float:
-        if retry_after is not None:
-            return min(max(retry_after, 0.0), self.max_delay)
-        # Full jitter: identical failures across workers must not resynchronise.
-        return random.uniform(0, min(self.base_delay * (2 ** (attempt - 1)), self.max_delay))
 
 
 @dataclass
