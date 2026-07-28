@@ -225,8 +225,8 @@ def test_search_spends_exactly_one_request(store, monkeypatch):
 
 def test_sponsored_rows_are_triaged_out():
     """A paid placement says the seller has an ad budget, not that buyers want it."""
-    from scripts.scan import triage
     from app.amazon.scraper import to_search_results
+    from scripts.scan import triage
 
     organic, sponsored = to_search_results(SEARCH_PAYLOAD)
     assert triage(organic) == []
