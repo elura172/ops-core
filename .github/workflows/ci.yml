@@ -1,0 +1,88 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install
+        run: uv pip install --system -e ".[dev]"
+
+      - name: Lint
+        run: ruff check .
+
+      - name: Format
+        run: ruff format --check .
+
+      - name: Types
+        run: mypy app --strict
+
+      - name: Tests
+        run: pytest -q
+
+  container:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build -t ops-core:ci .
+      - name: Boot in dry-run and check health
+        run: |
+          docker run -d --name ops -p 8000:8000 -e DRY_RUN=true ops-core:ci
+          for _ in $(seq 1 30); do
+            curl -sf localhost:8000/health && break
+            sleep 1
+          done
+          curl -sf localhost:8000/health | grep -q '"mode":"dry-run"'
+
+      - name: Refuse to boot live without attestations
+        run: |
+          # Every credential and token IS supplied, so the only thing missing is
+          # the LAUNCH_* attestations. Without this env the run would fail on
+          # missing secrets and pass this step with the gate deleted.
+          set +e
+          output=$(docker run --rm \
+            -e DRY_RUN=false -e LIVE_ENABLED=true \
+            -e TTS_APP_KEY=k -e TTS_APP_SECRET=s \
+            -e TTS_ACCESS_TOKEN=t -e TTS_SHOP_ID=shop \
+            -e TTS_WEBHOOK_SECRET=wh \
+            -e OPS_TOKENS="$(printf 'ci-token' | sha256sum | cut -d' ' -f1):ci:admin" \
+            ops-core:ci \
+            python -c "from app.api.http import create_app; create_app()" 2>&1)
+          status=$?
+          set -e
+          echo "$output"
+          if [ $status -eq 0 ]; then
+            echo "::error::launch gate allowed an unattested live boot" && exit 1
+          fi
+          # Fail for the right reason, not an unrelated crash.
+          echo "$output" | grep -q "launch checklist incomplete" \
+            || { echo "::error::refused, but not by the launch gate" && exit 1; }
+          echo "$output" | grep -q "signing_verified"
+
+      - name: Boot live once every control is attested
+        run: |
+          docker run --rm \
+            -e DRY_RUN=false -e LIVE_ENABLED=true \
+            -e LAUNCH_SIGNING_VERIFIED=true -e LAUNCH_SANDBOX_PASSED=true \
+            -e LAUNCH_PII_CONTROLS_VERIFIED=true \
+            -e TTS_APP_KEY=k -e TTS_APP_SECRET=s \
+            -e TTS_ACCESS_TOKEN=t -e TTS_SHOP_ID=shop \
+            -e TTS_WEBHOOK_SECRET=wh \
+            -e OPS_TOKENS="$(printf 'ci-token' | sha256sum | cut -d' ' -f1):ci:admin" \
+            ops-core:ci \
+            python -c "from app.api.http import create_app; create_app()"

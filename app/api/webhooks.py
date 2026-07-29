@@ -13,7 +13,7 @@ def verify_signature(body: bytes, signature: str, secret: str) -> bool:
     return hmac.compare_digest(expected, received)
 
 
-def reduce_order_event(payload: dict) -> tuple[str, str, str]:
+def reduce_order_event(payload: dict[str, object]) -> tuple[str, str, str]:
     """Extract only event/order/status identifiers from a webhook payload."""
     event_id = str(payload.get("event_id", ""))
     order_id = str(payload.get("order_id", ""))

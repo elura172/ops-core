@@ -33,6 +33,9 @@ class Order:
     status: OrderStatus = OrderStatus.RECEIVED
     last_alert_severity: str | None = None
     updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    #: True when the order was first seen mid-lifecycle, so created_at is the
+    #: timestamp of that late event rather than when the buyer actually ordered.
+    created_at_estimated: bool = False
 
     def transition(self, target: OrderStatus) -> None:
         if target == self.status:

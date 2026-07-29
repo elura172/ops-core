@@ -1,0 +1,315 @@
+from __future__ import annotations
+
+import json
+import sqlite3
+import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from typing import Any
+
+from app.domain.audit import AuditEvent
+from app.observability.logging import get_logger
+from app.review.queue import AlreadyExecuted, ReviewItem, ReviewStatus, _validate_claim
+
+logger = get_logger("review_store")
+
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS reviews (
+  review_id TEXT PRIMARY KEY,
+  operation TEXT NOT NULL,
+  payload TEXT NOT NULL,
+  status TEXT NOT NULL,
+  reviewer TEXT,
+  reason TEXT,
+  created_at TEXT NOT NULL,
+  decided_at TEXT,
+  executed_by TEXT,
+  executed_at TEXT,
+  result TEXT,
+  failure TEXT
+);
+CREATE TABLE IF NOT EXISTS audit_events (
+  sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+  action TEXT NOT NULL,
+  actor TEXT NOT NULL,
+  outcome TEXT NOT NULL,
+  resource_id TEXT,
+  detail TEXT,
+  occurred_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_reviews_status ON reviews(status);
+"""
+
+
+def _dt(value: str | None) -> datetime | None:
+    return datetime.fromisoformat(value) if value else None
+
+
+def _row_to_item(row: sqlite3.Row) -> ReviewItem:
+    return ReviewItem(
+        review_id=row["review_id"],
+        operation=row["operation"],
+        payload=json.loads(row["payload"]),
+        status=ReviewStatus(row["status"]),
+        reviewer=row["reviewer"],
+        reason=row["reason"],
+        created_at=_dt(row["created_at"]) or datetime.now(UTC),
+        decided_at=_dt(row["decided_at"]),
+        executed_by=row["executed_by"],
+        executed_at=_dt(row["executed_at"]),
+        result=json.loads(row["result"]) if row["result"] else None,
+        failure=row["failure"],
+    )
+
+
+class SQLiteReviewStore:
+    """Durable review state.
+
+    Every transition runs inside ``BEGIN IMMEDIATE`` and claims are conditional
+    ``UPDATE ... WHERE status = 'APPROVED'`` statements, so two workers racing the
+    same approval cannot both execute it. The audit trail is written in the same
+    transaction as the state change it describes.
+    """
+
+    def __init__(self, path: str | Path) -> None:
+        if str(path) == ":memory:":
+            logger.warning("reviews.memory_database", detail="approvals will not survive restart")
+        self.connection = sqlite3.connect(
+            str(path), check_same_thread=False, isolation_level=None, timeout=30
+        )
+        self.connection.row_factory = sqlite3.Row
+        self._lock = threading.RLock()
+        self.connection.execute("PRAGMA busy_timeout = 30000")
+        if str(path) != ":memory:":
+            self.connection.execute("PRAGMA journal_mode = WAL")
+        self.connection.execute("PRAGMA synchronous = FULL")
+        self.connection.executescript(SCHEMA)
+
+    @contextmanager
+    def _transaction(self) -> Iterator[sqlite3.Connection]:
+        with self._lock:
+            self.connection.execute("BEGIN IMMEDIATE")
+            try:
+                yield self.connection
+            except BaseException:
+                self.connection.execute("ROLLBACK")
+                raise
+            self.connection.execute("COMMIT")
+
+    def _fetch(self, connection: sqlite3.Connection, review_id: str) -> ReviewItem:
+        row = connection.execute(
+            "SELECT * FROM reviews WHERE review_id = ?", (review_id,)
+        ).fetchone()
+        if row is None:
+            raise KeyError(review_id)
+        return _row_to_item(row)
+
+    def submit(self, item: ReviewItem) -> ReviewItem:
+        if item.status != ReviewStatus.PENDING:
+            raise ValueError("new review items must be pending")
+        with self._transaction() as connection:
+            existing = connection.execute(
+                "SELECT 1 FROM reviews WHERE review_id = ?", (item.review_id,)
+            ).fetchone()
+            if existing:
+                raise ValueError("review_id already exists")
+            connection.execute(
+                "INSERT INTO reviews(review_id, operation, payload, status, created_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (
+                    item.review_id,
+                    item.operation,
+                    json.dumps(item.payload, sort_keys=True),
+                    item.status.value,
+                    item.created_at.astimezone(UTC).isoformat(),
+                ),
+            )
+        return item
+
+    def get(self, review_id: str) -> ReviewItem | None:
+        # Reads share the connection with in-flight transactions, so they take the
+        # same lock; sqlite3 connections are not safe for concurrent use.
+        with self._lock:
+            row = self.connection.execute(
+                "SELECT * FROM reviews WHERE review_id = ?", (review_id,)
+            ).fetchone()
+        return _row_to_item(row) if row else None
+
+    def list_items(self, pending_only: bool = False) -> list[ReviewItem]:
+        query = "SELECT * FROM reviews"
+        params: tuple[str, ...] = ()
+        if pending_only:
+            query += " WHERE status = ?"
+            params = (ReviewStatus.PENDING.value,)
+        with self._lock:
+            rows = self.connection.execute(query + " ORDER BY created_at", params).fetchall()
+        return [_row_to_item(row) for row in rows]
+
+    def pending(self) -> list[ReviewItem]:
+        return self.list_items(pending_only=True)
+
+    def decide(
+        self, review_id: str, *, approve: bool, reviewer: str, reason: str = ""
+    ) -> ReviewItem:
+        if not reviewer.strip():
+            raise ValueError("reviewer is required")
+        status = ReviewStatus.APPROVED if approve else ReviewStatus.REJECTED
+        decided_at = datetime.now(UTC)
+        with self._transaction() as connection:
+            item = self._fetch(connection, review_id)
+            if item.status != ReviewStatus.PENDING:
+                raise ValueError("review item has already been decided")
+            connection.execute(
+                "UPDATE reviews SET status = ?, reviewer = ?, reason = ?, decided_at = ? "
+                "WHERE review_id = ? AND status = ?",
+                (
+                    status.value,
+                    reviewer,
+                    reason,
+                    decided_at.isoformat(),
+                    review_id,
+                    ReviewStatus.PENDING.value,
+                ),
+            )
+            self._record(
+                connection,
+                AuditEvent(
+                    "review.decide",
+                    reviewer,
+                    status.value.lower(),
+                    review_id,
+                    {"operation": item.operation},
+                ),
+            )
+            return self._fetch(connection, review_id)
+
+    def claim_for_execution(self, review_id: str, actor: str) -> ReviewItem:
+        claimed_at = datetime.now(UTC)
+        with self._transaction() as connection:
+            item = self._fetch(connection, review_id)
+            _validate_claim(item)
+            cursor = connection.execute(
+                "UPDATE reviews SET status = ?, executed_by = ?, executed_at = ? "
+                "WHERE review_id = ? AND status = ?",
+                (
+                    ReviewStatus.EXECUTING.value,
+                    actor,
+                    claimed_at.isoformat(),
+                    review_id,
+                    ReviewStatus.APPROVED.value,
+                ),
+            )
+            if cursor.rowcount != 1:
+                # Another worker claimed it between the read and the write.
+                raise AlreadyExecuted(self._fetch(connection, review_id))
+            return self._fetch(connection, review_id)
+
+    def complete_execution(self, review_id: str, result: dict[str, Any]) -> ReviewItem:
+        with self._transaction() as connection:
+            item = self._fetch(connection, review_id)
+            connection.execute(
+                "UPDATE reviews SET status = ?, result = ?, executed_at = ? WHERE review_id = ?",
+                (
+                    ReviewStatus.EXECUTED.value,
+                    json.dumps(result, sort_keys=True, default=str),
+                    datetime.now(UTC).isoformat(),
+                    review_id,
+                ),
+            )
+            self._record(
+                connection,
+                AuditEvent(
+                    "approved_action.execute",
+                    item.executed_by or "unknown",
+                    "completed",
+                    review_id,
+                    {"operation": item.operation, "approved_by": item.reviewer or "unknown"},
+                ),
+            )
+            return self._fetch(connection, review_id)
+
+    def fail_execution(self, review_id: str, error: str) -> ReviewItem:
+        with self._transaction() as connection:
+            item = self._fetch(connection, review_id)
+            connection.execute(
+                "UPDATE reviews SET status = ?, failure = ?, executed_at = ? WHERE review_id = ?",
+                (
+                    ReviewStatus.FAILED.value,
+                    error,
+                    datetime.now(UTC).isoformat(),
+                    review_id,
+                ),
+            )
+            self._record(
+                connection,
+                AuditEvent(
+                    "approved_action.execute",
+                    item.executed_by or "unknown",
+                    "failed",
+                    review_id,
+                    {"operation": item.operation},
+                ),
+            )
+            return self._fetch(connection, review_id)
+
+    def recover_stale_executions(self, older_than: timedelta) -> list[ReviewItem]:
+        """Move abandoned EXECUTING items to FAILED so they are not stuck forever.
+
+        The outcome of an interrupted mutation is unknown, so recovery means a human
+        re-approves rather than an automatic retry.
+        """
+        cutoff = (datetime.now(UTC) - older_than).isoformat()
+        with self._transaction() as connection:
+            rows = connection.execute(
+                "SELECT * FROM reviews WHERE status = ? AND executed_at < ?",
+                (ReviewStatus.EXECUTING.value, cutoff),
+            ).fetchall()
+            for row in rows:
+                connection.execute(
+                    "UPDATE reviews SET status = ?, failure = ? WHERE review_id = ?",
+                    (
+                        ReviewStatus.FAILED.value,
+                        "execution did not complete; outcome unknown",
+                        row["review_id"],
+                    ),
+                )
+                self._record(
+                    connection,
+                    AuditEvent(
+                        "approved_action.recover",
+                        "system",
+                        "failed",
+                        row["review_id"],
+                        {"operation": row["operation"]},
+                    ),
+                )
+            return [_row_to_item(row) for row in rows]
+
+    def _record(self, connection: sqlite3.Connection, event: AuditEvent) -> None:
+        connection.execute(
+            "INSERT INTO audit_events(action, actor, outcome, resource_id, detail, occurred_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                event.action,
+                event.actor,
+                event.outcome,
+                event.resource_id,
+                json.dumps(event.detail, sort_keys=True) if event.detail else None,
+                event.occurred_at.astimezone(UTC).isoformat(),
+            ),
+        )
+
+    def audit_trail(self, resource_id: str | None = None) -> list[dict[str, Any]]:
+        query = "SELECT * FROM audit_events"
+        params: tuple[str, ...] = ()
+        if resource_id:
+            query += " WHERE resource_id = ?"
+            params = (resource_id,)
+        with self._lock:
+            rows = self.connection.execute(query + " ORDER BY sequence", params).fetchall()
+        return [dict(row) for row in rows]
+
+    def close(self) -> None:
+        self.connection.close()

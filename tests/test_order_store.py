@@ -1,8 +1,7 @@
 from datetime import UTC, datetime
 
-import pytest
-
 from app.api.webhooks import reduce_order_event, verify_signature
+from app.domain.order_events import Outcome
 from app.domain.order_store import OrderEvent, OrderStore, reconcile
 from app.domain.orders import OrderStatus
 
@@ -13,17 +12,48 @@ def event(event_id="e-1", status=OrderStatus.PAID):
 
 def test_events_are_idempotent():
     store = OrderStore()
-    assert store.apply(event()) is True
-    assert store.apply(event()) is False
+    assert store.apply(event()).outcome is Outcome.APPLIED
+    assert store.apply(event()).outcome is Outcome.DUPLICATE
     assert store.orders["o-1"].status == OrderStatus.PAID
 
 
-def test_invalid_transition_is_rejected_without_marking_processed():
+def test_forward_jump_fast_forwards_and_reports_skipped_states():
     store = OrderStore()
     store.apply(event())
-    with pytest.raises(ValueError):
-        store.apply(event("e-2", OrderStatus.DELIVERED))
-    assert "e-2" not in store.processed_event_ids
+    outcome = store.apply(event("e-2", OrderStatus.DELIVERED))
+    assert outcome.outcome is Outcome.APPLIED
+    assert store.orders["o-1"].status == OrderStatus.DELIVERED
+    assert outcome.skipped == (
+        OrderStatus.FULFILLMENT_PENDING,
+        OrderStatus.LABEL_CREATED,
+        OrderStatus.SHIPPED,
+    )
+
+
+def test_late_event_does_not_regress_the_order():
+    store = OrderStore()
+    store.apply(event("e-1", OrderStatus.DELIVERED))
+    outcome = store.apply(event("e-2", OrderStatus.PAID))
+    assert outcome.outcome is Outcome.STALE
+    assert store.orders["o-1"].status == OrderStatus.DELIVERED
+
+
+def test_unreachable_status_is_quarantined_rather_than_dropped():
+    store = OrderStore()
+    store.apply(event("e-1", OrderStatus.DELIVERED))
+    outcome = store.apply(event("e-2", OrderStatus.CANCELLED))
+    assert outcome.outcome is Outcome.QUARANTINED
+    assert [e["event_id"] for e in store.quarantined()] == ["e-2"]
+    assert store.orders["o-1"].status == OrderStatus.DELIVERED
+    assert store.resolve_quarantined("e-2") is True
+    assert store.quarantined() == []
+    assert store.resolve_quarantined("e-2") is False
+
+
+def test_repeated_status_is_a_no_op():
+    store = OrderStore()
+    store.apply(event())
+    assert store.apply(event("e-2", OrderStatus.PAID)).outcome is Outcome.UNCHANGED
 
 
 def test_signature_and_payload_reduction():

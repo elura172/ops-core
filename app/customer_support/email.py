@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import subprocess
 from dataclasses import dataclass
+from typing import Protocol
 
 
 @dataclass(frozen=True)
@@ -25,8 +26,11 @@ class CustomerResponse:
             raise ValueError("response requests prohibited sensitive credentials")
 
 
-class Mailer:
+class Mailer(Protocol):
     def send(self, response: CustomerResponse) -> None: ...
+
+    #: Adapters that can be switched off expose this; the executor preflights on it.
+    enabled: bool
 
 
 class DryRunMailer:
@@ -57,18 +61,12 @@ class HimalayaMailer:
             raise PermissionError("customer response requires approval")
         if not self.enabled:
             raise PermissionError("Himalaya sending is disabled")
+        # The body goes over stdin, never argv: process arguments are world-readable
+        # via `ps`, and this one carries buyer correspondence.
         subprocess.run(
-            [
-                self.binary,
-                "message",
-                "send",
-                "--to",
-                response.recipient,
-                "--subject",
-                response.subject,
-                "--body",
-                response.body,
-            ],
+            [self.binary, "message", "send", "--to", response.recipient],
+            input=f"Subject: {response.subject}\n\n{response.body}",
+            text=True,
             check=True,
             timeout=30,
         )

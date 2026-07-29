@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 from app.agents.models import AgentRole
 from app.agents.orchestrator import AgentOrchestrator
 from app.customer_support.email import CustomerResponse
@@ -12,13 +14,16 @@ def register_publish_and_support_agents(
 ) -> None:
     """Register draft-only handlers; outputs become human-review items."""
 
-    def prepare_publish(data: dict) -> dict:
+    def prepare_publish(data: dict[str, Any]) -> dict[str, Any]:
         request = PublishRequest(**data)
         reviews.submit(
             ReviewItem(
                 request.publish_id,
                 "publish",
+                # The payload fully specifies the action, so the executor never has
+                # to infer anything from the review's identity.
                 {
+                    "publish_id": request.publish_id,
                     "resource_type": request.resource_type,
                     "resource_id": request.resource_id,
                     "payload": request.payload,
@@ -27,7 +32,7 @@ def register_publish_and_support_agents(
         )
         return {"review_id": request.publish_id, "status": "PENDING"}
 
-    def draft_customer_response(data: dict) -> dict:
+    def draft_customer_response(data: dict[str, Any]) -> dict[str, Any]:
         response = CustomerResponse(**data)
         response.validate()
         reviews.submit(
@@ -35,6 +40,7 @@ def register_publish_and_support_agents(
                 response.response_id,
                 "send_customer_response",
                 {
+                    "response_id": response.response_id,
                     "recipient": response.recipient,
                     "subject": response.subject,
                     "body": response.body,

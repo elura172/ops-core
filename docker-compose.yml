@@ -1,27 +1,20 @@
 services:
-  postgres:
-    image: postgres:16-alpine
-    environment:
-      POSTGRES_DB: tiktok_ops
-      POSTGRES_USER: tiktok_ops
-      POSTGRES_PASSWORD: change-me-in-staging
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U tiktok_ops -d tiktok_ops"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
   api:
     build: .
     environment:
       DRY_RUN: "true"
-      ORDER_DB: /tmp/orders.db
+      # Live traffic needs both of these plus every LAUNCH_* attestation; the
+      # app refuses to boot otherwise. See README "Going live".
+      LIVE_ENABLED: "false"
+      PUBLISH_ENABLED: "false"
+      ORDER_DB: /srv/data/orders.db
+      REVIEW_DB: /srv/data/reviews.db
       TTS_WEBHOOK_SECRET: ${TTS_WEBHOOK_SECRET:-staging-only}
+      # Without this the review endpoints answer 503 rather than running open.
+      OPS_TOKENS: ${OPS_TOKENS:-}
+    volumes:
+      - ops_data:/srv/data
     ports:
       - "8000:8000"
-    depends_on:
-      postgres:
-        condition: service_healthy
 volumes:
-  postgres_data:
+  ops_data:

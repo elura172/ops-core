@@ -1,74 +1,177 @@
 from __future__ import annotations
 
 import sqlite3
+import threading
 from datetime import UTC
 from pathlib import Path
+from typing import Any
 
+from app.domain.order_events import ApplyOutcome, Outcome, Resolution, classify
 from app.domain.order_store import OrderEvent
 from app.domain.orders import OrderStatus
+from app.observability.logging import get_logger
+
+logger = get_logger("sqlite")
+
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS orders (
+  order_id TEXT PRIMARY KEY,
+  created_at TEXT NOT NULL,
+  status TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS processed_events (
+  event_id TEXT PRIMARY KEY,
+  order_id TEXT NOT NULL,
+  status TEXT NOT NULL,
+  occurred_at TEXT NOT NULL,
+  outcome TEXT NOT NULL DEFAULT 'applied'
+);
+CREATE TABLE IF NOT EXISTS quarantined_events (
+  event_id TEXT PRIMARY KEY,
+  order_id TEXT NOT NULL,
+  observed_status TEXT NOT NULL,
+  local_status TEXT NOT NULL,
+  occurred_at TEXT NOT NULL,
+  resolved INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_processed_events_order ON processed_events(order_id);
+"""
 
 
 class SQLiteOrderRepository:
-    """Durable local repository with the same semantics as OrderStore."""
+    """Durable local repository with the same semantics as OrderStore.
+
+    Every event is folded inside a single ``BEGIN IMMEDIATE`` transaction, so the
+    duplicate check and the write cannot interleave with another writer, process,
+    or worker thread.
+    """
 
     def __init__(self, path: str | Path) -> None:
-        self.connection = sqlite3.connect(str(path))
-        self.connection.row_factory = sqlite3.Row
-        self.connection.execute("PRAGMA foreign_keys = ON")
-        self.connection.executescript(
-            """
-            CREATE TABLE IF NOT EXISTS orders (
-              order_id TEXT PRIMARY KEY,
-              created_at TEXT NOT NULL,
-              status TEXT NOT NULL,
-              updated_at TEXT NOT NULL
-            );
-            CREATE TABLE IF NOT EXISTS processed_events (
-              event_id TEXT PRIMARY KEY,
-              order_id TEXT NOT NULL,
-              status TEXT NOT NULL,
-              occurred_at TEXT NOT NULL
-            );
-            """
+        if str(path) == ":memory:":
+            logger.warning("sqlite.memory_database", detail="order state will not survive restart")
+        self.connection = sqlite3.connect(
+            str(path), check_same_thread=False, isolation_level=None, timeout=30
         )
-        self.connection.commit()
+        self.connection.row_factory = sqlite3.Row
+        self._lock = threading.RLock()
+        self.connection.execute("PRAGMA foreign_keys = ON")
+        self.connection.execute("PRAGMA busy_timeout = 30000")
+        if str(path) != ":memory:":
+            self.connection.execute("PRAGMA journal_mode = WAL")
+        self.connection.execute("PRAGMA synchronous = FULL")
+        self.connection.executescript(SCHEMA)
 
-    def apply(self, event: OrderEvent) -> bool:
-        existing = self.connection.execute(
+    def apply(self, event: OrderEvent) -> ApplyOutcome:
+        if not event.event_id or not event.order_id:
+            raise ValueError("event_id and order_id are required")
+        occurred_at = event.occurred_at.astimezone(UTC).isoformat()
+        with self._lock:
+            self.connection.execute("BEGIN IMMEDIATE")
+            try:
+                outcome = self._apply_locked(event, occurred_at)
+            except BaseException:
+                self.connection.execute("ROLLBACK")
+                raise
+            self.connection.execute("COMMIT")
+        return outcome
+
+    def _apply_locked(self, event: OrderEvent, occurred_at: str) -> ApplyOutcome:
+        seen = self.connection.execute(
             "SELECT 1 FROM processed_events WHERE event_id = ?", (event.event_id,)
         ).fetchone()
-        if existing:
-            return False
+        if seen:
+            return ApplyOutcome(Outcome.DUPLICATE, event.order_id)
+
         row = self.connection.execute(
-            "SELECT status, created_at FROM orders WHERE order_id = ?", (event.order_id,)
+            "SELECT status FROM orders WHERE order_id = ?", (event.order_id,)
         ).fetchone()
         if row is None:
-            created_at = event.occurred_at.astimezone(UTC).isoformat()
             current = OrderStatus.RECEIVED
             self.connection.execute(
                 "INSERT INTO orders(order_id, created_at, status, updated_at) VALUES (?, ?, ?, ?)",
-                (event.order_id, created_at, current.value, created_at),
+                (event.order_id, occurred_at, current.value, occurred_at),
             )
         else:
             current = OrderStatus(row["status"])
-        if event.status != current:
-            from app.domain.orders import ALLOWED_TRANSITIONS
 
-            if event.status not in ALLOWED_TRANSITIONS[current]:
-                self.connection.rollback()
-                raise ValueError(f"invalid order transition: {current} -> {event.status}")
-        updated = event.occurred_at.astimezone(UTC).isoformat()
+        decision = classify(current, event.status)
+        outcome = {
+            Resolution.APPLY: Outcome.APPLIED,
+            Resolution.UNCHANGED: Outcome.UNCHANGED,
+            Resolution.STALE: Outcome.STALE,
+            Resolution.CONFLICT: Outcome.QUARANTINED,
+        }[decision.resolution]
+
+        self.connection.execute(
+            "INSERT INTO processed_events(event_id, order_id, status, occurred_at, outcome) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (event.event_id, event.order_id, event.status.value, occurred_at, outcome.value),
+        )
+
+        if decision.resolution is Resolution.CONFLICT:
+            self.connection.execute(
+                "INSERT INTO quarantined_events"
+                "(event_id, order_id, observed_status, local_status, occurred_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (event.event_id, event.order_id, event.status.value, current.value, occurred_at),
+            )
+            logger.error(
+                "order.event.quarantined",
+                order_id=event.order_id,
+                event_id=event.event_id,
+                current=current.value,
+                incoming=event.status.value,
+            )
+            return ApplyOutcome(Outcome.QUARANTINED, event.order_id, current)
+
+        if decision.resolution is not Resolution.APPLY:
+            if decision.resolution is Resolution.STALE:
+                logger.info(
+                    "order.event.stale",
+                    order_id=event.order_id,
+                    event_id=event.event_id,
+                    current=current.value,
+                    incoming=event.status.value,
+                )
+            return ApplyOutcome(outcome, event.order_id, current)
+
         self.connection.execute(
             "UPDATE orders SET status = ?, updated_at = ? WHERE order_id = ?",
-            (event.status.value, updated, event.order_id),
+            (event.status.value, occurred_at, event.order_id),
         )
-        self.connection.execute(
-            "INSERT INTO processed_events(event_id, order_id, status, occurred_at) "
-            "VALUES (?, ?, ?, ?)",
-            (event.event_id, event.order_id, event.status.value, updated),
-        )
-        self.connection.commit()
-        return True
+        if decision.skipped:
+            logger.warning(
+                "order.event.fast_forwarded",
+                order_id=event.order_id,
+                event_id=event.event_id,
+                skipped=[status.value for status in decision.skipped],
+            )
+        return ApplyOutcome(Outcome.APPLIED, event.order_id, event.status, decision.skipped)
+
+    def quarantined(self, *, include_resolved: bool = False) -> list[dict[str, Any]]:
+        query = "SELECT * FROM quarantined_events"
+        if not include_resolved:
+            query += " WHERE resolved = 0"
+        with self._lock:
+            rows = self.connection.execute(query + " ORDER BY occurred_at").fetchall()
+        return [dict(row) for row in rows]
+
+    def resolve_quarantined(self, event_id: str) -> bool:
+        """Mark a conflicting event as handled. Returns False if it was not open."""
+        with self._lock:
+            self.connection.execute("BEGIN IMMEDIATE")
+            try:
+                cursor = self.connection.execute(
+                    "UPDATE quarantined_events SET resolved = 1 "
+                    "WHERE event_id = ? AND resolved = 0",
+                    (event_id,),
+                )
+            except BaseException:
+                self.connection.execute("ROLLBACK")
+                raise
+            self.connection.execute("COMMIT")
+        return cursor.rowcount == 1
 
     def close(self) -> None:
         self.connection.close()

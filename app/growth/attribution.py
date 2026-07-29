@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from decimal import Decimal
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
-from app.growth.models import CreativePerformance
+from app.growth.models import Campaign, CreativePerformance
 
 
 def campaign_url(
@@ -32,9 +33,9 @@ def rank_creatives(
     )
 
 
-def can_spend(current_spend, campaign, proposed_spend) -> bool:
+def can_spend(current_spend: Decimal, campaign: Campaign, proposed_spend: Decimal) -> bool:
     """Budget guardrail; callers must persist spend atomically."""
-    return (
+    return bool(
         current_spend >= 0
         and proposed_spend >= 0
         and current_spend + proposed_spend <= campaign.total_budget_gbp

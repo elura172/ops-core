@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Any, Protocol
 
 
 @dataclass(frozen=True)
@@ -9,7 +9,7 @@ class PublishRequest:
     publish_id: str
     resource_type: str
     resource_id: str
-    payload: dict
+    payload: dict[str, Any]
 
 
 @dataclass(frozen=True)

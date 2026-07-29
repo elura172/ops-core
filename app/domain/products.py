@@ -4,6 +4,7 @@ import re
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from decimal import ROUND_HALF_UP, Decimal
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -66,17 +67,65 @@ class ProductPolicyGate:
         return PolicyResult(not reasons, tuple(reasons))
 
 
-def target_price(cost_gbp: Decimal, margin: Decimal = Decimal("0.50")) -> Decimal:
+@dataclass(frozen=True)
+class PricingModel:
+    """Everything between the listed price and what actually lands in the bank.
+
+    Defaults are conservative placeholders — confirm commission and VAT for your
+    category and market before pricing anything real.
+    """
+
+    commission_rate: Decimal = Decimal("0.09")
+    transaction_fee_rate: Decimal = Decimal("0.02")
+    vat_rate: Decimal = Decimal("0.20")
+    refund_reserve_rate: Decimal = Decimal("0.03")
+    shipping_gbp: Decimal = Decimal("0")
+
+    def __post_init__(self) -> None:
+        rates = (
+            self.commission_rate,
+            self.transaction_fee_rate,
+            self.vat_rate,
+            self.refund_reserve_rate,
+        )
+        if any(rate < 0 or rate >= 1 for rate in rates) or self.shipping_gbp < 0:
+            raise ValueError("pricing rates must be within [0, 1) and shipping cannot be negative")
+
+    @property
+    def deduction_rate(self) -> Decimal:
+        """Fraction of the listed price that never reaches contribution margin."""
+        vat_share = self.vat_rate / (Decimal("1") + self.vat_rate)
+        return (
+            vat_share + self.commission_rate + self.transaction_fee_rate + self.refund_reserve_rate
+        )
+
+
+def target_price(
+    cost_gbp: Decimal,
+    margin: Decimal = Decimal("0.50"),
+    pricing: PricingModel | None = None,
+) -> Decimal:
+    """Listed price that leaves ``margin`` of net revenue after costs and fees.
+
+    Marking cost up by the margin alone ignores commission, payment fees, VAT, and
+    refunds, which is how a listing that looks 50% profitable sells at a loss.
+    """
     if cost_gbp <= 0 or not Decimal("0") < margin < Decimal("1"):
         raise ValueError("cost must be positive and margin must be between 0 and 1")
-    return (cost_gbp / (Decimal("1") - margin)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    pricing = pricing or PricingModel()
+    landed_cost = cost_gbp + pricing.shipping_gbp
+    retained = Decimal("1") - pricing.deduction_rate
+    net_share = retained * (Decimal("1") - margin)
+    if net_share <= 0:
+        raise ValueError("fees and margin leave no room in the price; lower the target margin")
+    return (landed_cost / net_share).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
 
 @dataclass
 class ProductDraftBuilder:
     policy_gate: ProductPolicyGate = field(default_factory=ProductPolicyGate)
 
-    def build(self, candidate: ProductCandidate, schema: CategorySchema) -> dict:
+    def build(self, candidate: ProductCandidate, schema: CategorySchema) -> dict[str, Any]:
         result = self.policy_gate.check(candidate, schema)
         if not result.approved:
             raise ValueError("product failed policy gate: " + "; ".join(result.reasons))

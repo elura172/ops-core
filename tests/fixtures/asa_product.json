@@ -1,0 +1,136 @@
+{
+ "asin": "B0DJHFR2GT",
+ "title": "Okavango Garlic Keeper - Terracotta Garlic Container - Garlic Storage - Garlic Holder Countertop - Garlic Holder Ceramic - Jar - Saver -Bowl - Cellar (Ivory, 16oz)",
+ "product_name": "Okavango Garlic Keeper - Terracotta Garlic Container - Garlic Storage - Garlic Holder Countertop - Garlic Holder Ceramic - Jar - Saver -Bowl - Cellar (Ivory, 16oz)",
+ "brand": "Okavango",
+ "manufacturer": "Okavango Traders",
+ "price": 39.99,
+ "price_buybox": 39.99,
+ "currency": "USD",
+ "pricing_count": 1,
+ "rating": 4.6,
+ "reviews_count": 331,
+ "rating_stars_distribution": [
+  {
+   "rating": 5,
+   "percentage": 82
+  },
+  {
+   "rating": 4,
+   "percentage": 10
+  },
+  {
+   "rating": 3,
+   "percentage": 3
+  },
+  {
+   "rating": 2,
+   "percentage": 2
+  },
+  {
+   "rating": 1,
+   "percentage": 3
+  }
+ ],
+ "sales_rank": [
+  {
+   "ladder": [
+    {
+     "name": "Kitchen & Dining",
+     "url": null
+    }
+   ],
+   "rank": 35786
+  },
+  {
+   "ladder": [
+    {
+     "name": "Garlic Keepers",
+     "url": null
+    }
+   ],
+   "rank": 10
+  }
+ ],
+ "category": [
+  {
+   "ladder": [
+    {
+     "name": "Home & Kitchen",
+     "url": "/home-garden-kitchen-furniture-bedding/b/ref=dp_bc_1?ie=UTF8&node=1055398"
+    },
+    {
+     "name": "Kitchen & Dining",
+     "url": "/kitchen-dining/b/ref=dp_bc_2?ie=UTF8&node=284507"
+    },
+    {
+     "name": "Kitchen Utensils & Gadgets",
+     "url": "/tools-gadgets/b/ref=dp_bc_3?ie=UTF8&node=289754"
+    },
+    {
+     "name": "Seasoning & Spice Tools",
+     "url": "/seasoning-spice-tools/b/ref=dp_bc_4?ie=UTF8&node=289779"
+    },
+    {
+     "name": "Garlic Tools",
+     "url": "/Garlic-Tools/b/ref=dp_bc_5?ie=UTF8&node=760382"
+    },
+    {
+     "name": "Garlic Keepers",
+     "url": "/Garlic-Keepers/b/ref=dp_bc_6?ie=UTF8&node=678516011"
+    }
+   ]
+  }
+ ],
+ "product_details": {
+  "item_dimensions_l_x_w_x_h": "4.2\"L x 4.2\"W x 4\"H",
+  "item_weight": "0.73 kg",
+  "unit_count": "16.91 Fluid Ounces",
+  "capacity": "16 fluid ounces",
+  "color": "Ivory",
+  "material_type": "Ceramic",
+  "brand_name": "Okavango",
+  "manufacturer": "Okavango Traders",
+  "upc": "198715703924",
+  "included_components": "Lid",
+  "model_number": "GK001",
+  "manufacturer_part_number": "GK001",
+  "best_sellers_rank": "#35,786 in Kitchen & Dining (See Top 100 in Kitchen & Dining) #10 in Garlic Keepers",
+  "asin": "B0DJHFR2GT",
+  "customer_reviews": "4.6 4.6 out of 5 stars (331) var dpAcrHasRegisteredArcLinkClickAction; P.when('A', 'ready').execute(function(A) { if (dpAcrHasRegisteredArcLinkClickAction !== true) { dpAcrHasRegisteredArcLinkClickAction = true; A.declarative( 'acrLink-click-metrics', 'click', { \"allowLinkDefault\": true }, function (event) { if (window.ue) { ue.count(\"acrLinkClickCount\", (ue.count(\"acrLinkClickCount\") || 0) + 1); } } ); } }); P.when('A', 'cf').execute(function(A) { A.declarative('acrStarsLink-click-metrics', 'click', { \"allowLinkDefault\" : true }, function(event){ if(window.ue) { ue.count(\"acrStarsLinkWithPopoverClickCount\", (ue.count(\"acrStarsLinkWithPopoverClickCount\") || 0) + 1); } }); }); 4.6 out of 5 stars"
+ },
+ "featured_merchant": {
+  "name": "Okavango Traders",
+  "seller_id": "A2OM98O2LD6HHI",
+  "link": "/gp/help/seller/at-a-glance.html/ref=dp_merchant_link?ie=UTF8&seller=A2OM98O2LD6HHI&asin=B0DJHFR2GT&ref_=dp_merchant_link&isAmazonFulfilled=1",
+  "shipped_from": "Amazon",
+  "is_amazon_fulfilled": true
+ },
+ "stock": "In Stock",
+ "variations": [
+  {
+   "asin": "B0DJHFR2GT",
+   "dimensions": {
+    "Color": "Ivory",
+    "Size": "16oz"
+   },
+   "selected": true
+  },
+  {
+   "asin": "B0DJB4348T",
+   "dimensions": {
+    "Color": "White",
+    "Size": "16oz"
+   },
+   "selected": false
+  },
+  {
+   "asin": "B0CJS2B6C4",
+   "dimensions": {
+    "Color": "Terracotta",
+    "Size": "16oz"
+   },
+   "selected": false
+  }
+ ]
+}

@@ -23,10 +23,12 @@ def test_operator_health_and_pending_reviews():
 def test_operator_decide_then_execute():
     operator = service()
     operator.decide("r-1", True, "owner", "inventory verified")
-    result = operator.execute("r-1")
-    assert result["dry_run"] is True
+    result = operator.execute("r-1", actor="grace")
+    assert result["result"]["dry_run"] is True
+    assert result["status"] == "EXECUTED"
+    assert result["executed_by"] == "grace"
 
 
 def test_operator_rejects_unknown_review():
     with pytest.raises(KeyError):
-        service().execute("missing")
+        service().execute("missing", actor="grace")

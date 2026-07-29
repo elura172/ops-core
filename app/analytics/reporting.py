@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from collections import Counter, defaultdict
 from collections.abc import Iterable
 from decimal import Decimal
@@ -22,9 +23,17 @@ def revenue_by_campaign(events: Iterable[AnalyticsEvent]) -> dict[str, Decimal]:
 def deterministic_assignment(
     experiment_id: str, subject_id: str, variants: tuple[str, ...]
 ) -> ExperimentAssignment:
+    """Assign a subject to a variant, stably and independently per experiment.
+
+    A character-sum hash is order-insensitive (``user_ab`` and ``user_ba`` collide)
+    and shifts every subject by one variant when the experiment ID changes by one
+    character, which makes concurrent experiments perfectly correlated instead of
+    independent. A real digest gives neither property.
+    """
     if not experiment_id or not subject_id or not variants:
         raise ValueError("experiment ID, subject ID, and variants are required")
-    index = sum(ord(char) for char in f"{experiment_id}:{subject_id}") % len(variants)
+    digest = hashlib.blake2b(f"{experiment_id}:{subject_id}".encode(), digest_size=8).digest()
+    index = int.from_bytes(digest, "big") % len(variants)
     return ExperimentAssignment(experiment_id, subject_id, variants[index])
 
 

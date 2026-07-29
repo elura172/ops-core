@@ -1,0 +1,676 @@
+<title>Ops Core — how the TikTok Shop flow works</title>
+<style>
+  :root {
+    --ground: #F4F6F8;
+    --surface: #FFFFFF;
+    --surface-sunk: #EDF0F4;
+    --ink: #141920;
+    --ink-soft: #3D4753;
+    --muted: #67717F;
+    --line: #D7DDE5;
+    --line-strong: #B9C2CE;
+    --accent: #23577F;
+    --accent-soft: #E4EDF5;
+    --pass: #2C6B57;
+    --pass-soft: #E0EDE8;
+    --hold: #8A6220;
+    --hold-soft: #F4EBDA;
+    --stop: #97393C;
+    --stop-soft: #F5E4E4;
+    --shadow: 0 1px 2px rgba(20, 25, 32, .06);
+
+    --font-display: ui-serif, "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+    --font-body: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+
+    --measure: 68ch;
+    --pad: clamp(1.25rem, 4vw, 3rem);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --ground: #0E1319;
+      --surface: #151B23;
+      --surface-sunk: #1B2028;
+      --ink: #E7EBF0;
+      --ink-soft: #C2CAD5;
+      --muted: #8E99A7;
+      --line: #2A323C;
+      --line-strong: #3B4552;
+      --accent: #7FB0DA;
+      --accent-soft: #1B2A38;
+      --pass: #7FC5A9;
+      --pass-soft: #172721;
+      --hold: #D6AC6A;
+      --hold-soft: #2A2214;
+      --stop: #D98A8C;
+      --stop-soft: #2B1A1B;
+      --shadow: 0 1px 2px rgba(0, 0, 0, .4);
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --ground: #0E1319;
+    --surface: #151B23;
+    --surface-sunk: #1B2028;
+    --ink: #E7EBF0;
+    --ink-soft: #C2CAD5;
+    --muted: #8E99A7;
+    --line: #2A323C;
+    --line-strong: #3B4552;
+    --accent: #7FB0DA;
+    --accent-soft: #1B2A38;
+    --pass: #7FC5A9;
+    --pass-soft: #172721;
+    --hold: #D6AC6A;
+    --hold-soft: #2A2214;
+    --stop: #D98A8C;
+    --stop-soft: #2B1A1B;
+    --shadow: 0 1px 2px rgba(0, 0, 0, .4);
+  }
+
+  :root[data-theme="light"] {
+    --ground: #F4F6F8;
+    --surface: #FFFFFF;
+    --surface-sunk: #EDF0F4;
+    --ink: #141920;
+    --ink-soft: #3D4753;
+    --muted: #67717F;
+    --line: #D7DDE5;
+    --line-strong: #B9C2CE;
+    --accent: #23577F;
+    --accent-soft: #E4EDF5;
+    --pass: #2C6B57;
+    --pass-soft: #E0EDE8;
+    --hold: #8A6220;
+    --hold-soft: #F4EBDA;
+    --stop: #97393C;
+    --stop-soft: #F5E4E4;
+    --shadow: 0 1px 2px rgba(20, 25, 32, .06);
+  }
+
+  body {
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--font-body);
+    font-size: 16px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap {
+    max-width: 78ch;
+    margin: 0 auto;
+    padding: var(--pad) var(--pad) 5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 3.25rem;
+  }
+
+  p, li { max-width: var(--measure); }
+
+  a { color: var(--accent); text-underline-offset: 2px; }
+  a:focus-visible, summary:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 3px;
+  }
+
+  code, .mono { font-family: var(--font-mono); }
+  code {
+    font-size: .875em;
+    background: var(--surface-sunk);
+    border: 1px solid var(--line);
+    border-radius: 2px;
+    padding: .08em .32em;
+  }
+
+  /* ---- masthead ---- */
+  .masthead { display: flex; flex-direction: column; gap: .9rem; }
+  .eyebrow {
+    font-family: var(--font-mono);
+    font-size: .72rem;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  h1 {
+    font-family: var(--font-display);
+    font-size: clamp(2rem, 5.5vw, 2.9rem);
+    line-height: 1.12;
+    font-weight: 600;
+    letter-spacing: -.015em;
+    text-wrap: balance;
+    margin: 0;
+  }
+  .standfirst {
+    font-size: 1.075rem;
+    color: var(--ink-soft);
+    max-width: 62ch;
+  }
+  .rule {
+    height: 1px;
+    background: var(--line-strong);
+    border: 0;
+    margin: 0;
+  }
+
+  /* ---- sections ---- */
+  section { display: flex; flex-direction: column; gap: 1rem; }
+  h2 {
+    font-family: var(--font-display);
+    font-size: 1.5rem;
+    font-weight: 600;
+    letter-spacing: -.01em;
+    margin: 0;
+    padding-bottom: .55rem;
+    border-bottom: 1px solid var(--line);
+  }
+  h3 {
+    font-family: var(--font-body);
+    font-size: .8rem;
+    font-weight: 650;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: .5rem 0 0;
+  }
+  p { margin: 0; }
+
+  /* ---- panels ---- */
+  .panel {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    box-shadow: var(--shadow);
+    padding: 1.1rem 1.25rem;
+    overflow-x: auto;
+  }
+  .panel > pre.mermaid { margin: 0; background: none; }
+
+  .caption {
+    font-family: var(--font-mono);
+    font-size: .74rem;
+    color: var(--muted);
+    line-height: 1.5;
+  }
+
+  /* ---- tables ---- */
+  .scroller { overflow-x: auto; border: 1px solid var(--line); border-radius: 3px; background: var(--surface); }
+  table { border-collapse: collapse; width: 100%; font-size: .9rem; }
+  th, td {
+    text-align: left;
+    padding: .6rem .85rem;
+    border-bottom: 1px solid var(--line);
+    vertical-align: top;
+  }
+  thead th {
+    font-family: var(--font-mono);
+    font-size: .7rem;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--muted);
+    font-weight: 500;
+    background: var(--surface-sunk);
+    white-space: nowrap;
+  }
+  tbody tr:last-child td { border-bottom: 0; }
+  td.num { font-variant-numeric: tabular-nums; font-family: var(--font-mono); white-space: nowrap; }
+
+  /* ---- status chips ---- */
+  .chip {
+    display: inline-block;
+    font-family: var(--font-mono);
+    font-size: .7rem;
+    letter-spacing: .04em;
+    padding: .12rem .45rem;
+    border-radius: 2px;
+    border: 1px solid currentColor;
+    white-space: nowrap;
+  }
+  .chip.pass { color: var(--pass); background: var(--pass-soft); }
+  .chip.hold { color: var(--hold); background: var(--hold-soft); }
+  .chip.stop { color: var(--stop); background: var(--stop-soft); }
+  .chip.info { color: var(--accent); background: var(--accent-soft); }
+
+  /* ---- checklist ---- */
+  .checklist { display: flex; flex-direction: column; gap: 0; border: 1px solid var(--line); border-radius: 3px; background: var(--surface); }
+  .check {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: .35rem 1rem;
+    align-items: baseline;
+    padding: .8rem 1rem;
+    border-bottom: 1px solid var(--line);
+  }
+  .check:last-child { border-bottom: 0; }
+  .check .name { font-family: var(--font-mono); font-size: .85rem; color: var(--ink); }
+  .check .how { grid-column: 1 / -1; font-size: .88rem; color: var(--ink-soft); max-width: 60ch; }
+
+  /* ---- refusal list ---- */
+  .refusals { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: .55rem; }
+  .refusals li {
+    display: grid;
+    grid-template-columns: 8.5rem 1fr;
+    gap: .25rem .9rem;
+    align-items: baseline;
+    padding-left: .9rem;
+    border-left: 2px solid var(--line-strong);
+    max-width: none;
+  }
+  .refusals .trigger { font-family: var(--font-mono); font-size: .78rem; color: var(--muted); }
+  .refusals .result { font-size: .92rem; max-width: 56ch; }
+  @media (max-width: 560px) {
+    .refusals li { grid-template-columns: 1fr; }
+  }
+
+  .note {
+    border-left: 2px solid var(--hold);
+    background: var(--hold-soft);
+    padding: .75rem 1rem;
+    border-radius: 0 3px 3px 0;
+    font-size: .93rem;
+    color: var(--ink-soft);
+  }
+  .note strong { color: var(--ink); }
+
+  footer {
+    border-top: 1px solid var(--line);
+    padding-top: 1.25rem;
+    font-size: .87rem;
+    color: var(--muted);
+    display: flex;
+    flex-direction: column;
+    gap: .5rem;
+  }
+</style>
+
+<div class="wrap">
+
+  <header class="masthead">
+    <div class="eyebrow">ops-core · tiktok shop pipeline</div>
+    <h1>Every path through this system ends at a gate that can say no</h1>
+    <p class="standfirst">
+      An operations core for an authorized TikTok Shop integration. Nothing mutates the
+      shop without a human approving it, and nothing reaches live mode without a
+      checklist attesting to it. This is where each refusal lives and what triggers it.
+    </p>
+    <hr class="rule" />
+  </header>
+
+  <section>
+    <h2>The shape of it</h2>
+    <p>
+      Two things arrive from outside: order events pushed by the platform, and operators
+      making decisions. They meet two separate stores and never share a path.
+    </p>
+    <div class="panel">
+<pre class="mermaid">
+flowchart TB
+  TT["TikTok<br/>order webhooks"] --> SIG{"HMAC<br/>signature"}
+  SIG -->|invalid| R401["401"]
+  SIG -->|valid| CLS["Classify against<br/>local order state"]
+  CLS --> ODB[("ORDER_DB<br/>orders · processed_events<br/>quarantined_events")]
+
+  AG["Agent layer<br/>discovery · catalog · media"] --> RQ["Review queue"]
+  OP["Operator<br/>bearer token"] --> AUTH{"Token → principal<br/>role → permission"}
+  AUTH -->|no match| R4["401 / 403"]
+  AUTH -->|allowed| RQ
+  RQ --> RDB[("REVIEW_DB<br/>reviews · audit_events")]
+  RQ --> EX["Executor<br/>5 allowlisted operations"]
+  EX --> GATES{"Adapter<br/>enabled?"}
+  GATES -->|no| HOLD["Refused,<br/>approval kept"]
+  GATES -->|yes| SHOP["TikTok client<br/>publisher · mailer"]
+</pre>
+    </div>
+    <p class="caption">
+      Order state and review state are separate SQLite databases. A webhook can never
+      reach the executor; an operator can never write order state.
+    </p>
+  </section>
+
+  <section>
+    <h2>Order events</h2>
+    <p>
+      Webhook delivery is neither ordered nor exactly-once, so an event that isn’t the
+      next lifecycle step is normal traffic — not an error. Each event is classified
+      against what’s already stored, inside one <code>BEGIN IMMEDIATE</code> transaction.
+    </p>
+
+    <div class="panel">
+<pre class="mermaid">
+flowchart LR
+  RECEIVED --> PAID --> FULFILLMENT_PENDING --> LABEL_CREATED --> SHIPPED --> IN_TRANSIT --> DELIVERED
+  SHIPPED --> DELIVERED
+  RECEIVED --> CANCELLED
+  PAID --> CANCELLED
+  FULFILLMENT_PENDING --> CANCELLED
+  LABEL_CREATED --> CANCELLED
+</pre>
+    </div>
+    <p class="caption">
+      Reachability in this graph decides every outcome below. <code>DELIVERED</code> and
+      <code>CANCELLED</code> are terminal and unreachable from each other — which is why a
+      cancellation arriving after delivery is a conflict rather than a transition.
+    </p>
+
+    <h3>What each arrival does</h3>
+    <div class="scroller">
+      <table>
+        <thead>
+          <tr><th>Arriving event</th><th>Outcome</th><th>HTTP</th><th>Effect on stored state</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Next step, or a jump forward</td>
+            <td><span class="chip pass">applied</span></td>
+            <td class="num">200</td>
+            <td>Status advances; the states never observed are logged as skipped</td>
+          </tr>
+          <tr>
+            <td>Status already held</td>
+            <td><span class="chip info">unchanged</span></td>
+            <td class="num">200</td>
+            <td>None</td>
+          </tr>
+          <tr>
+            <td><code>event_id</code> seen before</td>
+            <td><span class="chip info">duplicate</span></td>
+            <td class="num">200</td>
+            <td>None</td>
+          </tr>
+          <tr>
+            <td>A step already passed</td>
+            <td><span class="chip hold">stale</span></td>
+            <td class="num">200</td>
+            <td>None — the order never regresses</td>
+          </tr>
+          <tr>
+            <td>Unreachable in either direction</td>
+            <td><span class="chip stop">quarantined</span></td>
+            <td class="num">202</td>
+            <td>Stored for a human; order untouched</td>
+          </tr>
+          <tr>
+            <td>Bad signature</td>
+            <td><span class="chip stop">rejected</span></td>
+            <td class="num">401</td>
+            <td>None</td>
+          </tr>
+          <tr>
+            <td>Missing required fields</td>
+            <td><span class="chip stop">rejected</span></td>
+            <td class="num">400</td>
+            <td>None</td>
+          </tr>
+          <tr>
+            <td>Storage failed</td>
+            <td><span class="chip stop">error</span></td>
+            <td class="num">500</td>
+            <td>None — the platform retries</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="note">
+      <strong>Why the status codes matter.</strong> Anything answered <code>200</code> is
+      recorded by TikTok as delivered and never resent. That’s why a storage failure has
+      to be a <code>500</code>, and why a conflict is captured durably before it can be
+      answered at all.
+    </div>
+
+    <p>
+      Quarantined events surface at <code>GET /orders/quarantined</code> and are closed
+      with <code>POST /orders/quarantined/{event_id}/resolve</code>. An order first seen
+      mid-lifecycle has an estimated creation time, so it’s excluded from the fulfillment
+      SLA rather than judged against a timestamp that was inferred.
+    </p>
+  </section>
+
+  <section>
+    <h2>Approval and execution</h2>
+    <p>
+      Anything that would change the shop becomes a review item. Approving it is
+      necessary and never sufficient.
+    </p>
+
+    <div class="panel">
+<pre class="mermaid">
+stateDiagram-v2
+  [*] --> PENDING
+  PENDING --> REJECTED : decide(approve=false)
+  PENDING --> APPROVED : decide(approve=true)
+  APPROVED --> EXECUTING : claim (conditional UPDATE)
+  EXECUTING --> EXECUTED : adapter returned
+  EXECUTING --> FAILED : adapter raised
+  EXECUTED --> EXECUTED : replay returns stored result
+  FAILED --> [*] : needs a fresh approval
+  REJECTED --> [*]
+  EXECUTED --> [*]
+</pre>
+    </div>
+
+    <p>
+      The claim is an <code>UPDATE … WHERE status = 'APPROVED'</code> inside a transaction,
+      so a replay, a restart, or a second worker racing the same approval cannot run the
+      mutation twice. Failure is terminal on purpose: the outcome of a partial mutation is
+      unknown, so a human re-approves rather than a retry duplicating it.
+    </p>
+
+    <h3>Who can do what</h3>
+    <div class="scroller">
+      <table>
+        <thead>
+          <tr><th>Role</th><th>Read reviews</th><th>Approve / reject</th><th>Execute</th></tr>
+        </thead>
+        <tbody>
+          <tr><td class="mono">reviewer</td><td><span class="chip pass">yes</span></td><td><span class="chip pass">yes</span></td><td><span class="chip stop">no</span></td></tr>
+          <tr><td class="mono">operator</td><td><span class="chip pass">yes</span></td><td><span class="chip stop">no</span></td><td><span class="chip pass">yes</span></td></tr>
+          <tr><td class="mono">admin</td><td><span class="chip pass">yes</span></td><td><span class="chip pass">yes</span></td><td><span class="chip pass">yes</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="caption">
+      Identity comes from the bearer token, never the request body. Only SHA-256 digests
+      are configured, so the environment file never holds a usable credential. With
+      <code>OPS_TOKENS</code> empty every review endpoint answers 503 — an unconfigured
+      deployment is a fault, not open access.
+    </p>
+  </section>
+
+  <section>
+    <h2>From agent to shop</h2>
+    <p>
+      Agents draft; they never act. Each one produces a review item, and every operation
+      they can produce has a handler waiting — so an approval never dead-ends.
+    </p>
+    <div class="panel">
+<pre class="mermaid">
+flowchart LR
+  A["prepare_publish"] --> RV["review item"]
+  B["draft_customer_response"] --> RV
+  RV --> H{"human decision"}
+  H -->|rejected| END["stops here"]
+  H -->|approved| P{"adapter enabled?"}
+  P -->|"PUBLISH_ENABLED=false"| K["refused — approval kept"]
+  P -->|enabled| D["DryRunPublisher / mailer"]
+</pre>
+    </div>
+    <p>
+      The executor’s allowlist is five operations: <code>create_product_draft</code>,
+      <code>update_inventory</code>, <code>update_prices</code>, <code>publish</code>,
+      and <code>send_customer_response</code>. A disabled adapter is checked
+      <em>before</em> the item is claimed, because publishing being switched off is a
+      configuration state, not a failed mutation — flip the flag and execute the same item.
+    </p>
+    <p>
+      Customer-response reviews hold the recipient and message body, since nobody can
+      approve a message they can’t read. That content stays in <code>REVIEW_DB</code>:
+      never logged, never returned in an execution result.
+    </p>
+  </section>
+
+  <section>
+    <h2>Going live</h2>
+    <p>
+      The launch gate runs at startup, before a live client can be constructed. An
+      unattested deployment fails to boot rather than failing at its first mutation. All
+      seven must hold.
+    </p>
+    <div class="checklist">
+      <div class="check">
+        <span class="name">DRY_RUN=false</span>
+        <span class="chip info">intent</span>
+        <span class="how">States that live mode is wanted.</span>
+      </div>
+      <div class="check">
+        <span class="name">LIVE_ENABLED=true</span>
+        <span class="chip info">intent</span>
+        <span class="how">A second deliberate act, so one stray flag isn’t enough.</span>
+      </div>
+      <div class="check">
+        <span class="name">secrets_configured</span>
+        <span class="chip pass">derived</span>
+        <span class="how">Every <code>TTS_*</code> value present. Not self-declarable.</span>
+      </div>
+      <div class="check">
+        <span class="name">approval_required</span>
+        <span class="chip pass">derived</span>
+        <span class="how">
+          <code>OPS_TOKENS</code> configured — approval is only a control if the reviewer
+          can be authenticated. Not self-declarable.
+        </span>
+      </div>
+      <div class="check">
+        <span class="name">signing_verified</span>
+        <span class="chip hold">attested</span>
+        <span class="how">A human confirms request signing was verified against Partner Center.</span>
+      </div>
+      <div class="check">
+        <span class="name">sandbox_passed</span>
+        <span class="chip hold">attested</span>
+        <span class="how">A human confirms the sandbox flow was exercised.</span>
+      </div>
+      <div class="check">
+        <span class="name">pii_controls_verified</span>
+        <span class="chip hold">attested</span>
+        <span class="how">A human confirms the data-handling controls.</span>
+      </div>
+    </div>
+    <p class="caption">
+      Nothing in the process can verify that a sandbox run happened, so the three
+      attestations record a human’s claim — and the audit trail records who deployed it.
+      <code>LIVE_ENABLED</code> and the <code>LAUNCH_*</code> flags are inert while
+      <code>DRY_RUN=true</code>.
+    </p>
+  </section>
+
+  <section>
+    <h2>Every way this system says no</h2>
+    <ul class="refusals">
+      <li>
+        <span class="trigger">no token</span>
+        <span class="result">Review endpoints answer 401; wrong role answers 403.</span>
+      </li>
+      <li>
+        <span class="trigger">no OPS_TOKENS</span>
+        <span class="result">503 on every review endpoint, rather than serving unauthenticated.</span>
+      </li>
+      <li>
+        <span class="trigger">already executed</span>
+        <span class="result">Returns the stored result without re-invoking the client.</span>
+      </li>
+      <li>
+        <span class="trigger">execution failed</span>
+        <span class="result">Terminal. Needs a fresh approval — never an automatic retry.</span>
+      </li>
+      <li>
+        <span class="trigger">adapter off</span>
+        <span class="result">Refused before the claim, so the approval survives.</span>
+      </li>
+      <li>
+        <span class="trigger">unattested</span>
+        <span class="result">The process refuses to start in live mode.</span>
+      </li>
+      <li>
+        <span class="trigger">restricted claim</span>
+        <span class="result">Generated copy carrying a health or performance claim is blocked inside the provider.</span>
+      </li>
+      <li>
+        <span class="trigger">budget spent</span>
+        <span class="result">Model calls stop once the call or token cap is reached.</span>
+      </li>
+      <li>
+        <span class="trigger">public topic</span>
+        <span class="result">Alerts carrying order IDs won’t publish to an unauthenticated ntfy topic.</span>
+      </li>
+      <li>
+        <span class="trigger">margin impossible</span>
+        <span class="result">Pricing raises rather than returning a number that loses money.</span>
+      </li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Where the money math lives</h2>
+    <p>
+      <code>target_price</code> is fee-aware. Marking cost up by the target margin alone
+      ignores commission, transaction fees, VAT, and refunds — which is how a listing that
+      looks 50% profitable sells at a fraction of it.
+    </p>
+    <div class="scroller">
+      <table>
+        <thead>
+          <tr><th>£10 of cost, 50% target</th><th>List price</th><th>Net after fees &amp; VAT</th><th>Actual margin</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Plain markup</td>
+            <td class="num">£20.00</td>
+            <td class="num">£13.87</td>
+            <td class="num"><span class="chip stop">28%</span></td>
+          </tr>
+          <tr>
+            <td>Fee-aware</td>
+            <td class="num">£28.85</td>
+            <td class="num">£20.00</td>
+            <td class="num"><span class="chip pass">50%</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="caption">
+      The default rates in <code>PricingModel</code> are placeholders. Confirm commission
+      and VAT for your category and market before pricing anything real.
+    </p>
+  </section>
+
+  <section>
+    <h2>What isn’t built yet</h2>
+    <p>
+      <code>TikTokClient</code> is deliberately a boundary, not a fake implementation. No
+      live call has ever been made. <code>app/api/signing.py</code> is an unverified
+      canonicalization scaffold and isn’t wired into the client — which is exactly what
+      <code>LAUNCH_SIGNING_VERIFIED</code> attests to, so don’t set it yet.
+    </p>
+    <div class="note">
+      <strong>Unexecuted here.</strong> The container image has never been built and CI has
+      never run — no Docker daemon was available. What is verified is the packaging they
+      depend on and both launch-gate environment matrices, replicated locally. Whether
+      <code>himalaya message send</code> accepts a stdin message is version-dependent; its
+      test proves the body stays out of <code>argv</code>, not that delivery works.
+    </div>
+  </section>
+
+  <footer>
+    <div>
+      Current API versions, scopes, signatures, categories, warehouse IDs, and shipping
+      providers must come from TikTok Shop Partner Center and be exercised in its sandbox
+      before any of this goes live.
+    </div>
+    <div class="mono" style="font-size:.74rem">
+      194 tests · mypy --strict across 64 files · branch harden/controls-and-correctness · PR #1
+    </div>
+  </footer>
+
+</div>
