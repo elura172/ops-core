@@ -6,11 +6,31 @@ from dataclasses import dataclass
 from app.api.security import TokenRegistry
 from app.ops.launch import LaunchChecklist
 
-_FALSEY = {"0", "false", "no"}
+_TRUTHY = {"1", "true", "yes", "on"}
+_FALSEY = {"0", "false", "no", "off"}
 
 
 def _flag(name: str, default: str = "false") -> bool:
-    return os.getenv(name, default).strip().lower() not in _FALSEY
+    """Parse a boolean environment variable, failing closed on anything unclear.
+
+    Every caller's default is that flag's safe value: ``DRY_RUN`` defaults on,
+    every attestation and enable switch defaults off. So an unset *or blank*
+    variable takes the default and stays safe — blanking a variable is the
+    ordinary way to unset it, and it used to read as True, which silently
+    satisfied every ``LAUNCH_*`` attestation and let an unattested deployment
+    boot live. A value that is neither truthy nor falsey is a deployment fault,
+    not an attestation, so it raises rather than being guessed.
+    """
+    raw = os.getenv(name, default).strip().lower() or default.strip().lower()
+    if raw in _TRUTHY:
+        return True
+    if raw in _FALSEY:
+        return False
+    raise RuntimeError(
+        f"{name} must be a boolean "
+        f"({'/'.join(sorted(_TRUTHY))} or {'/'.join(sorted(_FALSEY))}), "
+        f"got: {os.getenv(name)!r}"
+    )
 
 
 @dataclass(frozen=True)
