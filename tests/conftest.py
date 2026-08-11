@@ -34,6 +34,9 @@ def settings(tokens: TokenRegistry) -> Settings:
         webhook_secret=WEBHOOK_SECRET,
         tokens=tokens,
         order_db=":memory:",
+        # Both, or create_app() writes a real reviews.db into whatever directory
+        # pytest was run from and keeps it open across the whole session.
+        review_db=":memory:",
         dry_run=True,
     )
 

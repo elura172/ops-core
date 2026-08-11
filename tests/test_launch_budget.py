@@ -78,3 +78,27 @@ def test_setup_costs_scale_with_months_before_revenue():
 def test_a_launch_needs_units():
     with pytest.raises(ValueError):
         plan(units=0)
+
+
+def test_break_even_never_reports_a_recovery_that_has_not_happened():
+    """A partial unit does not sell, so break-even is a ceiling.
+
+    Rounding to nearest under-reports it whenever the exact requirement lands
+    just above an integer, and then `recovers_on_first_order` contradicts
+    `profit_if_sold_out` on the same object -- the plan claims the launch paid
+    for itself while the profit on that order is still negative.
+    """
+    exact = plan(units=1, ppc_budget=Decimal("700"))
+    needed = (exact.fixed_cost + exact.ppc_budget) / exact.profit_per_unit
+    assert Decimal("299") < needed < Decimal("300"), "fixture no longer straddles an integer"
+
+    # Rounding to nearest would report 299 here, and 299 units lose $1.66.
+    at_rounded = plan(units=299, ppc_budget=Decimal("700"))
+    assert at_rounded.break_even_units == 300
+    assert at_rounded.recovers_on_first_order is False
+    assert at_rounded.profit_if_sold_out < 0
+
+    # One more unit is what actually clears it.
+    cleared = plan(units=300, ppc_budget=Decimal("700"))
+    assert cleared.recovers_on_first_order is True
+    assert cleared.profit_if_sold_out >= 0

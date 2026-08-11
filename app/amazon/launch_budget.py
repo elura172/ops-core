@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from decimal import ROUND_HALF_UP, Decimal
+from decimal import ROUND_CEILING, ROUND_HALF_UP, Decimal
 
 from app.amazon.fees import (
     FeeSchedule,
@@ -126,7 +126,10 @@ class LaunchPlan:
         if per_unit <= 0:
             return None
         needed = (self.fixed_cost + self.ppc_budget) / per_unit
-        return int(needed.to_integral_value(rounding=ROUND_HALF_UP))
+        # Ceiling, not nearest: a partial unit does not sell, so rounding 216.03
+        # down to 216 reports break-even on an order that is still $0.33 short
+        # and makes recovers_on_first_order contradict profit_if_sold_out.
+        return int(needed.to_integral_value(rounding=ROUND_CEILING))
 
     @property
     def recovers_on_first_order(self) -> bool:

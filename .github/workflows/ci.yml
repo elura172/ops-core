@@ -19,8 +19,16 @@ jobs:
         with:
           enable-cache: true
 
+      # Into a venv, not the runner's Python: the ubuntu-latest image marks its
+      # system interpreter externally managed (PEP 668), so `--system` fails
+      # before any check runs -- which is why this job had never once executed.
+      # Pinned to the version the container is built on, so CI and the image
+      # cannot pass on different Pythons.
       - name: Install
-        run: uv pip install --system -e ".[dev]"
+        run: |
+          uv venv --python 3.13
+          uv pip install -e ".[dev]"
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
 
       - name: Lint
         run: ruff check .
