@@ -7,8 +7,12 @@ services:
       # app refuses to boot otherwise. See README "Going live".
       LIVE_ENABLED: "false"
       PUBLISH_ENABLED: "false"
-      ORDER_DB: /srv/data/orders.db
-      REVIEW_DB: /srv/data/reviews.db
+      # Postgres is the multi-worker backend; both schemas share one database
+      # and one migration spine, and migrations run before either store opens.
+      # Point at SQLite (a path, e.g. /srv/data/reviews.db) only for
+      # single-process deployments.
+      ORDER_DB: ${POSTGRES_DSN:?set POSTGRES_DSN}
+      REVIEW_DB: ${POSTGRES_DSN:?set POSTGRES_DSN}
       TTS_WEBHOOK_SECRET: ${TTS_WEBHOOK_SECRET:-staging-only}
       # Without this the review endpoints answer 503 rather than running open.
       OPS_TOKENS: ${OPS_TOKENS:-}
@@ -16,5 +20,22 @@ services:
       - ops_data:/srv/data
     ports:
       - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+  db:
+    image: postgres:17
+    environment:
+      - POSTGRES_USER=ops
+      - POSTGRES_PASSWORD
+      - POSTGRES_DB=ops_core
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ops -d ops_core"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 volumes:
   ops_data:
+  pg_data:

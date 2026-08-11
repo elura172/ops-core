@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import time
 from collections.abc import Callable
 from dataclasses import asdict
 from typing import Any, Protocol
 
 from app.customer_support.email import CustomerResponse, DryRunMailer, Mailer
 from app.domain.audit import AuditEvent
+from app.observability import metrics
 from app.observability.logging import get_logger
 from app.publish.layer import DryRunPublisher, PublishGate, PublishRequest
 from app.review.queue import AlreadyExecuted, ReviewItem, ReviewStore
@@ -124,12 +126,19 @@ class ApprovedActionExecutor:
         try:
             claimed = store.claim_for_execution(review_id, actor)
         except AlreadyExecuted as exc:
+            metrics.executions_total().inc(outcome="replayed")
             logger.info("review.execute.replayed", review_id=review_id, actor=actor)
             return {"replayed": True, "result": exc.item.result, "item": exc.item}
+        except (ValueError, PermissionError):
+            # A racer lost mid-flight, or the item is terminal. Nothing ran.
+            metrics.executions_total().inc(outcome="claim_rejected")
+            raise
 
+        started = time.monotonic()
         try:
             result = self._dispatch(claimed.operation, claimed.payload)
         except Exception as exc:
+            metrics.executions_total().inc(outcome="failed")
             failed = store.fail_execution(review_id, str(exc))
             self._audit(
                 "approved_action.execute",
@@ -147,6 +156,8 @@ class ApprovedActionExecutor:
             raise ExecutionFailed(failed, str(exc)) from exc
 
         executed = store.complete_execution(review_id, result)
+        metrics.executions_total().inc(outcome="completed")
+        metrics.execution_seconds().observe(time.monotonic() - started)
         self._audit(
             "approved_action.execute",
             actor,

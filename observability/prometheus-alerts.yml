@@ -1,0 +1,25 @@
+# The same two conditions app/observability/alerts.py evaluates in-process,
+# expressed as Prometheus rules for deployments that scrape /metrics. The
+# in-process evaluator is the floor (it works with zero infrastructure); these
+# are the same alerts with real routing once a Prometheus server exists.
+groups:
+  - name: ops-core-review-queue
+    rules:
+      - alert: ReviewExecutionFailed
+        expr: increase(ops_review_executions_total{outcome="failed"}[5m]) > 0
+        labels:
+          severity: page
+        annotations:
+          summary: an approved mutation failed mid-execution
+          description: >-
+            The item is terminal and needs a human re-approval; see the
+            audit trail for the failing review_id.
+      - alert: StaleExecutionRecovered
+        expr: increase(ops_review_stale_recoveries_total[5m]) > 0
+        labels:
+          severity: page
+        annotations:
+          summary: a worker died holding an EXECUTING claim
+          description: >-
+            The mutation outcome is unknown. Reconcile against the upstream
+            system before re-approving.

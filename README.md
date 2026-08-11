@@ -53,14 +53,35 @@ EXECUTED`, a replayed call returns the stored result without re-invoking the
 client, and a failure is terminal: the outcome of a partial mutation is unknown,
 so it requires a fresh approval rather than an automatic retry.
 
-That guarantee is durable, not per-process. `SQLiteReviewStore` (`REVIEW_DB`)
-persists review state and claims it with a conditional
-`UPDATE ... WHERE status = 'APPROVED'`, so a restart, a replay, or a second worker
-racing the same approval cannot run the mutation twice. The audit trail — who
-approved, who executed — is written in the same transaction as the state change it
-describes, in the `audit_events` table of `REVIEW_DB` — that table, not the
-in-memory `AuditLog`, is the durable trail. An `EXECUTING` item abandoned by a crash is recovered to `FAILED` at
-startup, which means a human re-approves; recovery never retries on its own.
+That guarantee is durable, not per-process. `REVIEW_DB` and `ORDER_DB` each
+select a backend — usually the same Postgres DSN, since both schemas live on
+one migration spine:
+
+- a `postgresql://` DSN opens `PostgresReviewStore` / `PostgresOrderRepository`
+  — the multi-worker backends, and what `docker-compose.yml` deploys. Schema is
+  owned by forward-only SQL migrations in `migrations/`, applied by
+  `python -m app.db.migrate <dsn>` (and automatically before a store opens).
+  The runner records each migration in `schema_migrations`, applies each file
+  in its own transaction, serializes concurrent runners with an advisory lock,
+  and refuses drift between the table and the files on disk.
+- a filesystem path opens the SQLite equivalents, for single-process
+  deployments.
+
+For Compose, copy `.env.example` to `.env` and set `POSTGRES_PASSWORD`.
+The example derives the required `POSTGRES_DSN` from it, and Compose passes that
+same DSN to both stores. Neither value has an in-repository default.
+
+In both, the claim is a conditional `UPDATE ... WHERE status = 'APPROVED'`, so a
+restart, a replay, or a second worker racing the same approval cannot run the
+mutation twice. That is not an aspiration; it is load-tested — see
+[Measured behavior](#measured-behavior) — and `tests/test_review_contention.py`
+barrier-races 12 workers against one approval and then re-runs the race with the
+conditional removed to prove the harness catches the resulting double execution.
+The audit trail — who approved, who executed — is written in the same
+transaction as the state change it describes, in the `audit_events` table —
+that table, not the in-memory `AuditLog`, is the durable trail. An `EXECUTING`
+item abandoned by a crash is recovered to `FAILED` at startup, which means a
+human re-approves; recovery never retries on its own.
 
 The in-memory `ReviewQueue` implements the same contract for development and
 tests, but its state is per-process and is not shared between workers.
@@ -134,10 +155,72 @@ Customer-response reviews hold the recipient and body, because a human cannot
 approve a message they cannot read. That content lives in `REVIEW_DB` and nowhere
 else — it is never logged and never returned in an execution result.
 
+## Measured behavior
+
+Numbers from `python -m scripts.load_review_queue`, 2026-08-06, on an Apple
+Silicon laptop (M-series, macOS 25.5), Postgres 17.10 on localhost, 8 workers
+each holding its own connection pool, 1,000 approved items, full
+`submit → decide → claim → execute → complete` per item with the audit row in
+the same transaction:
+
+| backend  | executions/s | p50   | p95   | p99   | max    |
+|----------|-------------:|------:|------:|------:|-------:|
+| postgres |        1,418 | 5.4ms | 7.7ms | 9.8ms | 13.8ms |
+| sqlite   |        2,788 | 0.2ms | 0.3ms | 37.6ms | 354.8ms |
+
+SQLite is faster at p50 and an order of magnitude worse at the tail — its
+single-writer lock queues whole transactions behind the slowest fsync, which is
+exactly why the multi-worker deployment is Postgres.
+
+Contention, same harness: 50 approved items, 12 barrier-synchronized workers
+racing each one (600 execute attempts total, per backend). Result: **50 side
+effects** — every item executed exactly once; all 550 losers either replayed
+the stored result or were refused mid-flight. The inverse is also tested:
+strip `AND status = 'APPROVED'` from the claim and the same race double-fires
+(5/5 rounds failed when we did exactly that against the real store), so the
+green run measures a guard that is provably load-bearing.
+
+Order-event ingest, same harness: 250 orders × 4 lifecycle events each
+(PAID, SHIPPED, DELIVERED, plus a replayed PAID), shuffled into a single
+stream and folded by 8 workers — webhook delivery is neither ordered nor
+exactly-once, so this is the shape of real traffic. Every run must end with
+all 250 orders on `DELIVERED` and every replay reported `duplicate`, or the
+harness aborts:
+
+| backend  | events/s | p50   | p95   | p99   | max     |
+|----------|---------:|------:|------:|------:|--------:|
+| postgres |    3,996 | 2.0ms | 3.0ms | 4.8ms |   7.6ms |
+| sqlite   |    6,360 | 0.1ms | 0.2ms | 0.5ms | 147.3ms |
+
+The order pipeline's two Postgres guards are proven load-bearing the same way
+as the review claim (`tests/test_order_contention.py`): drop the
+`SELECT ... FOR UPDATE` on the order row and a raced stale `PAID` overwrites
+`SHIPPED`; drop the rowcount check on the `processed_events` insert and a
+raced replay stops reporting `duplicate`. Both removals were also applied to
+the real repository during development and made the corresponding real tests
+fail before being reverted.
+
+The stale-claim alert in that run actually fired — a claim was deliberately
+abandoned, recovery moved it to `FAILED`, and the evaluator paged:
+
+```json
+{"event": "alert.fired", "level": "ERROR", "logger": "ops_core.alerts",
+ "rule": "StaleExecutionRecovered", "severity": "page", "value": 1.0,
+ "message": "a worker died holding an EXECUTING claim; the mutation outcome is unknown and a human must reconcile before re-approving",
+ "ts": "2026-08-07T01:20:49.264739+00:00"}
+```
+
+Reproduce with:
+
+```bash
+python -m scripts.load_review_queue sqlite
+python -m scripts.load_review_queue postgres postgresql://ops@127.0.0.1:5432/ops_core
+```
+
 ## Checks
 
 ```bash
-pytest -q
+pytest -q                          # plus OPS_TEST_POSTGRES_DSN=... for the Postgres suite
 ruff check . && ruff format --check .
 mypy            # strict, configured in pyproject
 ```
@@ -186,7 +269,20 @@ it from a route, wrap it in `run_in_threadpool`.
 The default model string is a placeholder. Confirm it against the provider's
 current model list before relying on it.
 
-## Alerting
+## Metrics and alerting
+
+`/metrics` (read-authenticated) serves Prometheus text: execution counts by
+outcome (`completed`, `failed`, `replayed`, `claim_rejected`), execution
+latency, and stale-claim recoveries. Two alerts evaluate in-process on the
+rising edge of their counters — `ReviewExecutionFailed` and
+`StaleExecutionRecovered`, both severity `page`, both meaning a human must
+reconcile before anything is re-approved. Firings are structured
+`alert.fired` log events and are listed at `/alerts`; the same conditions are
+expressed as Prometheus rules in `observability/prometheus-alerts.yml` for
+deployments with a real scraper. The StaleExecutionRecovered firing in
+[Measured behavior](#measured-behavior) is from the recorded load run, not a
+hypothetical; ReviewExecutionFailed shares the mechanism and its rising-edge
+behavior is under test.
 
 `send_ntfy` refuses to publish to an unauthenticated topic. On public ntfy.sh a
 topic is only as private as it is unguessable, and SLA alerts carry order IDs. Set

@@ -12,6 +12,22 @@ concurrency:
 jobs:
   check:
     runs-on: ubuntu-latest
+    services:
+      # The contention and store-contract tests skip without a live Postgres;
+      # CI must never run in that degraded mode, so the DSN is always set here.
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: ops
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: ops_core_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ops -d ops_core_test"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
 
@@ -40,7 +56,13 @@ jobs:
         run: mypy app --strict
 
       - name: Tests
-        run: pytest -q
+        env:
+          OPS_TEST_POSTGRES_DSN: postgresql://ops:ci@127.0.0.1:5432/ops_core_test
+        run: |
+          set -o pipefail
+          pytest -q 2>&1 | tee pytest.out
+          # A skip means the Postgres suite silently did not run; fail loudly.
+          ! grep -q "skipped" pytest.out
 
   container:
     runs-on: ubuntu-latest
