@@ -9,10 +9,11 @@ ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
 
 COPY pyproject.toml README.md ./
 COPY app ./app
+COPY migrations ./migrations
 # The import check is load-bearing: installing from a context without `app/`
 # succeeds and produces an empty package that only fails at runtime.
-RUN uv pip install --system --no-cache "." uvicorn \
-    && python -c "import app.api.http"
+RUN uv pip install --system --no-cache ".[postgres]" uvicorn \
+    && python -c "import app.api.http, app.db.postgres, app.db.postgres_orders"
 
 RUN useradd --create-home --uid 10001 ops \
     && mkdir -p /srv/data \

@@ -27,11 +27,17 @@ def seeded(store, review_id="r-1"):
     return store
 
 
-@pytest.fixture(params=["memory", "sqlite"])
+@pytest.fixture(params=["memory", "sqlite", "postgres"])
 def store(request, tmp_path):
     if request.param == "memory":
-        return ReviewQueue()
-    return SQLiteReviewStore(tmp_path / "reviews.db")
+        yield ReviewQueue()
+    elif request.param == "sqlite":
+        sqlite_store = SQLiteReviewStore(tmp_path / "reviews.db")
+        yield sqlite_store
+        sqlite_store.close()
+    else:
+        # Resolved lazily so the memory and sqlite runs never need a server.
+        yield request.getfixturevalue("postgres_store")
 
 
 def test_both_stores_share_the_decision_contract(store):

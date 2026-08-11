@@ -5,7 +5,7 @@ from datetime import timedelta
 from typing import Any
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import JSONResponse, PlainTextResponse, Response
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
@@ -22,8 +22,9 @@ from app.api.security import (
 from app.api.tiktok_client import TikTokClient
 from app.api.webhook_service import handle_order_webhook
 from app.config import Settings
-from app.db.review_store import SQLiteReviewStore
-from app.db.sqlite import SQLiteOrderRepository
+from app.db.factory import open_order_repository, open_review_store
+from app.observability import metrics
+from app.observability.alerts import AlertManager
 from app.observability.logging import (
     configure_logging,
     get_logger,
@@ -92,9 +93,10 @@ def create_app(
     if operator is None:
         # The durable store writes its own audit trail inside each transaction, so
         # the executor is given no second sink.
-        review_store = SQLiteReviewStore(settings.review_db)
+        review_store = open_review_store(settings.review_db)
         recovered = review_store.recover_stale_executions(timedelta(minutes=15))
         if recovered:
+            metrics.stale_recoveries_total().inc(len(recovered))
             logger.warning(
                 "reviews.stale_executions_recovered",
                 review_ids=[item.review_id for item in recovered],
@@ -109,7 +111,11 @@ def create_app(
             ),
         )
     if order_repository is None:
-        order_repository = SQLiteOrderRepository(settings.order_db)
+        order_repository = open_order_repository(settings.order_db)
+
+    alert_manager = AlertManager()
+    # Cover anything that fired before the app booted (e.g. stale recovery above).
+    alert_manager.evaluate()
 
     require_read = _authorize(settings.tokens, READ)
     require_decide = _authorize(settings.tokens, DECIDE)
@@ -163,12 +169,25 @@ def create_app(
             raise HTTPException(
                 502, f"execution failed and needs re-approval: {exc.error}"
             ) from exc
+        finally:
+            # Evaluated on the request that moved the counter, so a failure pages
+            # even if nobody is watching /alerts.
+            alert_manager.evaluate()
+
+    @app.get("/metrics")
+    def metrics_endpoint(_: Principal = Depends(require_read)) -> PlainTextResponse:
+        return PlainTextResponse(metrics.REGISTRY.render(), media_type="text/plain; version=0.0.4")
+
+    @app.get("/alerts")
+    def alerts(_: Principal = Depends(require_read)) -> list[dict[str, Any]]:
+        alert_manager.evaluate()
+        return alert_manager.snapshot()
 
     @app.get("/orders/quarantined")
     def quarantined(_: Principal = Depends(require_read)) -> list[dict[str, Any]]:
         if not hasattr(order_repository, "quarantined"):
             raise HTTPException(501, "repository does not expose quarantined events")
-        return order_repository.quarantined()
+        return list(order_repository.quarantined())
 
     @app.post("/orders/quarantined/{event_id}/resolve")
     def resolve_quarantined(
