@@ -18,6 +18,9 @@ dependencies = [
 # the import check in the Dockerfile is what actually catches it.
 packages = { find = { include = ["app*"] } }
 
+[tool.setuptools.package-data]
+"app.web" = ["*.html", "*.css", "*.js"]
+
 [project.optional-dependencies]
 postgres = ["psycopg[binary,pool]>=3.2"]
 # httpx2 is what current starlette wants for TestClient; with only httpx it

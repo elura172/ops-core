@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import Any
 
 from app.observability.logging import get_logger
@@ -43,6 +43,20 @@ class OperatorService:
             reviewer=reviewer,
         )
         return {"review_id": item.review_id, "status": item.status.value, "reviewer": item.reviewer}
+
+    def review_detail(self, review_id: str) -> dict[str, Any]:
+        item = self.reviews.get(review_id)
+        if item is None:
+            raise KeyError(review_id)
+        blocked = None
+        if item.operation not in self.executor.allowed_operations:
+            blocked = "This operation is not supported."
+        else:
+            try:
+                self.executor.preflight(item.operation)
+            except PermissionError as exc:
+                blocked = str(exc)
+        return {**asdict(item), "execution_blocked": blocked}
 
     def execute(self, review_id: str, actor: str) -> dict[str, Any]:
         outcome = self.executor.execute(self.reviews, review_id, actor=actor)
