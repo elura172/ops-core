@@ -25,7 +25,7 @@ from psycopg_pool import ConnectionPool
 
 from app.domain.order_events import ApplyOutcome, Outcome, Resolution, classify
 from app.domain.order_store import OrderEvent
-from app.domain.orders import OrderStatus
+from app.domain.orders import Order, OrderStatus
 from app.observability.logging import get_logger
 
 logger = get_logger("postgres_orders")
@@ -59,9 +59,16 @@ class PostgresOrderRepository:
             # Ensure the order row exists, then take its lock. From here until
             # commit no other worker can classify against this order.
             connection.execute(
-                "INSERT INTO orders (order_id, created_at, status, updated_at) "
-                "VALUES (%s, %s, %s, %s) ON CONFLICT (order_id) DO NOTHING",
-                (event.order_id, occurred_at, OrderStatus.RECEIVED.value, occurred_at),
+                "INSERT INTO orders (order_id, created_at, status, updated_at, "
+                "created_at_estimated) "
+                "VALUES (%s, %s, %s, %s, %s) ON CONFLICT (order_id) DO NOTHING",
+                (
+                    event.order_id,
+                    occurred_at,
+                    OrderStatus.RECEIVED.value,
+                    occurred_at,
+                    bool(classify(OrderStatus.RECEIVED, event.status).skipped),
+                ),
             )
             row = connection.execute(
                 "SELECT status FROM orders WHERE order_id = %s FOR UPDATE",
@@ -140,6 +147,23 @@ class PostgresOrderRepository:
                     skipped=[status.value for status in decision.skipped],
                 )
             return ApplyOutcome(Outcome.APPLIED, event.order_id, event.status, decision.skipped)
+
+    def active(self) -> list[Order]:
+        with self.pool.connection() as connection:
+            rows = connection.execute(
+                "SELECT * FROM orders WHERE status NOT IN ('DELIVERED', 'CANCELLED') "
+                "ORDER BY created_at, order_id"
+            ).fetchall()
+        return [
+            Order(
+                order_id=row["order_id"],
+                created_at=row["created_at"],
+                status=OrderStatus(row["status"]),
+                updated_at=row["updated_at"],
+                created_at_estimated=row["created_at_estimated"],
+            )
+            for row in rows
+        ]
 
     def quarantined(self, *, include_resolved: bool = False) -> list[dict[str, Any]]:
         query = "SELECT * FROM quarantined_events"

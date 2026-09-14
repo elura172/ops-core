@@ -111,6 +111,11 @@ An order first seen mid-lifecycle has an estimated `created_at`, so it is exclud
 from the fulfillment SLA rather than measured against a timestamp we inferred. The
 SLA covers time-to-dispatch, so anything already shipped is out of scope too.
 
+Both durable order repositories preserve `created_at_estimated` and expose
+`active()` for the watchdog. Existing rows are conservatively marked estimated
+on upgrade because their timestamp provenance was not stored. This supplies the
+read path; it does not schedule watchdog runs or persist alert deduplication.
+
 Every event is folded inside a single `BEGIN IMMEDIATE` transaction, so the
 duplicate check and the write cannot interleave across threads or processes.
 

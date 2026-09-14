@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import sqlite3
 import threading
-from datetime import UTC
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from app.domain.order_events import ApplyOutcome, Outcome, Resolution, classify
 from app.domain.order_store import OrderEvent
-from app.domain.orders import OrderStatus
+from app.domain.orders import Order, OrderStatus
 from app.observability.logging import get_logger
 
 logger = get_logger("sqlite")
@@ -61,6 +61,19 @@ class SQLiteOrderRepository:
             self.connection.execute("PRAGMA journal_mode = WAL")
         self.connection.execute("PRAGMA synchronous = FULL")
         self.connection.executescript(SCHEMA)
+        # Serialize discovery and ALTER across concurrently booting processes.
+        self.connection.execute("BEGIN IMMEDIATE")
+        try:
+            columns = {row["name"] for row in self.connection.execute("PRAGMA table_info(orders)")}
+            if "created_at_estimated" not in columns:
+                # Legacy timestamps have no provenance; conservatively exclude them.
+                self.connection.execute(
+                    "ALTER TABLE orders ADD COLUMN created_at_estimated INTEGER NOT NULL DEFAULT 1"
+                )
+            self.connection.execute("COMMIT")
+        except BaseException:
+            self.connection.execute("ROLLBACK")
+            raise
 
     def apply(self, event: OrderEvent) -> ApplyOutcome:
         if not event.event_id or not event.order_id:
@@ -89,8 +102,16 @@ class SQLiteOrderRepository:
         if row is None:
             current = OrderStatus.RECEIVED
             self.connection.execute(
-                "INSERT INTO orders(order_id, created_at, status, updated_at) VALUES (?, ?, ?, ?)",
-                (event.order_id, occurred_at, current.value, occurred_at),
+                "INSERT INTO orders(order_id, created_at, status, updated_at, "
+                "created_at_estimated) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (
+                    event.order_id,
+                    occurred_at,
+                    current.value,
+                    occurred_at,
+                    bool(classify(current, event.status).skipped),
+                ),
             )
         else:
             current = OrderStatus(row["status"])
@@ -148,6 +169,23 @@ class SQLiteOrderRepository:
                 skipped=[status.value for status in decision.skipped],
             )
         return ApplyOutcome(Outcome.APPLIED, event.order_id, event.status, decision.skipped)
+
+    def active(self) -> list[Order]:
+        with self._lock:
+            rows = self.connection.execute(
+                "SELECT * FROM orders WHERE status NOT IN ('DELIVERED', 'CANCELLED') "
+                "ORDER BY created_at, order_id"
+            ).fetchall()
+        return [
+            Order(
+                order_id=row["order_id"],
+                created_at=datetime.fromisoformat(row["created_at"]),
+                status=OrderStatus(row["status"]),
+                updated_at=datetime.fromisoformat(row["updated_at"]),
+                created_at_estimated=bool(row["created_at_estimated"]),
+            )
+            for row in rows
+        ]
 
     def quarantined(self, *, include_resolved: bool = False) -> list[dict[str, Any]]:
         query = "SELECT * FROM quarantined_events"
