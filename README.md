@@ -319,6 +319,10 @@ topic is only as private as it is unguessable, and SLA alerts carry order IDs. S
 `HimalayaMailer` passes the message body over stdin, never argv — process
 arguments are world-readable via `ps` and this one carries buyer correspondence.
 
+## Operations and staging
+
+The dry-run PostgreSQL staging environment, deployment instructions, backup/restore procedures, and incident recovery workflows are documented in the [Staging Operations Runbook](docs/staging-runbook.md). Tested execution transcripts and the proof index for the Staging Proof milestone are available in [Staging Evidence](docs/staging-evidence.md).
+
 ## Not yet done
 
 The `TikTokClient` is deliberately a boundary rather than a fake implementation.
