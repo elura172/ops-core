@@ -29,6 +29,28 @@ Amazon pipeline reuses it unchanged.
 
 ## Operator authentication
 
+### Review desk
+
+Open `/dashboard` on your running Ops Core service to inspect proposed actions,
+approve or reject them, and execute approved actions. Use your configured operator
+token to connect; it remains in tab memory and is cleared on disconnect or reload.
+Use HTTPS when accessing a remote deployment.
+
+The dashboard uses the existing role permissions. Reviewers see decision controls;
+operators see execution controls; admins have both. Approval does not execute an
+action. Execution requires a separate confirmation and still passes the adapter
+gates. Previews show the complete proposed payload, decision history, and stored
+result. They can contain customer correspondence, so only authenticated readers
+can retrieve them, and responses carry `Cache-Control: no-store`.
+
+The empty queue is intentional: workflows must submit review items to the configured
+store. This dashboard does not yet create listings or connect a storefront. The
+client mode label describes the TikTok client; publishing and email adapters may
+still be simulated or disabled independently. Failed outcomes require reconciliation
+and a fresh proposal rather than a retry button.
+
+### Access roles
+
 The review endpoints are the human-in-the-loop control, so they are authenticated
 and fail closed. `OPS_TOKENS` maps SHA-256 token digests to named principals:
 

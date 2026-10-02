@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from datetime import timedelta
+from importlib.resources import files
 from typing import Any
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
-from fastapi.responses import JSONResponse, PlainTextResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, Response
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
@@ -131,7 +132,43 @@ def create_app(
         set_correlation_id(correlation_id)
         response = await call_next(request)
         response.headers[CORRELATION_HEADER] = correlation_id
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["Referrer-Policy"] = "no-referrer"
         return response
+
+    @app.get("/dashboard", response_class=HTMLResponse, include_in_schema=False)
+    def dashboard() -> HTMLResponse:
+        return HTMLResponse(
+            files("app.web").joinpath("dashboard.html").read_text(),
+            headers={
+                "Content-Security-Policy": "default-src 'self'; script-src 'self'; "
+                "style-src 'self'; connect-src 'self'; object-src 'none'; "
+                "base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
+            },
+        )
+
+    @app.get("/dashboard/assets/{asset}", include_in_schema=False)
+    def dashboard_asset(asset: str) -> Response:
+        types = {"dashboard.css": "text/css", "dashboard.js": "text/javascript"}
+        if asset not in types:
+            raise HTTPException(404, "asset not found")
+        return Response(files("app.web").joinpath(asset).read_text(), media_type=types[asset])
+
+    @app.get("/operator/session")
+    def session(principal: Principal = Depends(require_read)) -> dict[str, Any]:
+        return {
+            "name": principal.name,
+            "permissions": sorted(principal.permissions),
+            "mode": operator.health()["mode"],
+        }
+
+    @app.get("/reviews/{review_id}")
+    def review_detail(review_id: str, _: Principal = Depends(require_read)) -> dict[str, Any]:
+        try:
+            return operator.review_detail(review_id)
+        except KeyError as exc:
+            raise HTTPException(404, "review not found") from exc
 
     @app.get("/health")
     def health() -> dict[str, str]:
