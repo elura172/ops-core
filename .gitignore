@@ -22,3 +22,4 @@ snapshots.db
 .vercel
 *.db-shm
 *.db-wal
+.env*.local

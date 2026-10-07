@@ -239,15 +239,40 @@ $("camera-file").onchange = async event => {
   const file = event.target.files[0];
   if (!file) return;
   
-  $("camera-status").textContent = `Uploading ${file.name}...`;
+  $("camera-status").textContent = `Processing image...`;
   const button = $("camera-upload").querySelector("label");
   button.style.opacity = "0.5";
   button.style.pointerEvents = "none";
   
-  const formData = new FormData();
-  formData.append("file", file);
-  
   try {
+    // Resize image to max 1200px to prevent Vercel 4.5MB limits and Gemini 503s on massive base64 payloads
+    const compressedFile = await new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement("canvas");
+        let width = img.width, height = img.height;
+        const max = 1500;
+        if (width > height && width > max) { height *= max / width; width = max; }
+        else if (height > max) { width *= max / height; height = max; }
+        
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(img, 0, 0, width, height);
+        
+        canvas.toBlob(blob => {
+          if (!blob) return reject(new Error("Canvas to Blob failed"));
+          resolve(new File([blob], file.name, { type: "image/jpeg" }));
+        }, "image/jpeg", 0.8);
+      };
+      img.onerror = reject;
+      img.src = URL.createObjectURL(file);
+    });
+
+    $("camera-status").textContent = `Uploading ${compressedFile.name}...`;
+    const formData = new FormData();
+    formData.append("file", compressedFile);
+    
     const epoch = generation;
     const response = await fetch("/intake/camera", {
       method: "POST",
