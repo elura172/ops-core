@@ -12,10 +12,37 @@
   <main>
     <section class="intro"><p class="eyebrow">THE OPERATOR DESK</p><h1>Good work.<br>Ready for your word.</h1><p>See what’s proposed. Make the decision. Follow the result.</p></section>
     <p id="message" role="status" aria-live="polite"></p>
-    <section id="login" class="panel login">
-      <p class="eyebrow">CONNECT YOUR WORKSPACE</p><h2>Open your review desk</h2>
-      <form id="connect"><label for="token">Operator access token</label><input id="token" type="password" required autocomplete="off" spellcheck="false"><button type="submit" class="primary">Connect →</button></form>
-      <p class="muted">Use the token configured by your administrator. It stays in this tab’s memory and is cleared when you disconnect or reload.</p>
+        <section id="login-section" class="panel login">
+      <div id="login-panel">
+        <p class="eyebrow">WELCOME BACK</p><h2>Open your review desk</h2>
+        <form id="form-login">
+          <label for="login-email">Email</label>
+          <input id="login-email" type="email" required autocomplete="email" spellcheck="false" style="margin-bottom: 1rem; width: 100%;">
+          
+          <label for="login-password">Password</label>
+          <input id="login-password" type="password" required autocomplete="current-password" style="margin-bottom: 1.5rem; width: 100%;">
+          
+          <button type="submit" class="primary" style="width: 100%;">Login →</button>
+        </form>
+        <p class="muted" style="text-align: center; margin-top: 1rem;">Don't have an account? <a href="#" id="show-signup">Create one</a>.</p>
+      </div>
+      
+      <div id="signup-panel" hidden>
+        <p class="eyebrow">JOIN OPS CORE</p><h2>Create a Workspace</h2>
+        <form id="form-signup">
+          <label for="signup-store">Store Name</label>
+          <input id="signup-store" type="text" required autocomplete="organization" spellcheck="false" style="margin-bottom: 1rem; width: 100%;">
+          
+          <label for="signup-email">Email</label>
+          <input id="signup-email" type="email" required autocomplete="email" spellcheck="false" style="margin-bottom: 1rem; width: 100%;">
+          
+          <label for="signup-password">Password</label>
+          <input id="signup-password" type="password" required autocomplete="new-password" style="margin-bottom: 1.5rem; width: 100%;">
+          
+          <button type="submit" class="primary" style="width: 100%;">Create Account →</button>
+        </form>
+        <p class="muted" style="text-align: center; margin-top: 1rem;">Already have a workspace? <a href="#" id="show-login">Login</a>.</p>
+      </div>
     </section>
     <section id="workspace" hidden>
       <div class="toolbar"><div><span id="mode" class="badge"></span> <span id="count"></span></div><button id="refresh">Refresh queue ↻</button></div>

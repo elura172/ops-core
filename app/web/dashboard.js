@@ -13,9 +13,9 @@ function node(tag, text, className) {
 function message(text) { $("message").textContent = text; }
 function disconnect() {
   generation++; selection++; token = ""; session = null; items = []; selected = null; busy = false;
-  $("token").value = ""; $("items").replaceChildren(); $("detail").replaceChildren();
+  $("items").replaceChildren(); $("detail").replaceChildren();
   $("identity").textContent = ""; $("workspace").hidden = true; $("logout").hidden = true;
-  $("login").hidden = false; $("connect").querySelector("button").disabled = false;
+  $("login-section").hidden = false; 
   $("refresh").disabled = false;
 }
 async function api(path, options = {}) {
@@ -360,19 +360,53 @@ async function mutate(item, action, body) {
     if (epoch === generation) { busy = false; await refresh(); }
   }
 }
-$("connect").onsubmit = async event => {
-  event.preventDefault(); const epoch = ++generation;
-  token = $("token").value; $("token").value = ""; $("connect").querySelector("button").disabled = true; message("");
+
+$("show-signup").onclick = (e) => { e.preventDefault(); $("login-panel").hidden = true; $("signup-panel").hidden = false; };
+$("show-login").onclick = (e) => { e.preventDefault(); $("signup-panel").hidden = true; $("login-panel").hidden = false; };
+
+async function handleAuth(path, body, button) {
+  const epoch = ++generation;
+  button.disabled = true; message("");
   try {
-    const identity = await api("/operator/session");
+    const res = await fetch(path, {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify(body)
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || "Authentication failed");
+    
+    token = data.access_token;
+    
+    // Fetch identity
+    const identity = await api("/auth/me");
     if (epoch !== generation) return;
-    session = identity; $("identity").textContent = identity.name;
-    $("mode").textContent = identity.mode === "live" ? "LIVE CLIENT" : "DRY-RUN CLIENT";
-    $("mode").className = `badge ${identity.mode === "live" ? "live" : ""}`;
-    $("workspace").hidden = false; $("logout").hidden = false; $("login").hidden = true; await refresh();
-  } catch(error) { disconnect(); message(error.message); }
-  finally { $("connect").querySelector("button").disabled = false; }
+    session = {name: identity.sub, permissions: ["review:read", "review:decide", "review:execute"]}; 
+    $("identity").textContent = identity.sub;
+    $("mode").textContent = "MULTI-TENANT";
+    $("mode").className = `badge live`;
+    $("workspace").hidden = false; $("logout").hidden = false; $("login-section").hidden = true; 
+    await refresh();
+  } catch(error) {
+    disconnect();
+    message(error.message);
+  } finally {
+    button.disabled = false;
+  }
+}
+
+$("form-login").onsubmit = async event => {
+  event.preventDefault(); 
+  handleAuth("/auth/login", {email: $("login-email").value, password: $("login-password").value}, event.target.querySelector("button"));
+  $("login-password").value = "";
 };
+
+$("form-signup").onsubmit = async event => {
+  event.preventDefault(); 
+  handleAuth("/auth/signup", {store_name: $("signup-store").value, email: $("signup-email").value, password: $("signup-password").value}, event.target.querySelector("button"));
+  $("signup-password").value = "";
+};
+
 $("logout").onclick = ()=>{disconnect(); message("Disconnected. Your token and displayed action data have been cleared.");};
 $("refresh").onclick = ()=>{message(""); refresh();};
 $("filter").onchange = renderQueue;
