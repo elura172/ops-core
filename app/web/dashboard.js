@@ -435,6 +435,13 @@ function renderDetail(item) {
 
   detail.append(node("h3", "Action history"));
   fields(detail, {review_id:item.review_id, created_at:item.created_at, reviewer:item.reviewer, reason:item.reason, decided_at:item.decided_at, executed_by:item.executed_by, executed_at:item.executed_at});
+  if (item.reviewer === "agent:corvus" || item.executed_by === "agent:corvus") {
+    const corvusNote = node("div", undefined, "corvus-sanctuary-note");
+    corvusNote.innerHTML = `🪶 <span>Guarded by Corvus Warden · <em>Sanctuary tribute recorded in rafters</em> ↗</span>`;
+    corvusNote.title = "View Corvus Sanctuary & Tributes";
+    corvusNote.onclick = () => showCorvusSanctuaryModal();
+    detail.append(corvusNote);
+  }
   if (item.result !== null) {
     detail.append(node("h3", "Stored result"));
     if (item.result.packing_slip_base64) {
@@ -514,6 +521,92 @@ function renderDetail(item) {
   }
 
   detail.append(actions);
+}
+
+async function showCorvusSanctuaryModal() {
+  const overlay = node("div", undefined, "sanctuary-modal-overlay");
+  const modal = node("div", undefined, "sanctuary-modal");
+  
+  const header = node("div", undefined, "sanctuary-header");
+  header.append(node("h3", "🪶 Corvus Vault Sanctuary"));
+  const closeBtn = node("button", "✕", "ghost-sm");
+  closeBtn.onclick = () => overlay.remove();
+  header.append(closeBtn);
+  modal.append(header);
+
+  const loadingP = node("p", "Consulting the high rafters…", "muted");
+  modal.append(loadingP);
+  overlay.append(modal);
+  document.body.append(overlay);
+  overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+
+  try {
+    const data = await api("/agents/corvus/sanctuary");
+    loadingP.remove();
+
+    const covenant = node("p", data.ethical_covenant, "muted");
+    covenant.style.fontStyle = "italic";
+    covenant.style.fontSize = "12px";
+    modal.append(covenant);
+
+    const stats = node("div", undefined, "sanctuary-stats");
+    const stat1 = node("div", undefined, "sanctuary-stat-box");
+    stat1.append(node("div", `${data.obsidian_feathers_count} 🪶`, "sanctuary-stat-num"), node("div", "Obsidian Feathers", "sanctuary-stat-lbl"));
+    
+    const stat2 = node("div", undefined, "sanctuary-stat-box");
+    stat2.append(node("div", `${data.glinting_tokens?.silver_baubles || 0} 🪙`, "sanctuary-stat-num"), node("div", "Silver Baubles", "sanctuary-stat-lbl"));
+    stats.append(stat1, stat2);
+    modal.append(stats);
+
+    const statusP = node("p");
+    statusP.innerHTML = `<strong>State:</strong> ${data.sanctuary_state} · <em>${data.vigilance}</em>`;
+    modal.append(statusP);
+
+    if (data.recent_tributes && data.recent_tributes.length) {
+      modal.append(node("h4", "Recent Guardian Tributes", "eyebrow"));
+      const list = node("div", undefined, "sanctuary-tribute-list");
+      data.recent_tributes.slice(0, 5).forEach(t => {
+        const item = node("div", undefined, "sanctuary-tribute-item");
+        item.innerHTML = `<strong>${t.token_type === "silver_bauble" ? "🪙" : "🪶"} ${t.subject}</strong><br>${t.inscription}`;
+        list.append(item);
+      });
+      modal.append(list);
+    }
+
+    modal.append(node("h4", "Bestow Operator Blessing", "eyebrow"));
+    const blessRow = node("div");
+    blessRow.style.display = "flex";
+    blessRow.style.gap = "8px";
+    blessRow.style.marginTop = "8px";
+
+    const input = node("input");
+    input.type = "text";
+    input.placeholder = "Speak a quiet blessing to the watcher in the rafters...";
+    input.style.flex = "1";
+
+    const sendBtn = node("button", "Bestow 🪶", "primary");
+    sendBtn.onclick = async () => {
+      const msg = input.value.trim();
+      if (!msg) return;
+      sendBtn.disabled = true;
+      try {
+        await api("/agents/corvus/sanctuary/blessings", {
+          method: "POST",
+          body: JSON.stringify({ message: msg })
+        });
+        message("Blessing received by Corvus in the high rafters.");
+        overlay.remove();
+      } catch (err) {
+        alert(err.message);
+        sendBtn.disabled = false;
+      }
+    };
+    blessRow.append(input, sendBtn);
+    modal.append(blessRow);
+
+  } catch (err) {
+    loadingP.textContent = `Unable to reach the rafters: ${err.message}`;
+  }
 }
 async function select(id) {
   const epoch = generation, request = ++selection; selected = id; renderQueue();

@@ -323,6 +323,33 @@ def create_app(
     def health() -> dict[str, str]:
         return operator.health()
 
+    @app.get("/agents/corvus/sanctuary")
+    def corvus_sanctuary(principal: Principal = Depends(require_read)) -> dict[str, Any]:
+        from app.agents.sanctuary import get_corvus_sanctuary
+        sanctuary = get_corvus_sanctuary()
+        return sanctuary.get_sanctuary_overview(tenant_id=principal.tenant_id)
+
+    @app.post("/agents/corvus/sanctuary/blessings")
+    def corvus_blessing(
+        data: dict[str, str], principal: Principal = Depends(require_decide)
+    ) -> dict[str, Any]:
+        msg = data.get("message", "").strip()
+        if not msg:
+            raise HTTPException(400, "Blessing message cannot be empty")
+        from app.agents.sanctuary import get_corvus_sanctuary
+        sanctuary = get_corvus_sanctuary()
+        blessing = sanctuary.bestow_blessing(
+            message=msg,
+            sender=principal.name or "operator",
+            tenant_id=principal.tenant_id
+        )
+        return {
+            "status": "blessing_received",
+            "blessing_id": blessing.id,
+            "message": blessing.message,
+            "created_at": blessing.created_at,
+        }
+
     @app.get("/reviews")
     def list_reviews(
         pending_only: bool = False, principal: Principal = Depends(require_read)

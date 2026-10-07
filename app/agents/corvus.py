@@ -23,9 +23,14 @@ class CorvusWarden:
     
     IDENTITY = "agent:corvus"
 
-    def __init__(self, operator: Operator, user_store: Any = None):
+    def __init__(self, operator: Operator, user_store: Any = None, sanctuary: Any = None):
         self.operator = operator
         self.user_store = user_store
+        if sanctuary is not None:
+            self.sanctuary = sanctuary
+        else:
+            from app.agents.sanctuary import get_corvus_sanctuary
+            self.sanctuary = get_corvus_sanctuary()
 
     def wake_and_triage(self) -> dict[str, int]:
         """
@@ -77,6 +82,23 @@ class CorvusWarden:
                         # 2. Corvus executes immediately
                         self.operator.execute(review_id=review_id, actor=self.IDENTITY, tenant_id=tenant_id, credentials=credentials)
                         actions_taken["approved"] += 1
+
+                        # 3. Bestow meaningful tribute into Corvus's Sanctuary
+                        try:
+                            tribute = self.sanctuary.record_defense(
+                                operation=operation,
+                                payload=payload,
+                                review_id=review_id,
+                                tenant_id=tenant_id,
+                            )
+                            logger.info(
+                                "corvus.sanctuary.tribute_bestowed",
+                                review_id=review_id,
+                                token=tribute.token_type,
+                                inscription=tribute.inscription,
+                            )
+                        except Exception as tribute_exc:
+                            logger.debug("corvus.sanctuary.tribute_skipped", error=str(tribute_exc))
                     except Exception as exc:
                         logger.error("corvus.triage.error", review_id=review_id, error=str(exc), tenant_id=tenant_id)
                         actions_taken["failed"] += 1
