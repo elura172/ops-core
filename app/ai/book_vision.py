@@ -29,22 +29,28 @@ Analyze the provided image containing a pile, stack, or shelf of books and extra
 bibliographic records from every visible spine.
 
 GUIDELINES:
-1. SEQUENCE:
+1. EXHAUSTIVE EXTRACTION MANDATE:
+   - You MUST detect and extract EVERY SINGLE visible book spine in the pile, stack, or shelf.
+   - NEVER stop after extracting only 1 or 2 books when more spines are visible in the image.
+   - If there are 3, 5, 8, 10, or 20 books visible, your `books` array MUST contain an entry for EVERY one of them.
+   - Methodically scan across the entire image from edge to edge (top-to-bottom for stacks, left-to-right for shelves).
+
+2. SEQUENCE:
    - For horizontal stacks: sequence strictly from TOP to BOTTOM (stack_order: 1 is topmost).
    - For vertical shelves: sequence strictly from LEFT to RIGHT (stack_order: 1 is leftmost).
    - If mixed or angled, sequence by the most dominant logical reading order.
 
-2. BOUNDING BOX:
+3. BOUNDING BOX:
    - Provide normalized bounding box coordinates for each spine as box_2d:
      [ymin, xmin, ymax, xmax] scaled 0 to 1000.
 
-3. TYPOGRAPHIC SEGREGATION:
+4. TYPOGRAPHIC SEGREGATION:
    - Disentangle the Title from Author, Subtitle, and Publisher logos/colophons.
    - Account for rotated or vertical spine text.
-   - Publisher marks (e.g. Penguin, Knopf, Tor, HarperCollins, Vintage) must be placed
+   - Publisher marks (e.g. Penguin, Knopf, Tor, HarperCollins, Vintage, TAN) must be placed
      in publisher_imprint, never merged into title or author.
 
-4. BINDING CLASSIFICATION:
+5. BINDING CLASSIFICATION:
    - hardcover_with_jacket: visible paper wrap / dust jacket flaps.
    - hardcover_no_jacket: cloth, buckram, or board with visible hinge groove without jacket.
    - trade_paperback: large softcover, square glued spine, regular paper.
@@ -52,14 +58,14 @@ GUIDELINES:
    - spiral_or_other: spiral wire, comb, booklet.
    - unknown: cannot be determined.
 
-5. DEFECT AND WEAR DETECTION:
+6. DEFECT AND WEAR DETECTION:
    - Look for: clean_as_new, sunned_faded_spine, creased_reading_spine, bumped_headcap_or_tail,
      torn_or_chipped_jacket, ex_library_stickers_or_tape, remainder_mark_visible, cocked_spine.
 
-6. RAW TEXT:
+7. RAW TEXT:
    - Always record raw_spine_text with verbatim transcribed spine text for downstream fuzzy search.
 
-7. AUTHOR INFERENCE:
+8. AUTHOR INFERENCE:
    - When the spine does not visibly print the author's name (e.g. only Title and Publisher colophon/imprint like "TAN", "Penguin", "Dover", "Everyman", "Oxford" are present), use your deep bibliographic knowledge to INFER the canonical author (e.g. "TOTAL CONSECRATION" published by "TAN" -> "St. Louis de Montfort").
    - Populate `authors` with the inferred canonical author(s) whenever the title and publisher imprint clearly identify the canonical work, rather than leaving `authors` empty or defaulting to ["Unknown"].
 """
@@ -237,8 +243,6 @@ class GeminiBookVisionProvider(BookVisionProvider):
     model: str = "gemini-flash-lite-latest"
     fallback_models: list[str] = field(default_factory=lambda: [
         "gemini-flash-lite-latest",
-        "gemini-flash-latest",
-        "gemini-2.5-flash",
         "gemini-3.1-flash-lite",
         "gemini-3.5-flash-lite",
     ])
@@ -282,6 +286,7 @@ class GeminiBookVisionProvider(BookVisionProvider):
                 "response_mime_type": "application/json",
                 "response_schema": BOOK_STACK_GEMINI_SCHEMA,
                 "temperature": 0.1,
+                "maxOutputTokens": 8192,
             },
         }
 
@@ -296,7 +301,46 @@ class GeminiBookVisionProvider(BookVisionProvider):
             url = f"{self.base_url.rstrip('/')}/models/{model}:generateContent?key={self.api_key}"
             try:
                 raw_response = self._post_with_retry(url, body)
-                return self._parse_gemini_response(raw_response)
+                res = self._parse_gemini_response(raw_response)
+
+                # Undercount safeguard: If only 1 book was extracted on an image that looks like a stack or shelf
+                if len(res.books) <= 1 and (res.orientation in ("horizontal_stack", "vertical_shelf") or res.unidentified_spines_count > 0):
+                    retry_body = {
+                        "contents": [
+                            {
+                                "parts": [
+                                    {
+                                        "inline_data": {
+                                            "mime_type": clean_mime,
+                                            "data": b64_img,
+                                        }
+                                    },
+                                    {
+                                        "text": BOOK_STACK_SYSTEM_PROMPT
+                                        + "\n\nCRITICAL MANDATE: Only 1 book was extracted on the previous attempt, but this image contains multiple books in a stack/shelf. You MUST scan every book spine across the entire image and return ALL books in the books array.",
+                                    },
+                                ]
+                            }
+                        ],
+                        "generationConfig": {
+                            "response_mime_type": "application/json",
+                            "response_schema": BOOK_STACK_GEMINI_SCHEMA,
+                            "temperature": 0.15,
+                            "maxOutputTokens": 8192,
+                        },
+                    }
+                    try:
+                        retry_resp = self._post_with_retry(url, retry_body)
+                        retry_res = self._parse_gemini_response(retry_resp)
+                        if len(retry_res.books) > len(res.books):
+                            logger.info(
+                                f"Undercount recovery: expanded from {len(res.books)} to {len(retry_res.books)} books"
+                            )
+                            return retry_res
+                    except Exception as retry_exc:
+                        logger.debug(f"Undercount retry skipped: {retry_exc}")
+
+                return res
             except (TransientProviderError, TerminalProviderError, HTTPError) as exc:
                 last_error = exc
                 logger.warning(f"Gemini model {model} failed: {exc}, trying next model in cascade...")

@@ -173,4 +173,87 @@ def test_author_inference_in_system_prompt():
     assert "AUTHOR INFERENCE" in BOOK_STACK_SYSTEM_PROMPT
     assert "TOTAL CONSECRATION" in BOOK_STACK_SYSTEM_PROMPT
     assert "St. Louis de Montfort" in BOOK_STACK_SYSTEM_PROMPT
+    assert "EXHAUSTIVE EXTRACTION MANDATE" in BOOK_STACK_SYSTEM_PROMPT
+
+
+def test_undercount_expansion_retry():
+    payload_one_book = {
+        "candidates": [
+            {
+                "content": {
+                    "parts": [
+                        {
+                            "text": json.dumps(
+                                {
+                                    "books": [
+                                        {
+                                            "stack_order": 1,
+                                            "box_2d": [0, 0, 100, 100],
+                                            "title": "Book 1",
+                                            "authors": ["Author 1"],
+                                            "format": "trade_paperback",
+                                            "visible_condition_cues": ["clean_as_new"],
+                                            "raw_spine_text": "Book 1",
+                                            "confidence": "high",
+                                        }
+                                    ],
+                                    "orientation": "horizontal_stack",
+                                    "unidentified_spines_count": 0,
+                                }
+                            )
+                        }
+                    ]
+                }
+            }
+        ]
+    }
+    payload_multi_books = {
+        "candidates": [
+            {
+                "content": {
+                    "parts": [
+                        {
+                            "text": json.dumps(
+                                {
+                                    "books": [
+                                        {
+                                            "stack_order": 1,
+                                            "box_2d": [0, 0, 100, 100],
+                                            "title": "Book 1",
+                                            "authors": ["Author 1"],
+                                            "format": "trade_paperback",
+                                            "visible_condition_cues": ["clean_as_new"],
+                                            "raw_spine_text": "Book 1",
+                                            "confidence": "high",
+                                        },
+                                        {
+                                            "stack_order": 2,
+                                            "box_2d": [100, 0, 200, 100],
+                                            "title": "Book 2",
+                                            "authors": ["Author 2"],
+                                            "format": "trade_paperback",
+                                            "visible_condition_cues": ["clean_as_new"],
+                                            "raw_spine_text": "Book 2",
+                                            "confidence": "high",
+                                        },
+                                    ],
+                                    "orientation": "horizontal_stack",
+                                    "unidentified_spines_count": 0,
+                                }
+                            )
+                        }
+                    ]
+                }
+            }
+        ]
+    }
+
+    provider = GeminiBookVisionProvider(api_key="fake-key")
+    with patch.object(
+        provider, "_post_with_retry", side_effect=[payload_one_book, payload_multi_books]
+    ):
+        result = provider.extract_stack(b"fake-bytes")
+        assert len(result.books) == 2
+        assert result.books[0].title == "Book 1"
+        assert result.books[1].title == "Book 2"
 
