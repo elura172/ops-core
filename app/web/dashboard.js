@@ -4,6 +4,16 @@ let checkedItems = new Set();
 let token = "", session = null, items = [], selected = null, generation = 0, selection = 0, busy = false;
 const labels = {intake_book:"Intake Book", create_product_draft:"Create product draft", update_inventory:"Update stock", update_prices:"Update prices", publish:"Publish content", send_customer_response:"Send customer response", sync_inventory:"Cross-Channel Sync", fulfill_order:"Fulfill Order", resolve_order_contention:"Resolve Contention"};
 const human = text => String(text).replaceAll("_", " ");
+function formatError(detail) {
+  if (typeof detail === "string") return detail;
+  if (Array.isArray(detail)) {
+    return detail.map(d => d.msg || (typeof d === "object" ? JSON.stringify(d) : String(d))).join(", ");
+  }
+  if (detail && typeof detail === "object") {
+    return detail.msg || JSON.stringify(detail);
+  }
+  return "An unexpected error occurred.";
+}
 function node(tag, text, className) {
   const element = document.createElement(tag);
   if (text !== undefined) element.textContent = text;
@@ -29,7 +39,7 @@ async function api(path, options = {}) {
   if (epoch !== generation) throw new Error("Session changed.");
   if (!response.ok) {
     if (response.status === 401 || response.status === 503) disconnect();
-    throw new Error(typeof body.detail === "string" ? body.detail : `Request failed (${response.status}).`);
+    throw new Error(formatError(body.detail) || `Request failed (${response.status}).`);
   }
   return body;
 }
@@ -377,7 +387,7 @@ async function handleAuth(path, body, button) {
         body: JSON.stringify(body)
     });
     const data = await res.json();
-    if (!res.ok) throw new Error(data.detail || "Authentication failed");
+    if (!res.ok) throw new Error(formatError(data.detail) || "Authentication failed");
     
     token = data.access_token;
     
