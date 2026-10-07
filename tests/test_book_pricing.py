@@ -203,3 +203,26 @@ def test_valuation_engine_collectible_flag():
 
     assert val.channel_strategy == "online_only_collectible"
     assert "FLAGGED" in val.pricing_rationale
+
+
+def test_pricing_engine_with_abebooks_and_format_fallback():
+    from app.pricing.engine import PricingEngine
+    from app.amazon.scraper import AmazonScraperClient, SnapshotStore
+
+    scraper = AmazonScraperClient("mock", SnapshotStore(), live=False)
+
+    # 1. With static comps provider
+    engine = PricingEngine(scraper, comps_provider=StaticCompsProvider(_mock_comps()))
+    data = engine.discover_price("Neuromancer", "William Gibson", condition_grade="Very Good", format_hint="trade_paperback")
+    assert data["evidence"]["comps_found"] == 5
+    assert float(data["recommended_price_cad"]) > 0
+    assert float(data["recommended_price_cad"]) < 50
+    assert "Priced from 5 live marketplace comps" in data["rationale"]
+
+    # 2. With no comps -> format baseline fallback (not $100 placeholder)
+    empty_engine = PricingEngine(scraper, comps_provider=StaticCompsProvider(()))
+    data2 = empty_engine.discover_price("Unknown Rare 1800", "Anonymous", condition_grade="Good", format_hint="mass_market_paperback")
+    assert data2["evidence"]["comps_found"] == 0
+    assert data2["recommended_price_cad"] == "7.95"  # retail rounded: $7.95
+    assert "No live marketplace comps found" in data2["rationale"]
+    assert "mass market paperback" in data2["rationale"]

@@ -498,8 +498,9 @@ def create_app(
         proposals = []
         for idx, book in enumerate(extraction.books):
             condition = "Good" if "clean_as_new" in book.visible_condition_cues else "Acceptable"
-            # Run pricing
-            price_data = await run_in_threadpool(pricing.discover_price, book.title, ", ".join(book.authors), condition)
+            # Run pricing with live market comps & format hint
+            fmt_str = book.format.value if hasattr(book.format, "value") else str(book.format)
+            price_data = await run_in_threadpool(pricing.discover_price, book.title, ", ".join(book.authors), condition, fmt_str)
 
             payload = {
                 "extraction": {
@@ -581,7 +582,7 @@ def create_app(
 
         proposals = []
         for idx, book in enumerate(sample_books, start=1):
-            price_data = await run_in_threadpool(pricing.discover_price, book["title"], ", ".join(book["authors"]), book["condition"])
+            price_data = await run_in_threadpool(pricing.discover_price, book["title"], ", ".join(book["authors"]), book["condition"], book.get("format", "hardcover"))
             payload = {
                 "extraction": {
                     "title": book["title"],
