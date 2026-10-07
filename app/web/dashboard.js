@@ -210,6 +210,17 @@ function renderDetail(item) {
       detail.append(node("p", val.pricing_rationale, "muted"));
       if (dis.triage_reason) detail.append(node("p", `Triage: ${dis.triage_reason}`, "muted"));
     }
+
+    if (item.payload.pricing_evidence) {
+      const ev = item.payload.pricing_evidence;
+      detail.append(node("h4", "Pricing Evidence", "eyebrow"));
+      const evData = {};
+      if (ev.amazon_lowest_fba) evData["Amazon Lowest FBA"] = `$${Number(ev.amazon_lowest_fba).toFixed(2)}`;
+      if (ev.ebay_recent_average) evData["eBay Recent Avg"] = `$${Number(ev.ebay_recent_average).toFixed(2)}`;
+      evData["Comps Found"] = ev.comps_found;
+      evData["Confidence Score"] = `${Math.round(ev.confidence_score * 100)}%`;
+      fields(detail, evData);
+    }
     
     const raw = node("details"); raw.append(node("summary", "View complete action data"), node("pre", JSON.stringify(item.payload, null, 2))); detail.append(raw);
   } else if (item.operation === "sync_inventory") {

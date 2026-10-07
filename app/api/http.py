@@ -302,6 +302,9 @@ def create_app(
         file: UploadFile = File(...), _: Principal = Depends(require_decide)
     ) -> dict[str, Any]:
         from app.ai.book_vision import GeminiBookVisionProvider, resolve_gemini_api_key
+        from app.pricing import PricingEngine
+        from app.amazon.scraper import AmazonScraperClient, SnapshotStore
+
         try:
             api_key = resolve_gemini_api_key(settings.gemini_api_key if hasattr(settings, "gemini_api_key") else None)
         except ValueError as exc:
@@ -315,8 +318,19 @@ def create_app(
         except Exception as exc:
             raise HTTPException(502, f"Vision extraction failed: {exc}") from exc
 
+        # Initialize Pricing Engine
+        scraper = AmazonScraperClient(
+            api_key=getattr(settings, "shippo_api_key", "mock"),
+            store=SnapshotStore(),
+            live=not settings.dry_run
+        )
+        pricing = PricingEngine(scraper)
+
         proposals = []
         for idx, book in enumerate(extraction.books):
+            # Run pricing
+            price_data = await run_in_threadpool(pricing.discover_price, book.title, ", ".join(book.authors))
+
             payload = {
                 "extraction": {
                     "title": book.title,
@@ -336,10 +350,11 @@ def create_app(
                 "valuation": {
                     "condition_grade": "Good" if "clean_as_new" in book.visible_condition_cues else "Acceptable",
                     "channel_strategy": "multi_channel_antiquarian",
-                    "in_store_price_cad": "15.00",
-                    "online_price_cad": "20.00",
-                    "pricing_rationale": "Placeholder pricing based on visual spine extraction.",
-                }
+                    "in_store_price_cad": f"{float(price_data['recommended_price_cad']) * 0.75:.2f}",
+                    "online_price_cad": price_data["recommended_price_cad"],
+                    "pricing_rationale": price_data["rationale"],
+                },
+                "pricing_evidence": price_data["evidence"]
             }
             try:
                 result = operator.propose("intake_book", payload)
