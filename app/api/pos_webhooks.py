@@ -19,7 +19,12 @@ def verify_square_signature(url: str, body: bytes, signature: str, secret: str) 
     return hmac.compare_digest(expected_b64, signature)
 
 def handle_square_webhook(
-    url: str, body: bytes, signature: str, secret: str, operator: OperatorService
+    url: str,
+    body: bytes,
+    signature: str,
+    secret: str,
+    operator: OperatorService,
+    tenant_id: int = 1,
 ) -> dict[str, Any]:
     if not verify_square_signature(url, body, signature, secret):
         logger.warning("square_webhook.signature_rejected", byte_length=len(body))
@@ -47,10 +52,13 @@ def handle_square_webhook(
     processed_skus = []
     
     for item in line_items:
-        # In Square, the SKU is often tracked under catalog_object_id or a custom attribute.
-        # We will check the `note` field or a nested `item_details -> sku` mapping.
-        # For our ops-core standard, let's assume it maps directly if present or in a `note`
-        sku = item.get("note", "").strip() or item.get("catalog_object_id", "")
+        # In Square, the SKU is often tracked under note, sku, or catalog_object_id
+        raw_sku = item.get("note", "").strip() or item.get("sku", "").strip() or item.get("catalog_object_id", "")
+        sku = raw_sku
+        for prefix in ("sq-cat-", "#item-", "#var-"):
+            if sku.startswith(prefix):
+                sku = sku.removeprefix(prefix)
+                break
         
         if not sku:
             continue
@@ -59,14 +67,15 @@ def handle_square_webhook(
             # 1. Propose
             proposed = operator.propose(
                 operation="sync_inventory",
-                payload={"sku": sku, "source_channel": "square"}
+                payload={"sku": sku, "source_channel": "square", "tenant_id": tenant_id},
+                tenant_id=tenant_id,
             )
             review_id = proposed["review_id"]
             processed_skus.append(sku)
-            logger.info("square_webhook.sync_proposed", sku=sku, review_id=review_id)
+            logger.info("square_webhook.sync_proposed", sku=sku, review_id=review_id, tenant_id=tenant_id)
             
         except Exception as exc:
-            logger.error("square_webhook.sync_failed", sku=sku, error=str(exc))
+            logger.error("square_webhook.sync_failed", sku=sku, tenant_id=tenant_id, error=str(exc))
             # Continue processing other items even if one fails
 
     # Wake Corvus, the Vault Warden, to triage the newly populated queue

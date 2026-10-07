@@ -465,7 +465,9 @@ def create_app(
 
     @app.post("/webhooks/square")
     async def square_webhook(
-        request: Request, x_square_hmac_sha256: str = Header(default="")
+        request: Request,
+        x_square_hmac_sha256: str = Header(default=""),
+        tenant_id: int = 1,
     ) -> JSONResponse:
         body = await request.body()
         # Square includes the URL in the HMAC. Fast API request.url provides it.
@@ -479,7 +481,8 @@ def create_app(
             body,
             x_square_hmac_sha256,
             settings.square_webhook_secret,
-            operator
+            operator,
+            tenant_id,
         )
         return JSONResponse(result, status_code=result.get("status", 200))
 

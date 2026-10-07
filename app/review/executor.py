@@ -17,6 +17,7 @@ from app.publish.books import (
     BookListingOrchestrator,
     EbayListingAdapter,
     ShopifyListingAdapter,
+    SquareCatalogAdapter,
 )
 from app.publish.layer import DryRunPublisher, PublishGate, PublishRequest
 from app.review.queue import AlreadyExecuted, ReviewItem, ReviewStore
@@ -135,7 +136,8 @@ class ApprovedActionExecutor:
                 section=section,
                 shelf=shelf,
             )
-            self.inventory_store.add(item)
+            intake_tenant = payload.get("tenant_id") or getattr(self, "current_tenant_id", 1)
+            self.inventory_store.add(item, tenant_id=intake_tenant)
             
         return result
 
@@ -151,6 +153,7 @@ class ApprovedActionExecutor:
             AlibrisListingAdapter(dry_run=True),
             EbayListingAdapter(dry_run=True),
             ShopifyListingAdapter(dry_run=True, access_token=credentials.get("shopify", "")),
+            SquareCatalogAdapter(dry_run=True, access_token=credentials.get("square", "")),
         )
         sync = MultiChannelInventorySync(adapters)
         
@@ -159,7 +162,18 @@ class ApprovedActionExecutor:
         if not sku:
             raise ValueError("sku is required for sync_inventory")
             
-        return sync.process_sale(sku, source_channel)
+        result = sync.process_sale(sku, source_channel)
+
+        tenant_id = payload.get("tenant_id") or getattr(self, "current_tenant_id", 1)
+        if self.inventory_store:
+            try:
+                self.inventory_store.delist(sku, tenant_id=tenant_id)
+                result["inventory_store"] = "delisted"
+            except Exception as exc:
+                result["inventory_store_error"] = str(exc)
+                logger.error("inventory_store.delist.failed", sku=sku, tenant_id=tenant_id, error=str(exc))
+
+        return result
 
     def _fulfill_order(self, payload: dict[str, Any]) -> dict[str, Any]:
         from app.domain.carriers import ShippoAdapter
@@ -244,16 +258,24 @@ class ApprovedActionExecutor:
         if operation == "send_customer_response" and not getattr(self.mailer, "enabled", True):
             raise PermissionError("customer email sending is disabled")
 
-    def _dispatch(self, operation: str, payload: dict[str, Any], credentials: dict[str, str] = None) -> dict[str, Any]:
+    def _dispatch(
+        self,
+        operation: str,
+        payload: dict[str, Any],
+        credentials: dict[str, str] = None,
+        tenant_id: int = 1,
+    ) -> dict[str, Any]:
         handler = self.handlers.get(operation)
         if handler is None:
             raise ValueError(f"operation is not allowlisted: {operation}")
             
         self.current_credentials = credentials or {}
+        self.current_tenant_id = tenant_id
         
         result = handler(payload)
         
         self.current_credentials = {}
+        self.current_tenant_id = 1
         
         if not isinstance(result, dict):
             raise TypeError(f"handler for {operation} must return a dictionary")
@@ -289,7 +311,12 @@ class ApprovedActionExecutor:
 
         started = time.monotonic()
         try:
-            result = self._dispatch(claimed.operation, claimed.payload, credentials=credentials)
+            result = self._dispatch(
+                claimed.operation,
+                claimed.payload,
+                credentials=credentials,
+                tenant_id=tenant_id,
+            )
         except Exception as exc:
             metrics.executions_total().inc(outcome="failed")
             failed = store.fail_execution(review_id, str(exc), tenant_id=tenant_id)
