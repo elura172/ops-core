@@ -178,13 +178,20 @@ class BookVisionProvider(Protocol):
 
 @dataclass
 class GeminiBookVisionProvider(BookVisionProvider):
-    """High-reliability client for Google Gemini Vision with structured schema output."""
+    """High-reliability client for Google Gemini Vision with structured schema output and model cascade."""
 
     api_key: str
-    model: str = "gemini-3.5-flash"
+    model: str = "gemini-flash-lite-latest"
+    fallback_models: list[str] = field(default_factory=lambda: [
+        "gemini-flash-lite-latest",
+        "gemini-flash-latest",
+        "gemini-2.5-flash",
+        "gemini-3.1-flash-lite",
+        "gemini-3.5-flash-lite",
+    ])
     base_url: str = "https://generativelanguage.googleapis.com/v1beta"
-    timeout: float = 45.0
-    retries: RetryPolicy = field(default_factory=RetryPolicy)
+    timeout: float = 25.0
+    retries: RetryPolicy = field(default_factory=lambda: RetryPolicy(max_attempts=2, base_delay=0.3, max_delay=1.5))
     usage: UsageLedger = field(default_factory=UsageLedger)
 
     def extract_stack(
@@ -218,9 +225,26 @@ class GeminiBookVisionProvider(BookVisionProvider):
             },
         }
 
-        url = f"{self.base_url.rstrip('/')}/models/{self.model}:generateContent?key={self.api_key}"
-        raw_response = self._post_with_retry(url, body)
-        return self._parse_gemini_response(raw_response)
+        # Model cascade: try primary model, then fallbacks
+        models_to_try = [self.model] if self.model not in self.fallback_models else []
+        models_to_try.extend(self.fallback_models)
+        seen: set[str] = set()
+        unique_models = [m for m in models_to_try if not (m in seen or seen.add(m))]
+
+        last_error: Exception | None = None
+        for model in unique_models:
+            url = f"{self.base_url.rstrip('/')}/models/{model}:generateContent?key={self.api_key}"
+            try:
+                raw_response = self._post_with_retry(url, body)
+                return self._parse_gemini_response(raw_response)
+            except (TransientProviderError, TerminalProviderError, HTTPError) as exc:
+                last_error = exc
+                logger.warning(f"Gemini model {model} failed: {exc}, trying next model in cascade...")
+                continue
+
+        if last_error:
+            raise last_error
+        raise TransientProviderError("All Gemini vision models failed")
 
     def _post_with_retry(self, url: str, body: dict[str, Any]) -> dict[str, Any]:
         data = json.dumps(body).encode("utf-8")
@@ -243,6 +267,9 @@ class GeminiBookVisionProvider(BookVisionProvider):
                 if exc.code == 429:
                     if attempt >= self.retries.max_attempts:
                         raise RateLimited("Gemini rate limited (HTTP 429)") from exc
+                elif exc.code in (503, 404):
+                    # Fail fast so model cascade can try the next candidate model
+                    raise TransientProviderError(f"Gemini HTTP {exc.code}") from exc
                 elif exc.code in RETRYABLE_STATUS:
                     if attempt >= self.retries.max_attempts:
                         raise TransientProviderError(f"Gemini HTTP {exc.code}") from exc

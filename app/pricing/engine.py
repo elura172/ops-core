@@ -1,10 +1,10 @@
 from decimal import Decimal
 from typing import Any
-import logging
 
 from app.amazon.scraper import AmazonScraperClient
+from app.observability.logging import get_logger
 
-logger = logging.getLogger("pricing.engine")
+logger = get_logger("pricing_engine")
 
 class PricingEngine:
     def __init__(self, scraper: AmazonScraperClient):

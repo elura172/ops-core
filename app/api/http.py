@@ -440,7 +440,7 @@ def create_app(
 
     @app.post("/intake/camera")
     async def process_camera_upload(
-        file: UploadFile = File(...), _: Principal = Depends(require_decide)
+        file: UploadFile = File(...), principal: Principal = Depends(require_decide)
     ) -> dict[str, Any]:
         from app.ai.book_vision import GeminiBookVisionProvider, resolve_gemini_api_key
         from app.pricing import PricingEngine
@@ -499,7 +499,7 @@ def create_app(
                 "pricing_evidence": price_data["evidence"]
             }
             try:
-                result = operator.propose("intake_book", payload)
+                result = operator.propose("intake_book", payload, tenant_id=principal.tenant_id)
                 proposals.append(result)
             except Exception as exc:
                 logger.error("Failed to propose book", error=str(exc))
@@ -508,6 +508,84 @@ def create_app(
             "processed": len(extraction.books),
             "orientation": extraction.orientation,
             "proposals": proposals
+        }
+
+    @app.post("/intake/sample")
+    async def process_sample_upload(
+        principal: Principal = Depends(require_decide)
+    ) -> dict[str, Any]:
+        from app.pricing import PricingEngine
+        from app.amazon.scraper import AmazonScraperClient, SnapshotStore
+
+        scraper = AmazonScraperClient(
+            api_key=getattr(settings, "shippo_api_key", "mock"),
+            store=SnapshotStore(),
+            live=not settings.dry_run
+        )
+        pricing = PricingEngine(scraper)
+
+        sample_books = [
+            {
+                "title": "Neuromancer",
+                "authors": ["William Gibson"],
+                "format": "trade_paperback",
+                "condition": "Very Good",
+                "raw_spine_text": "GIBSON NEUROMANCER ACE SCIENCE FICTION",
+                "match_score": 0.94,
+            },
+            {
+                "title": "Foundation",
+                "authors": ["Isaac Asimov"],
+                "format": "hardcover_with_jacket",
+                "condition": "Good",
+                "raw_spine_text": "FOUNDATION ASIMOV GNOME PRESS",
+                "match_score": 0.91,
+            },
+            {
+                "title": "The Left Hand of Darkness",
+                "authors": ["Ursula K. Le Guin"],
+                "format": "hardcover_with_jacket",
+                "condition": "Very Good",
+                "raw_spine_text": "THE LEFT HAND OF DARKNESS LE GUIN WALKER",
+                "match_score": 0.89,
+            },
+        ]
+
+        proposals = []
+        for idx, book in enumerate(sample_books, start=1):
+            price_data = await run_in_threadpool(pricing.discover_price, book["title"], ", ".join(book["authors"]), book["condition"])
+            payload = {
+                "extraction": {
+                    "title": book["title"],
+                    "authors": book["authors"],
+                    "format": book["format"],
+                    "raw_spine_text": book["raw_spine_text"],
+                    "visible_condition_cues": ["clean_as_new"],
+                },
+                "disambiguation": {
+                    "best_candidate": {
+                        "title": book["title"],
+                        "match_score": book["match_score"],
+                        "primary_isbn": "UNKNOWN",
+                    },
+                    "triage_reason": f"Sample stack intake (Position {idx}).",
+                },
+                "valuation": {
+                    "condition_grade": book["condition"],
+                    "channel_strategy": "multi_channel_antiquarian",
+                    "in_store_price_cad": price_data["in_store_price_cad"],
+                    "online_price_cad": price_data["recommended_price_cad"],
+                    "pricing_rationale": price_data["rationale"],
+                },
+                "pricing_evidence": price_data["evidence"]
+            }
+            res = operator.propose("intake_book", payload, tenant_id=principal.tenant_id)
+            proposals.append(res)
+
+        return {
+            "processed": len(proposals),
+            "orientation": "horizontal_stack",
+            "proposals": proposals,
         }
 
     

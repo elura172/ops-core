@@ -573,12 +573,19 @@ $("camera-file").onchange = async event => {
     });
     
     if (epoch !== generation) return;
-    const body = await response.json();
-    if (!response.ok) throw new Error(body.detail || "Upload failed");
+    const text = await response.text();
+    let body;
+    try { body = JSON.parse(text); } catch(_) { body = { detail: text || `Upload failed (${response.status})` }; }
+    if (!response.ok) throw new Error(formatError(body.detail) || "Upload failed");
     
-    $("camera-status").textContent = `Extracted ${body.processed} books (${body.orientation}).`;
-    message(`Vision AI extracted ${body.processed} books from the stack and queued them for review.`);
-    refresh();
+    if (body.processed === 0) {
+      $("camera-status").textContent = "No book spines identified.";
+      message("No book spines were detected in this image. Ensure book spines and titles are clearly facing the camera, or try 'Load Sample Book Stack'.");
+    } else {
+      $("camera-status").textContent = `Extracted ${body.processed} books (${human(body.orientation)}).`;
+      message(`Vision AI extracted ${body.processed} books from the stack and queued them for review.`);
+      refresh();
+    }
   } catch (error) {
     $("camera-status").textContent = "Upload failed.";
     message(error.message);
@@ -587,6 +594,27 @@ $("camera-file").onchange = async event => {
     button.style.opacity = "1";
     button.style.pointerEvents = "auto";
   }
+};
+
+if ($("btn-sample-stack")) {
+  $("btn-sample-stack").onclick = async () => {
+    const btn = $("btn-sample-stack");
+    btn.disabled = true;
+    btn.textContent = "Extracting sample stack...";
+    $("camera-status").textContent = "Processing sample stack...";
+    try {
+      const body = await api("/intake/sample", { method: "POST" });
+      $("camera-status").textContent = `Extracted ${body.processed} books (${human(body.orientation)}).`;
+      message(`Vision AI extracted ${body.processed} books from the sample stack and queued them for review.`);
+      refresh();
+    } catch(err) {
+      $("camera-status").textContent = "Sample load failed.";
+      message(err.message);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "📚 Load Sample Book Stack";
+    }
+  };
 };
 
 let inventoryItems = [];
