@@ -48,6 +48,7 @@ class ApprovedActionExecutor:
         client: Any,
         audit: AuditSink | None = None,
         *,
+        inventory_store: Any = None,
         publish_gate: PublishGate | None = None,
         mailer: Mailer | None = None,
         shippo_api_key: str = "",
@@ -55,6 +56,7 @@ class ApprovedActionExecutor:
         self.client = client
         self.audit = audit
         self.shippo_api_key = shippo_api_key
+        self.inventory_store = inventory_store
         self.publish_gate = publish_gate or PublishGate(DryRunPublisher(), enabled=False)
         self.mailer = mailer or DryRunMailer()
         # Bound lazily: a client only needs the methods for operations it is
@@ -95,7 +97,28 @@ class ApprovedActionExecutor:
             EbayListingAdapter(dry_run=True),
         )
         orchestrator = BookListingOrchestrator(adapters)
-        return orchestrator.list_inventory(payload)
+        result = orchestrator.list_inventory(payload)
+        
+        if result.get("status") not in ("failed", "skipped") and self.inventory_store and "sku" in result.get("details", {}):
+            from app.db.inventory import InventoryItem
+            from datetime import UTC, datetime
+            from decimal import Decimal
+            details = result["details"]
+            item = InventoryItem(
+                sku=details["sku"],
+                title=details["title"],
+                authors=details["authors"],
+                format=details["format"],
+                condition=details["condition"],
+                in_store_price_cad=Decimal(str(details["in_store_price_cad"])),
+                online_price_cad=Decimal(str(details["online_price_cad"])),
+                status="active",
+                created_at=datetime.now(UTC),
+                updated_at=datetime.now(UTC)
+            )
+            self.inventory_store.add(item)
+            
+        return result
 
     def _sync_inventory(self, payload: dict[str, Any]) -> dict[str, Any]:
         from app.publish.inventory_sync import MultiChannelInventorySync

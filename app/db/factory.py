@@ -45,3 +45,13 @@ def open_order_repository(order_db: str) -> Any:
     from app.db.sqlite import SQLiteOrderRepository
 
     return SQLiteOrderRepository(order_db)
+
+def open_inventory_store(db_url: str) -> Any:
+    if is_postgres_dsn(db_url):
+        from app.db.migrate import migrate
+        from app.db.inventory import PostgresInventoryStore
+        migrate(db_url)
+        return PostgresInventoryStore(db_url)
+    
+    from app.db.inventory import SQLiteInventoryStore
+    return SQLiteInventoryStore(db_url)

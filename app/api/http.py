@@ -23,7 +23,7 @@ from app.api.security import (
 from app.api.tiktok_client import TikTokClient
 from app.api.webhook_service import handle_order_webhook
 from app.config import Settings
-from app.db.factory import open_order_repository, open_review_store
+from app.db.factory import open_order_repository, open_review_store, open_inventory_store
 from app.observability import metrics
 from app.observability.alerts import AlertManager
 from app.observability.logging import (
@@ -96,6 +96,7 @@ def create_app(
         # The durable store writes its own audit trail inside each transaction, so
         # the executor is given no second sink.
         review_store = open_review_store(settings.review_db)
+    inventory_store = open_inventory_store(settings.review_db)
         recovered = review_store.recover_stale_executions(timedelta(minutes=15))
         if recovered:
             metrics.stale_recoveries_total().inc(len(recovered))
@@ -106,6 +107,7 @@ def create_app(
         operator = OperatorService(
             review_store,
             ApprovedActionExecutor(
+                inventory_store=inventory_store,
                 TikTokClient(
                     settings.tts_access_token, settings.tts_shop_id, dry_run=settings.dry_run
                 ),
@@ -350,6 +352,34 @@ def create_app(
             "orientation": extraction.orientation,
             "proposals": proposals
         }
+
+    
+    @app.get("/inventory")
+    def list_inventory(principal: Principal = Depends(require_auth)) -> list[dict[str, Any]]:
+        return [
+            {
+                "sku": i.sku, "title": i.title, "authors": i.authors, "format": i.format,
+                "condition": i.condition, "in_store_price_cad": float(i.in_store_price_cad),
+                "online_price_cad": float(i.online_price_cad), "status": i.status,
+                "created_at": i.created_at.isoformat()
+            }
+            for i in inventory_store.list_all()
+        ]
+
+    @app.put("/inventory/{sku}")
+    def update_inventory_item(sku: str, payload: dict[str, Any], principal: Principal = Depends(require_decide)) -> dict[str, Any]:
+        from decimal import Decimal
+        in_store = Decimal(str(payload.get("in_store_price_cad", "0")))
+        online = Decimal(str(payload.get("online_price_cad", "0")))
+        inventory_store.update_prices(sku, in_store, online)
+        operator.propose("update_prices", {"sku": sku, "in_store_price_cad": str(in_store), "online_price_cad": str(online)})
+        return {"status": "ok"}
+
+    @app.delete("/inventory/{sku}")
+    def delist_inventory_item(sku: str, principal: Principal = Depends(require_decide)) -> dict[str, Any]:
+        inventory_store.delist(sku)
+        operator.propose("update_inventory", {"sku": sku, "stock": 0})
+        return {"status": "ok"}
 
     return app
 
