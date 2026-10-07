@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import urllib.parse
 from decimal import Decimal
 from typing import Any
 
@@ -49,11 +50,22 @@ class PricingEngine:
         Queries live marketplace comps (Amazon / AbeBooks) and applies antiquarian condition adjustments.
         """
         search_term = f"{title} {author}".strip()
+        encoded_query = urllib.parse.quote_plus(search_term)
+        search_url = f"https://www.abebooks.com/servlet/SearchResults?sortby=17&kn={encoded_query}"
+
         evidence: dict[str, Any] = {
             "amazon_lowest_fba": None,
             "ebay_recent_average": None,
             "comps_found": 0,
             "confidence_score": 0.0,
+            "confidence_label": "Catalog Baseline",
+            "search_url": search_url,
+            "min_comp_cad": None,
+            "median_comp_cad": None,
+            "p30_comp_cad": None,
+            "max_comp_cad": None,
+            "top_comps": [],
+            "strategy": "Priced to win Buy Box turnover (30th percentile of landed competitor copies).",
         }
 
         # 1. Try Amazon Scraper if live client is available
@@ -71,44 +83,67 @@ class PricingEngine:
             logger.debug("pricing.amazon.skipped_or_failed", error=str(exc))
 
         # 2. Try AbeBooks keyless live comps
-        abebooks_comps = []
+        raw_comps = ()
         if not amazon_comps:
             try:
                 raw_comps = self.comps_provider.fetch_comps(title=title, author=author)
-                for c in raw_comps:
-                    if c.total_price_cad > 0:
-                        abebooks_comps.append(c.total_price_cad)
-                if abebooks_comps:
-                    evidence["comps_found"] = len(abebooks_comps)
-                    evidence["ebay_recent_average"] = float(min(abebooks_comps))
             except Exception as exc:
                 logger.warning("pricing.abebooks.failed", error=str(exc))
 
-        # 3. Calculate Base Price
         mult = CONDITION_MULTIPLIERS.get(condition_grade, Decimal("0.90"))
 
-        if abebooks_comps:
-            abebooks_comps.sort()
-            # 30th percentile represents competitive pricing among used copies
-            p30_idx = min(len(abebooks_comps) - 1, max(0, int(len(abebooks_comps) * 0.30)))
-            market_comp = abebooks_comps[p30_idx]
+        if raw_comps:
+            raw_comps_sorted = sorted(raw_comps, key=lambda c: c.total_price_cad)
+            total_prices = [c.total_price_cad for c in raw_comps_sorted if c.total_price_cad > 0]
 
-            evidence["confidence_score"] = min(1.0, 0.4 + len(abebooks_comps) * 0.02)
+            if total_prices:
+                p30_idx = min(len(total_prices) - 1, max(0, int(len(total_prices) * 0.30)))
+                med_idx = len(total_prices) // 2
+                market_comp = total_prices[p30_idx]
 
-            raw_online = market_comp * mult
-            raw_in_store = raw_online * Decimal("0.75")
-            online_price = round_to_retail_ending(max(raw_online, Decimal("4.00")))
-            in_store_price = round_to_retail_ending(max(raw_in_store, Decimal("3.00")))
+                evidence["comps_found"] = len(total_prices)
+                evidence["min_comp_cad"] = float(total_prices[0])
+                evidence["p30_comp_cad"] = float(total_prices[p30_idx])
+                evidence["median_comp_cad"] = float(total_prices[med_idx])
+                evidence["max_comp_cad"] = float(total_prices[-1])
+                evidence["confidence_score"] = min(1.0, 0.4 + len(total_prices) * 0.02)
+                evidence["confidence_label"] = (
+                    "High Market Liquidity" if len(total_prices) >= 10 else "Moderate Liquidity"
+                )
 
-            rationale = (
-                f"Priced from {len(abebooks_comps)} live marketplace comps "
-                f"(market benchmark: ${market_comp:.2f} CAD). "
-                f"Applied condition adjustment for '{condition_grade}'."
-            )
+                evidence["top_comps"] = [
+                    {
+                        "source": c.source.title(),
+                        "item_price_cad": float(c.item_price_cad),
+                        "shipping_price_cad": float(c.shipping_price_cad),
+                        "total_price_cad": float(c.total_price_cad),
+                        "condition": getattr(c, "condition_reported", "Used"),
+                    }
+                    for c in raw_comps_sorted[:3]
+                ]
 
-        elif amazon_comps:
+                raw_online = market_comp * mult
+                raw_in_store = raw_online * Decimal("0.75")
+                online_price = round_to_retail_ending(max(raw_online, Decimal("4.00")))
+                in_store_price = round_to_retail_ending(max(raw_in_store, Decimal("3.00")))
+
+                rationale = (
+                    f"Priced from {len(total_prices)} live marketplace comps "
+                    f"(market benchmark: ${market_comp:.2f} CAD). "
+                    f"Applied condition adjustment for '{condition_grade}'."
+                )
+
+                return {
+                    "evidence": evidence,
+                    "recommended_price_cad": f"{online_price:.2f}",
+                    "in_store_price_cad": f"{in_store_price:.2f}",
+                    "rationale": rationale,
+                }
+
+        if amazon_comps:
             amazon_price = evidence["amazon_lowest_fba"]
             evidence["confidence_score"] = min(1.0, len(amazon_comps) * 0.2)
+            evidence["confidence_label"] = "Amazon Marketplace Data"
             base_price = Decimal(str(amazon_price)) * Decimal("0.90")
             raw_online = base_price * mult
             raw_in_store = raw_online * Decimal("0.75")
@@ -118,20 +153,26 @@ class PricingEngine:
                 f"Lowest Amazon FBA comp is ${amazon_price:.2f}. "
                 f"Undercutting by 10% for turnover, adjusted for '{condition_grade}'."
             )
+            return {
+                "evidence": evidence,
+                "recommended_price_cad": f"{online_price:.2f}",
+                "in_store_price_cad": f"{in_store_price:.2f}",
+                "rationale": rationale,
+            }
 
-        else:
-            # Format-based heuristic fallback (realistic catalog baseline, never $100 placeholder)
-            fmt_key = str(format_hint).lower().replace(" ", "_")
-            def_in_store, def_online = FORMAT_DEFAULTS.get(
-                fmt_key, (Decimal("8.00"), Decimal("14.00"))
-            )
-            online_price = round_to_retail_ending(def_online * mult)
-            in_store_price = round_to_retail_ending(def_in_store * mult)
-            evidence["confidence_score"] = 0.35
-            rationale = (
-                f"No live marketplace comps found. Applied standard {fmt_key.replace('_', ' ')} "
-                f"baseline adjusted for condition '{condition_grade}'."
-            )
+        # Format-based heuristic fallback (realistic catalog baseline, never $100 placeholder)
+        fmt_key = str(format_hint).lower().replace(" ", "_")
+        def_in_store, def_online = FORMAT_DEFAULTS.get(
+            fmt_key, (Decimal("8.00"), Decimal("14.00"))
+        )
+        online_price = round_to_retail_ending(def_online * mult)
+        in_store_price = round_to_retail_ending(def_in_store * mult)
+        evidence["confidence_score"] = 0.35
+        evidence["confidence_label"] = "Catalog Baseline (No Comps)"
+        rationale = (
+            f"No live marketplace comps found. Applied standard {fmt_key.replace('_', ' ')} "
+            f"baseline adjusted for condition '{condition_grade}'."
+        )
 
         return {
             "evidence": evidence,

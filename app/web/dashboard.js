@@ -315,13 +315,86 @@ function renderDetail(item) {
 
     if (item.payload.pricing_evidence) {
       const ev = item.payload.pricing_evidence;
-      detail.append(node("h4", "Pricing Evidence", "eyebrow"));
-      const evData = {};
-      if (ev.amazon_lowest_fba) evData["Amazon Lowest FBA"] = `$${Number(ev.amazon_lowest_fba).toFixed(2)}`;
-      if (ev.ebay_recent_average) evData["eBay Recent Avg"] = `$${Number(ev.ebay_recent_average).toFixed(2)}`;
-      evData["Comps Found"] = ev.comps_found;
-      evData["Confidence Score"] = `${Math.round(ev.confidence_score * 100)}%`;
-      fields(detail, evData);
+      const card = node("div", undefined, "pricing-evidence-card");
+
+      const headerRow = node("div", undefined, "evidence-header");
+      headerRow.append(node("h4", "Marketplace Pricing Evidence", "eyebrow"));
+      const badgeText = ev.confidence_label || (ev.comps_found ? `${ev.comps_found} Comps Found` : "Catalog Baseline");
+      const badgeStatus = (ev.comps_found && ev.comps_found > 0) ? "approved" : "pending";
+      headerRow.append(node("span", badgeText, `badge ${badgeStatus}`));
+      card.append(headerRow);
+
+      if (ev.min_comp_cad !== undefined && ev.min_comp_cad !== null && ev.p30_comp_cad !== undefined && ev.p30_comp_cad !== null && ev.median_comp_cad !== undefined && ev.median_comp_cad !== null) {
+        const spreadBar = node("div", undefined, "market-spread-bar");
+
+        const minItem = node("div", undefined, "spread-item");
+        minItem.append(node("span", "Lowest Landed", "spread-lbl"), node("span", `$${Number(ev.min_comp_cad).toFixed(2)}`, "spread-val"));
+
+        const p30Item = node("div", undefined, "spread-item highlight");
+        p30Item.append(node("span", "Target Benchmark (30th Pct)", "spread-lbl"), node("span", `$${Number(ev.p30_comp_cad).toFixed(2)}`, "spread-val"));
+
+        const medItem = node("div", undefined, "spread-item");
+        medItem.append(node("span", "Market Median", "spread-lbl"), node("span", `$${Number(ev.median_comp_cad).toFixed(2)}`, "spread-val"));
+
+        spreadBar.append(minItem, node("span", "→", "spread-divider"), p30Item, node("span", "→", "spread-divider"), medItem);
+        card.append(spreadBar);
+
+        card.append(node("p", "🎯 Priced to win Buy Box turnover (30th percentile of landed competitor copies).", "muted"));
+      }
+
+      if (ev.top_comps && ev.top_comps.length) {
+        const wrap = node("div", undefined, "comp-table-wrap");
+        const tbl = node("table", undefined, "comp-table");
+        
+        const thead = node("thead");
+        const trH = node("tr");
+        ["Marketplace", "Book Price", "Shipping", "Landed Total CAD"].forEach(h => trH.append(node("th", h)));
+        thead.append(trH);
+        tbl.append(thead);
+
+        const tbody = node("tbody");
+        ev.top_comps.forEach(c => {
+          const tr = node("tr");
+          tr.append(
+            node("td", c.source),
+            node("td", `$${Number(c.item_price_cad).toFixed(2)}`),
+            node("td", `$${Number(c.shipping_price_cad).toFixed(2)}`),
+            node("td", `$${Number(c.total_price_cad).toFixed(2)} CAD`)
+          );
+          tbody.append(tr);
+        });
+        tbl.append(tbody);
+        wrap.append(tbl);
+        card.append(wrap);
+      }
+
+      if ((ev.min_comp_cad === undefined || ev.min_comp_cad === null) && (ev.amazon_lowest_fba || ev.ebay_recent_average)) {
+        const evData = {};
+        if (ev.amazon_lowest_fba) evData["Amazon Lowest FBA"] = `$${Number(ev.amazon_lowest_fba).toFixed(2)}`;
+        if (ev.ebay_recent_average) evData["eBay Recent Avg"] = `$${Number(ev.ebay_recent_average).toFixed(2)}`;
+        if (ev.comps_found) evData["Comps Found"] = ev.comps_found;
+        if (ev.confidence_score) evData["Confidence Score"] = `${Math.round(ev.confidence_score * 100)}%`;
+        fields(card, evData);
+      } else if ((ev.min_comp_cad === undefined || ev.min_comp_cad === null) && (!ev.top_comps || !ev.top_comps.length)) {
+        const evData = {
+          "Confidence Score": `${Math.round((ev.confidence_score || 0.35) * 100)}%`,
+          "Status": ev.confidence_label || "Catalog Heuristic"
+        };
+        fields(card, evData);
+      }
+
+      if (ev.search_url) {
+        const actRow = node("div", undefined, "verify-action-row");
+        const countTxt = ev.comps_found ? ` ${ev.comps_found}` : "";
+        const a = node("a", `🔍 Verify${countTxt} Live Listings on AbeBooks ↗`, "verify-link");
+        a.href = ev.search_url;
+        a.target = "_blank";
+        a.rel = "noopener noreferrer";
+        actRow.append(a);
+        card.append(actRow);
+      }
+
+      detail.append(card);
     }
     
     const raw = node("details"); raw.append(node("summary", "View complete action data"), node("pre", JSON.stringify(item.payload, null, 2))); detail.append(raw);
