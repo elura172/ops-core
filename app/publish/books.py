@@ -416,6 +416,59 @@ class ShopifyListingAdapter:
         logger.info("shopify.cancel_order.success", order_id=order_id)
         return True
 
+
+@dataclass
+class SquareCatalogAdapter(BookListingAdapter):
+    """Square POS Catalog Adapter. Automatically pushes newly cataloged books to in-store register."""
+
+    access_token: str = ""
+    location_id: str = ""
+    dry_run: bool = True
+
+    @property
+    def channel_name(self) -> str:
+        return "square"
+
+    def list_book(
+        self,
+        sku: str,
+        title: str,
+        condition: str,
+        price_cad: Decimal,
+        details: dict[str, Any],
+    ) -> str | None:
+        from app.api.square_service import SquareService
+
+        in_store_price = Decimal(str(details.get("in_store_price_cad", price_cad)))
+        authors = details.get("authors") or ([details["author"]] if "author" in details else ["Unknown"])
+        res = SquareService.push_catalog_item_raw(
+            sku=sku,
+            title=title,
+            authors=authors,
+            format_str=details.get("format", "unknown"),
+            condition=condition,
+            price_cad=in_store_price,
+            section=details.get("section", "General"),
+            shelf=details.get("shelf", ""),
+            access_token=self.access_token,
+            location_id=self.location_id,
+            dry_run=self.dry_run,
+        )
+        return res.get("catalog_object_id")
+
+    def delist_book(self, sku: str) -> bool:
+        from app.api.square_service import SquareService
+
+        return SquareService.delist_catalog_item_raw(
+            sku=sku,
+            access_token=self.access_token,
+            dry_run=self.dry_run,
+        )
+
+    def cancel_order(self, order_id: str, reason: str = "OUT_OF_STOCK") -> bool:
+        return True
+
+
 @dataclass
 class BookListingOrchestrator:
     """Routes approved book intake operations to the correct marketplace adapters."""

@@ -1122,8 +1122,27 @@ async function renderBookshelf() {
           loadBookshelf();
         } catch(e) { message(e.message); }
       };
+
+      const checkoutBtn = node("button", "💳 Checkout", "ghost-sm");
+      checkoutBtn.style.color = "var(--green)";
+      checkoutBtn.title = "Generate Square in-store payment checkout link";
+      checkoutBtn.onclick = () => showSquareCheckoutModal(item);
+
+      const pushSquareBtn = node("button", "📲 Square", "ghost-sm");
+      pushSquareBtn.title = "Push book to Square POS Register Catalog";
+      pushSquareBtn.onclick = async () => {
+        pushSquareBtn.disabled = true;
+        try {
+          const res = await api(`/inventory/${encodeURIComponent(item.sku)}/square/catalog`, { method: "POST" });
+          message(`Synced "${item.title}" to Square POS Catalog.`);
+          pushSquareBtn.textContent = "✓ Synced";
+        } catch(e) {
+          alert(e.message);
+          pushSquareBtn.disabled = false;
+        }
+      };
       
-      actions.append(priceLabel, priceInput, saveBtn, delistBtn);
+      actions.append(priceLabel, priceInput, saveBtn, delistBtn, checkoutBtn, pushSquareBtn);
     } else {
       actions.append(node("span", `Status: ${human(item.status)}`, "muted"));
     }
@@ -1433,6 +1452,79 @@ async function showShelfAuditHistoryModal() {
   }
 }
 
+async function showSquareCheckoutModal(item) {
+  const overlay = node("div", undefined, "sanctuary-modal-overlay");
+  const modal = node("div", undefined, "audit-modal");
+  modal.style.maxWidth = "460px";
+
+  const header = node("div", undefined, "sanctuary-header");
+  header.append(node("h3", "💳 In-Store Square Checkout"));
+  const closeBtn = node("button", "✕", "ghost-sm");
+  closeBtn.onclick = () => overlay.remove();
+  header.append(closeBtn);
+  modal.append(header);
+
+  const loadingP = node("p", `Generating Square payment link for "${item.title}"...`, "muted");
+  modal.append(loadingP);
+  overlay.append(modal);
+  document.body.append(overlay);
+  overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+
+  try {
+    const data = await api(`/inventory/${encodeURIComponent(item.sku)}/square/checkout`, { method: "POST" });
+    loadingP.remove();
+
+    const bookSummary = node("div");
+    bookSummary.style.background = "var(--surface-subtle)";
+    bookSummary.style.padding = "14px";
+    bookSummary.style.borderRadius = "8px";
+    bookSummary.style.marginBottom = "16px";
+    bookSummary.innerHTML = `
+      <div style="font-weight:700; font-size:16px;">${item.title}</div>
+      <div class="muted" style="font-size:12px; margin-top:2px;">${item.authors.join(", ")} · SKU: <code>${item.sku}</code> · 📍 ${item.section || "General"} · ${item.shelf || ""}</div>
+      <div style="display:flex; justify-content:space-between; align-items:baseline; margin-top:12px;">
+        <span class="muted" style="font-size:12px;">In-Store Price:</span>
+        <span style="font-size:22px; font-weight:750; color:var(--ink);">$${Number(data.amount_cad || item.in_store_price_cad).toFixed(2)} CAD</span>
+      </div>
+    `;
+    modal.append(bookSummary);
+
+    const payRow = node("div");
+    payRow.style.display = "flex";
+    payRow.style.flexDirection = "column";
+    payRow.style.gap = "10px";
+
+    const payBtn = node("a", `Open Square Payment Page ($${Number(data.amount_cad || item.in_store_price_cad).toFixed(2)}) →`, "primary full-width");
+    payBtn.href = data.payment_url;
+    payBtn.target = "_blank";
+    payBtn.style.textAlign = "center";
+    payBtn.style.display = "block";
+    payBtn.style.padding = "12px";
+    payBtn.style.textDecoration = "none";
+    payRow.append(payBtn);
+
+    const copyBtn = node("button", "📋 Copy Checkout Link", "ghost-sm full-width");
+    copyBtn.onclick = () => {
+      navigator.clipboard.writeText(data.payment_url);
+      message("Square payment link copied to clipboard.");
+      copyBtn.textContent = "✓ Link Copied";
+    };
+    payRow.append(copyBtn);
+    modal.append(payRow);
+
+    const hint = node("p", undefined, "muted");
+    hint.style.fontSize = "11.5px";
+    hint.style.marginTop = "16px";
+    hint.style.borderTop = "1px solid var(--line-subtle)";
+    hint.style.paddingTop = "12px";
+    hint.innerHTML = `<strong>Autonomous Delist Protection:</strong> When the customer taps to pay on Square, the Square webhook automatically notifies Ops Core, causing Corvus Warden to instantly delist this volume across all online channels.`;
+    modal.append(hint);
+
+  } catch(err) {
+    loadingP.textContent = `Checkout error: ${err.message}`;
+  }
+}
+
 function switchTab(active) {
   const tabs = {
     queue: $("tab-queue"),
@@ -1469,6 +1561,23 @@ function switchTab(active) {
 
 if ($("tab-queue")) $("tab-queue").onclick = () => switchTab("queue");
 if ($("tab-bookshelf")) $("tab-bookshelf").onclick = () => switchTab("bookshelf");
+if ($("btn-sync-square-all")) {
+  $("btn-sync-square-all").onclick = async () => {
+    const btn = $("btn-sync-square-all");
+    btn.disabled = true;
+    btn.textContent = "Syncing with Square...";
+    try {
+      const res = await api("/inventory/square/catalog/sync-all", { method: "POST" });
+      message(`Synced ${res.synced_count} active volume(s) to Square POS Catalog.`);
+      btn.textContent = `✓ Synced (${res.synced_count})`;
+    } catch(err) {
+      alert(`Square catalog sync error: ${err.message}`);
+      btn.textContent = "📲 Sync Square POS";
+    } finally {
+      setTimeout(() => { btn.disabled = false; btn.textContent = "📲 Sync Square POS"; }, 3500);
+    }
+  };
+}
 if ($("btn-audit-shelf")) $("btn-audit-shelf").onclick = () => showShelfAuditModal();
 if ($("btn-audit-history")) $("btn-audit-history").onclick = () => showShelfAuditHistoryModal();
 if ($("bookshelf-filter-section")) $("bookshelf-filter-section").onchange = () => renderBookshelf();

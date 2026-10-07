@@ -861,6 +861,64 @@ def create_app(
             for a in audits
         ]
 
+    def _get_tenant_square_creds(tenant_id: int) -> tuple[str, str]:
+        import os
+        token = ""
+        try:
+            enc_integrations = user_store.get_tenant_integrations(tenant_id)
+            if "square" in enc_integrations:
+                from app.auth import decrypt_credential
+                token = decrypt_credential(enc_integrations["square"])
+        except Exception:
+            pass
+        if not token:
+            token = getattr(settings, "square_access_token", "") or os.getenv("SQUARE_ACCESS_TOKEN", "")
+        loc_id = getattr(settings, "square_location_id", "") or os.getenv("SQUARE_LOCATION_ID", "")
+        return token, loc_id
+
+    @app.post("/inventory/{sku}/square/catalog")
+    def push_book_to_square(
+        sku: str, principal: Principal = Depends(require_decide)
+    ) -> dict[str, Any]:
+        item = inventory_store.get(sku, tenant_id=principal.tenant_id)
+        if not item:
+            raise HTTPException(404, "item not found")
+        from app.api.square_service import SquareService
+        token, loc_id = _get_tenant_square_creds(principal.tenant_id)
+        return SquareService.push_catalog_item(
+            item, access_token=token, location_id=loc_id, dry_run=settings.dry_run
+        )
+
+    @app.post("/inventory/square/catalog/sync-all")
+    def sync_all_to_square(
+        principal: Principal = Depends(require_decide)
+    ) -> dict[str, Any]:
+        items = [i for i in inventory_store.list_all(tenant_id=principal.tenant_id) if i.status == "active"]
+        from app.api.square_service import SquareService
+        token, loc_id = _get_tenant_square_creds(principal.tenant_id)
+        synced = []
+        for item in items:
+            res = SquareService.push_catalog_item(
+                item, access_token=token, location_id=loc_id, dry_run=settings.dry_run
+            )
+            synced.append(res)
+        return {"status": "completed", "total": len(items), "synced_count": len(synced), "results": synced}
+
+    @app.post("/inventory/{sku}/square/checkout")
+    def create_book_square_checkout(
+        sku: str, principal: Principal = Depends(require_decide)
+    ) -> dict[str, Any]:
+        item = inventory_store.get(sku, tenant_id=principal.tenant_id)
+        if not item:
+            raise HTTPException(404, "item not found")
+        if item.status != "active":
+            raise HTTPException(400, f"Cannot create checkout for {item.status} book")
+        from app.api.square_service import SquareService
+        token, loc_id = _get_tenant_square_creds(principal.tenant_id)
+        return SquareService.create_checkout_link(
+            item, access_token=token, location_id=loc_id, dry_run=settings.dry_run
+        )
+
 
     
     from app.auth import get_password_hash, verify_password, create_access_token

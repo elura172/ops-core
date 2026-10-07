@@ -100,6 +100,8 @@ class ApprovedActionExecutor:
         return asdict(self.publish_gate.execute(request, approved=True))
 
     def _intake_book(self, payload: dict[str, Any]) -> dict[str, Any]:
+        from app.publish.books import SquareCatalogAdapter
+        credentials = getattr(self, "current_credentials", {})
         adapters = (
             AbeBooksListingAdapter(dry_run=True),
             AmazonSPAPIAdapter(dry_run=True),
@@ -107,6 +109,7 @@ class ApprovedActionExecutor:
             AlibrisListingAdapter(dry_run=True),
             EbayListingAdapter(dry_run=True),
             ShopifyListingAdapter(dry_run=True),
+            SquareCatalogAdapter(dry_run=True, access_token=credentials.get("square", "")),
         )
         orchestrator = BookListingOrchestrator(adapters)
         result = orchestrator.list_inventory(payload)
