@@ -27,8 +27,8 @@ function disconnect() {
   $("identity").textContent = ""; $("workspace").hidden = true; $("logout").hidden = true;
   $("login-section").hidden = false; 
   if ($("billing-section")) $("billing-section").hidden = true;
-  if ($("analytics-panel")) $("analytics-panel").hidden = true;
   if ($("onboarding-section")) $("onboarding-section").hidden = true;
+  if (typeof switchTab === "function") switchTab("queue");
   $("refresh").disabled = false;
 }
 async function api(path, options = {}) {
@@ -107,13 +107,19 @@ function renderBatchDetail() {
 }
 
 function renderQueue() {
-  $("count").textContent = `${items.length} actions · ${items.filter(i=>i.status === "PENDING").length} awaiting review`;
+  const pendingCount = items.filter(i => i.status === "PENDING").length;
+  $("count").textContent = `${items.length} actions · ${pendingCount} awaiting review`;
+  if ($("tab-queue-badge")) {
+    $("tab-queue-badge").textContent = pendingCount ? String(pendingCount) : "";
+  }
+
   const list = $("items"); list.replaceChildren();
-  const shown = items.filter(i=>$("filter").value === "ALL" || i.status === $("filter").value);
+  const shown = items.filter(i => $("filter").value === "ALL" || i.status === $("filter").value);
   
   if (shown.length) {
-    const selAll = node("button", "Toggle Select All");
-    selAll.style.marginBottom = "10px";
+    const selAll = node("button", "Toggle Select All", "ghost-sm");
+    selAll.style.marginBottom = "8px";
+    selAll.style.width = "100%";
     selAll.onclick = () => {
       const allChecked = shown.every(i => checkedItems.has(i.review_id));
       if (allChecked) checkedItems.clear();
@@ -124,16 +130,17 @@ function renderQueue() {
     list.append(selAll);
   }
   
-  if (!shown.length) list.append(node("p", items.length ? "No actions match this filter." : "Your queue is clear. New proposals will appear here when a connected workflow submits them.", "empty"));
+  if (!shown.length) {
+    list.append(node("p", items.length ? "No actions match this filter." : "Your queue is clear. New proposals will appear here when an intake scan or workflow submits them.", "empty"));
+  }
+
   for (const item of shown) {
-    const row = node("div");
-    row.style.display = "flex";
-    row.style.alignItems = "center";
+    const isSelected = item.review_id === selected;
+    const row = node("div", undefined, `item-row${isSelected ? " selected" : ""}`);
     
     const cb = node("input");
     cb.type = "checkbox";
     cb.checked = checkedItems.has(item.review_id);
-    cb.style.marginRight = "8px";
     cb.onclick = (e) => {
       e.stopPropagation();
       if (cb.checked) checkedItems.add(item.review_id);
@@ -142,14 +149,40 @@ function renderQueue() {
     };
     
     const button = node("button", undefined, "item");
-    button.style.flex = "1";
-    button.setAttribute("aria-pressed", String(item.review_id === selected));
-    button.append(node("span", human(item.status), `badge ${item.status.toLowerCase()}`), node("strong", labels[item.operation] || human(item.operation)), node("small", item.review_id));
+    button.setAttribute("aria-pressed", String(isSelected));
+    
+    const headerRow = node("div", undefined, "item-header");
+    let displayTitle = labels[item.operation] || human(item.operation);
+    let subDetail = item.review_id;
+
+    if (item.operation === "intake_book" && item.payload) {
+      const best = item.payload.disambiguation?.best_candidate?.title;
+      const title = best || item.payload.extraction?.title;
+      const price = item.payload.valuation?.online_price_cad;
+      if (title) displayTitle = title;
+      
+      const authors = item.payload.extraction?.authors;
+      const cond = item.payload.valuation?.condition_grade;
+      const authStr = authors && authors.length ? authors.join(", ") : "";
+      subDetail = `${authStr ? `${authStr} · ` : ""}${cond || "Antiquarian"} · ${price ? `$${Number(price).toFixed(2)} CAD` : item.review_id}`;
+    } else if (item.operation === "sync_inventory" && item.payload?.sku) {
+      displayTitle = `Sync SKU: ${item.payload.sku}`;
+      subDetail = `Sold on ${human(item.payload.source_channel || "marketplace")} · Delist everywhere`;
+    }
+
+    const titleEl = node("strong", displayTitle);
+    const badgeEl = node("span", human(item.status), `badge ${item.status.toLowerCase()}`);
+    headerRow.append(titleEl, badgeEl);
+
+    const subRow = node("div", undefined, "item-sub");
+    subRow.append(node("span", subDetail), node("small", item.review_id));
+
+    button.append(headerRow, subRow);
     button.disabled = busy;
-    button.onclick = ()=> {
+    button.onclick = () => {
       if (checkedItems.size > 0) {
         cb.checked = !cb.checked;
-        cb.onclick({stopPropagation: ()=>{}});
+        cb.onclick({ stopPropagation: () => {} });
       } else {
         select(item.review_id);
       }
@@ -731,25 +764,26 @@ let inventoryItems = [];
 async function renderBookshelf() {
   const list = $("bookshelf-items"); list.replaceChildren();
   if (!inventoryItems.length) {
-    list.append(node("p", "Your bookshelf is empty.", "empty"));
+    list.append(node("p", "Your bookshelf is empty. Approved book intakes will appear here once executed.", "empty"));
     return;
   }
   for (const item of inventoryItems) {
-    const card = node("div", undefined, "item");
-    card.style.display = "block";
-    card.style.marginBottom = "10px";
+    const card = node("div", undefined, "bookshelf-card");
     
     card.append(node("h3", item.title));
-    card.append(node("p", `SKU: ${item.sku} | Author: ${item.authors.join(", ")} | Format: ${item.format} | Condition: ${item.condition} | Status: ${item.status}`, "muted"));
+    const meta = node("div", undefined, "bookshelf-meta");
+    meta.innerHTML = `<strong>${item.authors.join(", ")}</strong><br>SKU: <code>${item.sku}</code> · Format: ${human(item.format)} · Grade: ${item.condition} · In-Store: $${Number(item.in_store_price_cad).toFixed(2)} CAD`;
+    card.append(meta);
     
     if (item.status === "active") {
-      const priceLabel = node("label", "Online Price (CAD): ");
+      const actions = node("div", undefined, "bookshelf-actions");
+      const priceLabel = node("label", "Online: $");
       const priceInput = node("input");
       priceInput.type = "number";
+      priceInput.step = "0.50";
       priceInput.value = item.online_price_cad;
-      priceInput.style.marginRight = "10px";
       
-      const saveBtn = node("button", "Save Price");
+      const saveBtn = node("button", "Save Price", "ghost-sm");
       saveBtn.onclick = async () => {
         saveBtn.disabled = true;
         try {
@@ -760,14 +794,14 @@ async function renderBookshelf() {
               online_price_cad: parseFloat(priceInput.value)
             })
           });
-          message(`Price updated and "Update prices" action queued for ${item.sku}.`);
+          message(`Price updated and "Update prices" proposal queued for ${item.sku}.`);
         } catch(e) { message(e.message); }
         finally { saveBtn.disabled = false; }
       };
       
-      const delistBtn = node("button", "Delist");
+      const delistBtn = node("button", "Delist", "ghost-sm");
       delistBtn.onclick = async () => {
-        if (!confirm(`Are you sure you want to delist ${item.sku}? This will set stock to 0 on external channels.`)) return;
+        if (!confirm(`Are you sure you want to delist ${item.sku}? This will set stock to 0 across external channels.`)) return;
         delistBtn.disabled = true;
         try {
           await api(`/inventory/${item.sku}`, { method: "DELETE" });
@@ -776,7 +810,8 @@ async function renderBookshelf() {
         } catch(e) { message(e.message); }
       };
       
-      card.append(priceLabel, priceInput, saveBtn, delistBtn);
+      actions.append(priceLabel, priceInput, saveBtn, delistBtn);
+      card.append(actions);
     }
     
     list.append(card);
@@ -790,51 +825,97 @@ async function loadBookshelf() {
   } catch(e) { message(e.message); }
 }
 
-if ($("tab-queue") && $("tab-bookshelf") && $("tab-settings") && $("tab-analytics")) {
-  $("tab-queue").onclick = () => {
-    $("tab-queue").className = "primary";
-    $("tab-bookshelf").className = "";
-    $("tab-analytics").className = "";
-    $("tab-settings").className = "";
-    $("bookshelf-panel").hidden = true;
-    $("settings-panel").hidden = true;
-    $("analytics-panel").hidden = true;
-    $("queue-detail-panel").hidden = false;
+function switchTab(active) {
+  const tabs = {
+    queue: $("tab-queue"),
+    bookshelf: $("tab-bookshelf"),
+    intake: $("tab-intake"),
+    settings: $("tab-settings"),
+    analytics: $("tab-analytics")
   };
-  $("tab-bookshelf").onclick = () => {
-    $("tab-queue").className = "";
-    $("tab-bookshelf").className = "primary";
-    $("tab-analytics").className = "";
-    $("tab-settings").className = "";
-    $("bookshelf-panel").hidden = false;
-    $("settings-panel").hidden = true;
-    $("analytics-panel").hidden = true;
-    $("queue-detail-panel").hidden = true;
-    loadBookshelf();
+  const panels = {
+    queue: $("view-desk"),
+    bookshelf: $("bookshelf-panel"),
+    intake: $("intake-panel"),
+    settings: $("settings-panel"),
+    analytics: $("analytics-panel")
   };
-  $("tab-analytics").onclick = () => {
-    $("tab-queue").className = "";
-    $("tab-bookshelf").className = "";
-    $("tab-analytics").className = "primary";
-    $("tab-settings").className = "";
-    $("bookshelf-panel").hidden = true;
-    $("settings-panel").hidden = true;
-    $("analytics-panel").hidden = false;
-    $("queue-detail-panel").hidden = true;
-    loadAnalytics();
-  };
-  $("tab-settings").onclick = () => {
-    $("tab-queue").className = "";
-    $("tab-bookshelf").className = "";
-    $("tab-analytics").className = "";
-    $("tab-settings").className = "primary";
-    $("bookshelf-panel").hidden = true;
-    $("settings-panel").hidden = false;
-    $("analytics-panel").hidden = true;
-    $("queue-detail-panel").hidden = true;
-    loadSettings();
+
+  for (const [key, btn] of Object.entries(tabs)) {
+    if (btn) {
+      if (key === active) btn.className = "nav-tab active";
+      else btn.className = "nav-tab";
+    }
+  }
+
+  for (const [key, panel] of Object.entries(panels)) {
+    if (panel) {
+      panel.hidden = (key !== active);
+    }
+  }
+
+  if (active === "bookshelf") loadBookshelf();
+  else if (active === "analytics") loadAnalytics();
+  else if (active === "settings") loadSettings();
+}
+
+if ($("tab-queue")) $("tab-queue").onclick = () => switchTab("queue");
+if ($("tab-bookshelf")) $("tab-bookshelf").onclick = () => switchTab("bookshelf");
+if ($("tab-intake")) $("tab-intake").onclick = () => switchTab("intake");
+if ($("tab-settings")) $("tab-settings").onclick = () => switchTab("settings");
+if ($("tab-analytics")) $("tab-analytics").onclick = () => switchTab("analytics");
+
+if ($("desk-btn-intake")) {
+  $("desk-btn-intake").onclick = () => {
+    switchTab("intake");
+    $("camera-file")?.click();
   };
 }
+if ($("desk-btn-sample")) {
+  $("desk-btn-sample").onclick = () => {
+    $("btn-sample-stack")?.click();
+  };
+}
+
+// Power operator keyboard shortcuts
+window.addEventListener("keydown", event => {
+  if (!$("workspace") || $("workspace").hidden) return;
+  const tag = (event.target && event.target.tagName) || "";
+  if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+
+  const shown = items.filter(i => $("filter").value === "ALL" || i.status === $("filter").value);
+  if (!shown.length) return;
+
+  const currentIndex = shown.findIndex(i => i.review_id === selected);
+
+  if (event.key === "j" || event.key === "ArrowDown") {
+    event.preventDefault();
+    const nextIndex = currentIndex < shown.length - 1 ? currentIndex + 1 : 0;
+    select(shown[nextIndex].review_id);
+  } else if (event.key === "k" || event.key === "ArrowUp") {
+    event.preventDefault();
+    const prevIndex = currentIndex > 0 ? currentIndex - 1 : shown.length - 1;
+    select(shown[prevIndex].review_id);
+  } else if (event.key === "a" || event.key === "A") {
+    const approveBtn = Array.from($("detail").querySelectorAll("button")).find(b => b.textContent.includes("Approve"));
+    if (approveBtn && !approveBtn.disabled) {
+      event.preventDefault();
+      approveBtn.click();
+    }
+  } else if (event.key === "x" || event.key === "X") {
+    const rejectBtn = Array.from($("detail").querySelectorAll("button")).find(b => b.textContent.includes("Reject"));
+    if (rejectBtn && !rejectBtn.disabled) {
+      event.preventDefault();
+      rejectBtn.click();
+    }
+  } else if (event.key === "e" || event.key === "E") {
+    const execBtn = Array.from($("detail").querySelectorAll("button")).find(b => b.textContent.includes("Execute"));
+    if (execBtn && !execBtn.disabled) {
+      event.preventDefault();
+      execBtn.click();
+    }
+  }
+});
 
 async function loadAnalytics() {
   try {

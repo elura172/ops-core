@@ -3,77 +3,105 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Ops Core · Review desk</title>
+  <title>Ops Core · Sovereign Antiquarian Review Desk</title>
   <link rel="stylesheet" href="/dashboard/assets/dashboard.css">
   <script src="/dashboard/assets/dashboard.js" defer></script>
 </head>
 <body>
-  <header><a href="/dashboard" class="brand">◈ <span>OPS CORE</span></a><span class="caption">Your commerce, considered.</span><span id="identity"></span><button id="logout" hidden>Disconnect</button></header>
+  <header>
+    <div class="brand-group">
+      <a href="/dashboard" class="brand">◈ <span>OPS CORE</span></a>
+      <span class="caption">Your commerce, considered.</span>
+    </div>
+    <div class="header-right">
+      <span id="identity" class="identity-badge"></span>
+      <button id="logout" hidden class="ghost-sm">Disconnect</button>
+    </div>
+  </header>
+
   <main>
-    <section class="intro"><p class="eyebrow">THE OPERATOR DESK</p><h1>Good work.<br>Ready for your word.</h1><p>See what’s proposed. Make the decision. Follow the result.</p></section>
-    <p id="message" role="status" aria-live="polite"></p>
-        <section id="login-section" class="panel login">
-      <div id="login-panel">
-        <p class="eyebrow">WELCOME BACK</p><h2>Open your review desk</h2>
-        <form id="form-login">
-          <label for="login-email">Email</label>
-          <input id="login-email" type="email" required autocomplete="email" spellcheck="false" style="margin-bottom: 1rem; width: 100%;">
-          
-          <label for="login-password">Password</label>
-          <input id="login-password" type="password" required autocomplete="current-password" style="margin-bottom: 1.5rem; width: 100%;">
-          
-          <button type="submit" class="primary" style="width: 100%;">Login →</button>
-        </form>
-        <div style="background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.1); border-radius: 6px; padding: 0.75rem 1rem; margin-top: 1.25rem; font-size: 0.85rem;">
-          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.35rem;">
-            <strong style="color: #e5a93b;">Demo Workspace</strong>
-            <button type="button" id="btn-fill-demo" style="padding: 2px 8px; font-size: 0.75rem; background: transparent; border: 1px solid rgba(255,255,255,0.2); border-radius: 4px; cursor: pointer; color: #fff;">Fill Demo</button>
-          </div>
-          <div style="color: #888; font-family: monospace; font-size: 0.8rem; line-height: 1.4;">
-            Email: <span style="color: #ddd;">operator@opscore.io</span><br>
-            Password: <span style="color: #ddd;">demo1234</span>
-          </div>
-        </div>
-        <p class="muted" style="text-align: center; margin-top: 1rem;">Don't have an account? <a href="#" id="show-signup">Create one</a>.</p>
+    <section class="intro">
+      <div class="intro-left">
+        <p class="eyebrow">THE OPERATOR DESK</p>
+        <h1>Good work.<br>Ready for your word.</h1>
+        <p class="intro-sub">See what’s proposed. Make the decision. Follow the result.</p>
       </div>
-      
-      <div id="signup-panel" hidden>
-        <p class="eyebrow">JOIN OPS CORE</p><h2>Create a Workspace</h2>
-        <form id="form-signup">
-          <label for="signup-store">Store Name</label>
-          <input id="signup-store" type="text" required autocomplete="organization" spellcheck="false" style="margin-bottom: 1rem; width: 100%;">
-          
-          <label for="signup-email">Email</label>
-          <input id="signup-email" type="email" required autocomplete="email" spellcheck="false" style="margin-bottom: 1rem; width: 100%;">
-          
-          <label for="signup-password">Password</label>
-          <input id="signup-password" type="password" required autocomplete="new-password" style="margin-bottom: 1.5rem; width: 100%;">
-          
-          <button type="submit" class="primary" style="width: 100%;">Create Account →</button>
-        </form>
-        <p class="muted" style="text-align: center; margin-top: 1rem;">Already have a workspace? <a href="#" id="show-login">Login</a>.</p>
-      </div>
-    </section>
-    
-    <section id="billing-section" class="panel billing" hidden>
-      <div id="billing-panel" style="text-align: center; padding: 2rem;">
-        <p class="eyebrow" style="color: #666;">PREMIUM ACCESS REQUIRED</p>
-        <h2 style="margin: 1rem 0;">Subscribe to Corvus AI</h2>
-        <p style="margin-bottom: 2rem;">Your tenant requires an active subscription to run the Corvus agent and manage the review queue.</p>
-        <button id="btn-subscribe" class="primary" style="padding: 1rem 2rem; font-size: 1.1rem;">Subscribe Now ($49/mo) →</button>
+      <div class="intro-status" id="intro-status-card">
+        <span class="pulse-indicator"></span>
+        <span id="intro-status-text">Corvus Autonomous Agent · Active</span>
       </div>
     </section>
 
-    <section id="onboarding-section" class="panel detail" hidden style="margin-top: 2rem; max-width: 600px; margin-left: auto; margin-right: auto; padding: 3rem;">
-      <div style="text-align: center;">
-        <p class="eyebrow" style="color: var(--accent);">WELCOME TO CORVUS</p>
-        <h2 style="margin: 1rem 0;">Connect Your First Channel</h2>
-        <p style="margin-bottom: 2rem; color: var(--fg-muted);">Corvus needs an API connection to start protecting your inventory. Let's connect your first marketplace.</p>
+    <p id="message" role="status" aria-live="polite"></p>
+
+    <!-- AUTHENTICATION -->
+    <section id="login-section" class="panel login">
+      <div id="login-panel">
+        <p class="eyebrow">WELCOME BACK</p>
+        <h2>Open your review desk</h2>
+        <form id="form-login">
+          <label for="login-email">Email</label>
+          <input id="login-email" type="email" required autocomplete="email" spellcheck="false" placeholder="operator@opscore.io">
+          
+          <label for="login-password">Password</label>
+          <input id="login-password" type="password" required autocomplete="current-password" placeholder="••••••••">
+          
+          <button type="submit" class="primary full-width">Login →</button>
+        </form>
+
+        <div class="demo-card">
+          <div class="demo-header">
+            <strong>Demo Workspace</strong>
+            <button type="button" id="btn-fill-demo" class="demo-btn">Fill Demo</button>
+          </div>
+          <div class="demo-creds">
+            Email: <span>operator@opscore.io</span><br>
+            Password: <span>demo1234</span>
+          </div>
+        </div>
+        <p class="muted text-center" style="margin-top: 14px;">Don't have an account? <a href="#" id="show-signup">Create one</a>.</p>
+      </div>
+      
+      <div id="signup-panel" hidden>
+        <p class="eyebrow">JOIN OPS CORE</p>
+        <h2>Create a Workspace</h2>
+        <form id="form-signup">
+          <label for="signup-store">Store Name</label>
+          <input id="signup-store" type="text" required autocomplete="organization" spellcheck="false" placeholder="Blackwood Books Antiquarian">
+          
+          <label for="signup-email">Email</label>
+          <input id="signup-email" type="email" required autocomplete="email" spellcheck="false" placeholder="curator@blackwood.com">
+          
+          <label for="signup-password">Password</label>
+          <input id="signup-password" type="password" required autocomplete="new-password">
+          
+          <button type="submit" class="primary full-width">Create Account →</button>
+        </form>
+        <p class="muted text-center" style="margin-top: 14px;">Already have a workspace? <a href="#" id="show-login">Login</a>.</p>
+      </div>
+    </section>
+    
+    <!-- BILLING ACCESS REQUIRED -->
+    <section id="billing-section" class="panel billing" hidden>
+      <div id="billing-panel">
+        <p class="eyebrow">PREMIUM ACCESS REQUIRED</p>
+        <h2>Subscribe to Corvus AI</h2>
+        <p class="muted" style="margin-bottom: 24px;">Your tenant requires an active subscription to run the Corvus agent and manage the review queue.</p>
+        <button id="btn-subscribe" class="primary" style="padding: 12px 24px; font-size: 15px;">Subscribe Now ($49/mo) →</button>
+      </div>
+    </section>
+
+    <!-- ONBOARDING -->
+    <section id="onboarding-section" class="panel detail onboarding-panel" hidden>
+      <div class="onboarding-content">
+        <p class="eyebrow">WELCOME TO CORVUS</p>
+        <h2>Connect Your First Channel</h2>
+        <p class="muted">Corvus needs an API connection to start protecting your inventory. Let's connect your first marketplace.</p>
         
-        <form id="form-onboarding" style="display: flex; flex-direction: column; gap: 1.5rem; text-align: left;">
+        <form id="form-onboarding">
           <div>
             <label for="onboarding-provider">Marketplace / POS</label>
-            <select id="onboarding-provider" required style="width: 100%; padding: 0.75rem; font-size: 1rem;">
+            <select id="onboarding-provider" required style="width: 100%;">
               <option value="" disabled selected>Select channel...</option>
               <option value="shopify">Shopify</option>
               <option value="amazon">Amazon SP-API</option>
@@ -84,122 +112,253 @@
           
           <div>
             <label for="onboarding-key">API Key</label>
-            <input id="onboarding-key" type="password" required autocomplete="off" spellcheck="false" style="width: 100%; padding: 0.75rem; font-size: 1rem;">
-            <p style="font-size: 0.8rem; color: var(--fg-muted); margin-top: 0.5rem;">Your key will be encrypted at rest in the Sovereign Vault.</p>
+            <input id="onboarding-key" type="password" required autocomplete="off" spellcheck="false" placeholder="sec_key_••••••••" style="width: 100%;">
+            <p class="hint">Your key will be encrypted at rest in the Sovereign Vault.</p>
           </div>
           
-          <button type="submit" class="primary" style="padding: 1rem; font-size: 1.1rem;">Securely Connect Channel →</button>
+          <button type="submit" class="primary">Securely Connect Channel →</button>
         </form>
       </div>
     </section>
 
+    <!-- MAIN WORKSPACE -->
     <section id="workspace" hidden>
-      <div class="toolbar"><div><span id="mode" class="badge"></span> <span id="count"></span></div><button id="refresh">Refresh queue ↻</button></div>
-      <div class="desk">
-        <section class="panel queue"><div class="queue-heading"><h2>Review queue</h2><button type="button" id="tab-queue" class="primary" style="margin-right:10px;">Review Queue</button><button type="button" id="tab-bookshelf" style="margin-right:10px;">Bookshelf (Inventory)</button><button type="button" id="tab-analytics" style="margin-right:10px;">Analytics</button><button type="button" id="tab-settings">Settings</button><label for="filter" style="margin-left:auto;">Show</label><select id="filter"><option value="ALL">All actions</option><option>PENDING</option><option>APPROVED</option><option>EXECUTING</option><option>EXECUTED</option><option>FAILED</option><option>REJECTED</option></select></div><div id="items"></div></section>
-        <section id="bookshelf-panel" class="panel detail" hidden><h2>Inventory Bookshelf</h2><div id="bookshelf-items"></div></section>
+      <!-- PRIMARY WORKSPACE NAVIGATION -->
+      <nav class="workspace-nav" aria-label="Workspace views">
+        <div class="nav-tabs">
+          <button type="button" id="tab-queue" class="nav-tab active">
+            <span class="tab-icon">📥</span>
+            <span class="tab-label">Review Desk</span>
+            <span id="tab-queue-badge" class="tab-count"></span>
+          </button>
+          <button type="button" id="tab-bookshelf" class="nav-tab">
+            <span class="tab-icon">📚</span>
+            <span class="tab-label">Bookshelf Inventory</span>
+          </button>
+          <button type="button" id="tab-intake" class="nav-tab">
+            <span class="tab-icon">📷</span>
+            <span class="tab-label">Intake Studio</span>
+          </button>
+          <button type="button" id="tab-settings" class="nav-tab">
+            <span class="tab-icon">🛡️</span>
+            <span class="tab-label">Guardian & Sync</span>
+          </button>
+          <button type="button" id="tab-analytics" class="nav-tab">
+            <span class="tab-icon">📊</span>
+            <span class="tab-label">Value Delivered</span>
+          </button>
+        </div>
         
-        <section id="analytics-panel" class="panel detail" hidden>
-          <h2>Corvus Value Delivered</h2>
-          <p class="muted">A real-time breakdown of operations Corvus has handled for your store.</p>
-          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-top: 2rem;">
-            <div style="padding: 1.5rem; background: var(--bg-hover); border-radius: 8px;">
-              <h3 style="margin-top: 0; color: var(--fg-muted);">Total Automated Actions</h3>
-              <p id="stat-total" style="font-size: 2.5rem; font-weight: bold; margin: 0.5rem 0;">0</p>
-            </div>
-            <div style="padding: 1.5rem; background: var(--bg-hover); border-radius: 8px;">
-              <h3 style="margin-top: 0; color: var(--fg-muted);">Inventory Syncs</h3>
-              <p id="stat-syncs" style="font-size: 2.5rem; font-weight: bold; margin: 0.5rem 0;">0</p>
-            </div>
-            <div style="padding: 1.5rem; background: var(--bg-hover); border-radius: 8px;">
-              <h3 style="margin-top: 0; color: var(--fg-muted);">Collisions Prevented</h3>
-              <p id="stat-collisions" style="font-size: 2.5rem; font-weight: bold; margin: 0.5rem 0;">0</p>
-            </div>
-            <div style="padding: 1.5rem; background: var(--bg-hover); border-radius: 8px; border: 1px solid var(--accent);">
-              <h3 style="margin-top: 0; color: var(--fg-muted);">Revenue Protected (CAD)</h3>
-              <p id="stat-revenue" style="font-size: 2.5rem; font-weight: bold; color: var(--accent); margin: 0.5rem 0;">$0.00</p>
-            </div>
-          </div>
-        </section>
+        <div class="workspace-status">
+          <span id="mode" class="badge"></span>
+          <span id="count" class="badge-count"></span>
+          <button id="refresh" class="ghost-sm" title="Refresh queue">↻ Refresh</button>
+        </div>
+      </nav>
 
-        <section id="settings-panel" class="panel detail" hidden>
-          <h2>Workspace Settings</h2>
-          <p class="muted">Connect your external channels. API keys are encrypted at rest.</p>
-          
-          <div style="margin-top: 1.5rem;">
-            <h3>Connected Integrations</h3>
-            <ul id="connected-integrations-list" style="margin-bottom: 2rem;">
-              <li class="muted">Loading...</li>
-            </ul>
-            
-            <h3>Add New Integration</h3>
-            <form id="form-integration" style="display: flex; flex-direction: column; gap: 1rem; max-width: 400px; margin-top: 1rem;">
-              <div>
-                <label for="integration-provider">Provider</label>
-                <select id="integration-provider" required style="width: 100%; padding: 0.5rem;">
-                  <option value="" disabled selected>Select channel...</option>
-                  <option value="shopify">Shopify</option>
-                  <option value="amazon">Amazon SP-API</option>
-                  <option value="tiktok">TikTok Shop</option>
-                  <option value="square">Square POS</option>
+      <!-- VIEW 1: THE OPERATOR DESK (REVIEW QUEUE & DETAIL) -->
+      <div id="view-desk" class="desk">
+        <!-- LEFT: TRIAGE LEDGER -->
+        <section class="panel queue" id="queue-panel">
+          <div class="queue-heading">
+            <div class="queue-title-row">
+              <h2>Review Queue</h2>
+              <div class="queue-filter-group">
+                <label for="filter">Show</label>
+                <select id="filter">
+                  <option value="ALL">All actions</option>
+                  <option>PENDING</option>
+                  <option>APPROVED</option>
+                  <option>EXECUTING</option>
+                  <option>EXECUTED</option>
+                  <option>FAILED</option>
+                  <option>REJECTED</option>
                 </select>
               </div>
-              
-              <div>
-                <label for="integration-key">API Key / Token</label>
-                <input id="integration-key" type="password" required autocomplete="off" spellcheck="false" style="width: 100%; padding: 0.5rem;">
-              </div>
-              
-              <button type="submit" class="primary" style="align-self: flex-start; padding: 0.5rem 1rem;">Save Integration</button>
-            </form>
+            </div>
+            
+            <div class="quick-intake-bar">
+              <button type="button" id="desk-btn-intake" class="quick-intake-btn" title="Go to Camera Intake">
+                <span>📷 Snap Stack</span>
+              </button>
+              <button type="button" id="desk-btn-sample" class="quick-sample-btn" title="Run Sample Stack Intake">
+                <span>📚 Sample Stack</span>
+              </button>
+            </div>
           </div>
+          
+          <div id="items" class="queue-list" role="listbox"></div>
         </section>
 
-        <section id="queue-detail-panel" class="panel detail" aria-label="Action preview"><div id="detail"><p class="eyebrow">ACTION PREVIEW</p><h2>A moment of attention.</h2><p>Select an action to read its contents before making a decision.</p></div></section>
+        <!-- RIGHT: ACTION DOSSIER -->
+        <section id="queue-detail-panel" class="panel detail" aria-label="Action preview">
+          <div id="detail">
+            <p class="eyebrow">ACTION PREVIEW</p>
+            <h2>A moment of attention.</h2>
+            <p class="muted">Select an action to read its contents before making a decision.</p>
+          </div>
         </section>
       </div>
-      
-        <section class="panel camera-intake" style="margin-top: 2rem;">
-        <div class="queue-heading"><h2>Stack Intake Camera</h2></div>
-        <form id="camera-upload" style="display: flex; gap: 1rem; align-items: center; margin-top: 1rem; flex-wrap: wrap;">
-          <label class="primary" style="padding: 0.5rem 1rem; cursor: pointer; border-radius: 6px; text-align: center;">
-            <input type="file" id="camera-file" accept="image/*,.heic,.heif,.jpg,.jpeg,.png,.webp" hidden>
-            📷 Snap / Upload Stack Photo
-          </label>
-          <button type="button" id="btn-sample-stack" style="padding: 0.5rem 1rem; border-radius: 6px; cursor: pointer; background: transparent; border: 1px solid rgba(255,255,255,0.2); color: #fff;">
-            📚 Load Sample Book Stack
-          </button>
-          <span id="camera-status" class="muted">Waiting for photo...</span>
-        </form>
-        <p class="muted" style="margin-top: 0.5rem;">Take a photo of a stack or shelf of books. The vision AI will extract each spine and propose them for intake review.</p>
+
+      <!-- VIEW 2: BOOKSHELF (INVENTORY) -->
+      <section id="bookshelf-panel" class="panel bookshelf-panel" hidden>
+        <div class="panel-header">
+          <div>
+            <p class="eyebrow">ACTIVE CATALOG</p>
+            <h2>Inventory Bookshelf</h2>
+            <p class="muted">Cataloged volumes active across in-store and connected digital marketplaces.</p>
+          </div>
+        </div>
+        <div id="bookshelf-items" class="bookshelf-grid"></div>
       </section>
 
-      <section class="panel manual-sync" style="margin-top: 2rem;">
-        <div class="queue-heading"><h2>Cross-Channel Inventory Sync</h2></div>
-        <form id="propose-sync" style="display: flex; gap: 1rem; align-items: flex-end; margin-top: 1rem;">
-          <div style="display: flex; flex-direction: column;">
-            <label for="sync-sku">Sold SKU</label>
-            <input id="sync-sku" type="text" required placeholder="BK-1234ABCD" autocomplete="off" spellcheck="false" style="padding: 0.5rem;">
+      <!-- VIEW 3: INTAKE STUDIO -->
+      <section id="intake-panel" class="panel intake-panel" hidden>
+        <div class="panel-header">
+          <div>
+            <p class="eyebrow">VISION-ASSISTED CATALOGING</p>
+            <h2>Stack Intake Studio</h2>
+            <p class="muted">Snap or upload a photo of a stack or shelf of books. Corvus Vision isolates each spine, extracts bibliographic metadata, and prices each volume.</p>
           </div>
-          <div style="display: flex; flex-direction: column;">
-            <label for="sync-channel">Source Channel</label>
-            <select id="sync-channel" required style="padding: 0.5rem;">
-              <option value="" disabled selected>Select channel...</option>
-              <option value="amazon_spapi">Amazon SP-API</option>
-              <option value="abebooks">AbeBooks</option>
-              <option value="biblio">Biblio</option>
-              <option value="alibris">Alibris</option>
-              <option value="ebay">eBay</option>
-              <option value="in_store">In-Store / POS</option>
-            </select>
+        </div>
+
+        <div class="intake-dropzone">
+          <form id="camera-upload" class="camera-upload-form">
+            <label class="camera-snap-cta">
+              <input type="file" id="camera-file" accept="image/*,.heic,.heif,.jpg,.jpeg,.png,.webp" hidden>
+              <span class="snap-icon">📷</span>
+              <span class="snap-title">Snap / Upload Stack Photo</span>
+              <span class="snap-sub">Choose a photo or use your camera</span>
+            </label>
+
+            <div class="intake-actions-divider">
+              <span>OR TEST INSTANTLY</span>
+            </div>
+
+            <button type="button" id="btn-sample-stack" class="sample-stack-btn">
+              <span>📚 Load Sample Book Stack</span>
+            </button>
+          </form>
+
+          <div class="intake-status-box">
+            <span class="status-dot"></span>
+            <span id="camera-status" class="muted">Ready for photo upload</span>
           </div>
-          <button type="submit" class="primary" style="padding: 0.5rem 1rem;">Propose Sync Action</button>
-        </form>
-        <p class="muted" style="margin-top: 0.5rem;">Submit a manual sync request. An operator must review and approve it from the queue before it delists the item elsewhere.</p>
+        </div>
+
+        <div class="intake-guide-cards">
+          <div class="guide-card">
+            <h4>📖 Horizontal Stacks</h4>
+            <p class="muted">Top-to-bottom sequencing. Best for piles of 3 to 10 books on a table.</p>
+          </div>
+          <div class="guide-card">
+            <h4>📚 Vertical Shelves</h4>
+            <p class="muted">Left-to-right sequencing. Ensure spine titles face clearly forward.</p>
+          </div>
+          <div class="guide-card">
+            <h4>💡 High Contrast</h4>
+            <p class="muted">Avoid heavy glares or reflections on spine foil for peak OCR accuracy.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- VIEW 4: CHANNEL GUARDIAN & WORKSPACE SETTINGS -->
+      <section id="settings-panel" class="panel settings-panel" hidden>
+        <div class="panel-header">
+          <div>
+            <p class="eyebrow">CHANNELS & VAULT</p>
+            <h2>Channel Guardian & Workspace</h2>
+            <p class="muted">Manage marketplace credentials and execute manual cross-channel inventory delistings.</p>
+          </div>
+        </div>
+        
+        <div class="settings-grid">
+          <div class="settings-col">
+            <h3>Connected Integrations</h3>
+            <p class="muted">Real-time inventory sync guards these channels.</p>
+            <ul id="connected-integrations-list" class="integrations-list">
+              <li class="muted">Loading...</li>
+            </ul>
+
+            <h3 style="margin-top: 2rem;">Add New Integration</h3>
+            <form id="form-integration" class="standard-form">
+              <label for="integration-provider">Provider</label>
+              <select id="integration-provider" required>
+                <option value="" disabled selected>Select channel...</option>
+                <option value="shopify">Shopify</option>
+                <option value="amazon">Amazon SP-API</option>
+                <option value="tiktok">TikTok Shop</option>
+                <option value="square">Square POS</option>
+              </select>
+              
+              <label for="integration-key">API Key / Token</label>
+              <input id="integration-key" type="password" required autocomplete="off" spellcheck="false" placeholder="sec_key_••••••••">
+              
+              <button type="submit" class="primary">Save Integration</button>
+            </form>
+          </div>
+
+          <div class="settings-col">
+            <h3>Manual Cross-Channel Sync</h3>
+            <p class="muted">Sold a book in-store or over the phone? Submit a sync proposal to delist it across all connected channels.</p>
+            
+            <form id="propose-sync" class="standard-form">
+              <label for="sync-sku">Sold SKU</label>
+              <input id="sync-sku" type="text" required placeholder="BK-1234ABCD" autocomplete="off" spellcheck="false">
+              
+              <label for="sync-channel">Source Channel</label>
+              <select id="sync-channel" required>
+                <option value="" disabled selected>Select channel...</option>
+                <option value="in_store">In-Store / POS</option>
+                <option value="abebooks">AbeBooks</option>
+                <option value="biblio">Biblio</option>
+                <option value="alibris">Alibris</option>
+                <option value="amazon_spapi">Amazon SP-API</option>
+                <option value="ebay">eBay</option>
+              </select>
+              
+              <button type="submit" class="primary">Propose Sync Action</button>
+            </form>
+          </div>
+        </div>
+      </section>
+
+      <!-- VIEW 5: ANALYTICS & VALUE DELIVERED -->
+      <section id="analytics-panel" class="panel analytics-panel" hidden>
+        <div class="panel-header">
+          <div>
+            <p class="eyebrow">AUTONOMOUS AUDIT</p>
+            <h2>Corvus Value Delivered</h2>
+            <p class="muted">A real-time ledger of actions Corvus has managed, prevented, and protected.</p>
+          </div>
+        </div>
+
+        <div class="stats-grid">
+          <div class="stat-card">
+            <h3 class="stat-label">Total Automated Actions</h3>
+            <p id="stat-total" class="stat-value">0</p>
+            <p class="stat-hint">Approved and executed proposals</p>
+          </div>
+          <div class="stat-card">
+            <h3 class="stat-label">Inventory Syncs</h3>
+            <p id="stat-syncs" class="stat-value">0</p>
+            <p class="stat-hint">Multi-channel stock adjustments</p>
+          </div>
+          <div class="stat-card">
+            <h3 class="stat-label">Collisions Prevented</h3>
+            <p id="stat-collisions" class="stat-value">0</p>
+            <p class="stat-hint">Double-selling events eliminated</p>
+          </div>
+          <div class="stat-card highlight">
+            <h3 class="stat-label">Revenue Protected</h3>
+            <p id="stat-revenue" class="stat-value highlight-val">$0.00</p>
+            <p class="stat-hint">CAD across antiquarian sales</p>
+          </div>
+        </div>
       </section>
     </section>
+
     <footer>◈ &nbsp; Prepared by automation. Directed by you.</footer>
-  </section>
-    </main>
+  </main>
 </body>
 </html>
