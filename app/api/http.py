@@ -440,6 +440,9 @@ def create_app(
         from app.auth import decode_access_token
         try:
             payload = decode_access_token(token)
+            tenant_id = payload["tenant_id"]
+            billing = user_store.get_tenant_billing_status(tenant_id)
+            payload["subscription_status"] = billing.get("subscription_status", "inactive")
             return payload
         except Exception:
             raise HTTPException(401, "Invalid token")
@@ -486,6 +489,9 @@ def create_app(
             ).fetchall()
             
         return {"connected_providers": [row["provider"] for row in rows]}
+
+    from app.api.billing import get_billing_router
+    app.include_router(get_billing_router(settings, user_store), prefix="/billing")
 
     return app
 

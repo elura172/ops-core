@@ -16,6 +16,7 @@ function disconnect() {
   $("items").replaceChildren(); $("detail").replaceChildren();
   $("identity").textContent = ""; $("workspace").hidden = true; $("logout").hidden = true;
   $("login-section").hidden = false; 
+  if ($("billing-section")) $("billing-section").hidden = true;
   $("refresh").disabled = false;
 }
 async function api(path, options = {}) {
@@ -385,8 +386,37 @@ async function handleAuth(path, body, button) {
     $("identity").textContent = identity.sub;
     $("mode").textContent = "MULTI-TENANT";
     $("mode").className = `badge live`;
-    $("workspace").hidden = false; $("logout").hidden = false; $("login-section").hidden = true; 
-    await refresh();
+    $("login-section").hidden = true;
+    $("logout").hidden = false;
+
+    if (identity.subscription_status !== "active") {
+        $("workspace").hidden = true;
+        $("billing-section").hidden = false;
+        
+        // Setup checkout flow
+        $("btn-subscribe").onclick = async () => {
+          $("btn-subscribe").disabled = true;
+          $("btn-subscribe").textContent = "Loading checkout...";
+          try {
+            const checkout = await api("/billing/checkout", {
+              method: "POST",
+              body: JSON.stringify({
+                success_url: window.location.href,
+                cancel_url: window.location.href
+              })
+            });
+            window.location.href = checkout.checkout_url;
+          } catch(e) {
+            message(e.message);
+            $("btn-subscribe").disabled = false;
+            $("btn-subscribe").textContent = "Subscribe Now ($49/mo) →";
+          }
+        };
+    } else {
+        $("billing-section").hidden = true;
+        $("workspace").hidden = false;
+        await refresh();
+    }
   } catch(error) {
     disconnect();
     message(error.message);

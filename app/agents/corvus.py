@@ -43,6 +43,11 @@ class CorvusWarden:
         for tenant_id in tenants:
             credentials = {}
             if self.user_store:
+                billing = self.user_store.get_tenant_billing_status(tenant_id)
+                if billing.get("subscription_status") != "active":
+                    logger.debug("corvus.triage.skip_inactive", tenant_id=tenant_id)
+                    continue
+
                 enc_integrations = self.user_store.get_tenant_integrations(tenant_id)
                 for provider, enc_key in enc_integrations.items():
                     credentials[provider] = decrypt_credential(enc_key)

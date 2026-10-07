@@ -49,6 +49,8 @@ class Settings:
     shopify_store_url: str = ""
     shopify_access_token: str = ""
     square_webhook_secret: str = ""
+    stripe_secret_key: str = ""
+    stripe_webhook_secret: str = ""
     order_db: str = "orders.db"
     review_db: str = "reviews.db"
     dry_run: bool = True
@@ -103,6 +105,8 @@ class Settings:
             shopify_store_url=os.getenv("SHOPIFY_STORE_URL", ""),
             shopify_access_token=os.getenv("SHOPIFY_ACCESS_TOKEN", ""),
             square_webhook_secret=os.getenv("SQUARE_WEBHOOK_SECRET", ""),
+            stripe_secret_key=os.getenv("STRIPE_SECRET_KEY", ""),
+            stripe_webhook_secret=os.getenv("STRIPE_WEBHOOK_SECRET", ""),
             tokens=tokens,
             order_db=os.getenv("ORDER_DB", os.getenv("POSTGRES_URL", _default_db("orders.db"))).strip() or os.getenv("POSTGRES_URL", _default_db("orders.db")),
             review_db=os.getenv("REVIEW_DB", os.getenv("POSTGRES_URL", _default_db("reviews.db"))).strip() or os.getenv("POSTGRES_URL", _default_db("reviews.db")),
@@ -133,6 +137,8 @@ class Settings:
             shopify_store_url=os.getenv("SHOPIFY_STORE_URL", ""),
             shopify_access_token=os.getenv("SHOPIFY_ACCESS_TOKEN", ""),
             square_webhook_secret=os.getenv("SQUARE_WEBHOOK_SECRET", ""),
+            stripe_secret_key=os.getenv("STRIPE_SECRET_KEY", ""),
+            stripe_webhook_secret=os.getenv("STRIPE_WEBHOOK_SECRET", ""),
             tokens=TokenRegistry.from_env(
                 os.getenv("OPS_TOKENS", "").strip()
                 or "10a4c7c9fc5206d6f36dc6944a81bb6f4a3cb0e25014ae3b12e6c3e52712292a:admin:admin"
