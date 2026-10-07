@@ -16,8 +16,8 @@ from app.review.queue import ReviewStore
 _POSTGRES_PREFIXES = ("postgres://", "postgresql://")
 
 
-def is_postgres_dsn(value: str) -> bool:
-    return value.startswith(_POSTGRES_PREFIXES)
+def is_postgres_dsn(value: str | Path) -> bool:
+    return str(value).startswith(_POSTGRES_PREFIXES)
 
 
 def open_review_store(review_db: str) -> ReviewStore:
@@ -55,3 +55,16 @@ def open_inventory_store(db_url: str) -> Any:
     
     from app.db.inventory import SQLiteInventoryStore
     return SQLiteInventoryStore(db_url)
+
+
+def open_user_store(user_db: str) -> Any:
+    if is_postgres_dsn(user_db):
+        from app.db.migrate import migrate
+        from app.db.users import PostgresUserStore
+
+        migrate(user_db)
+        return PostgresUserStore(user_db)
+
+    from app.db.users import SQLiteUserStore
+
+    return SQLiteUserStore(user_db)

@@ -81,3 +81,27 @@ def test_webhook_handler_verifies_and_deduplicates():
     assert forged.status == 401
     assert forged.body["accepted"] is False
     repo.close()
+
+
+def test_migrations_discovered_include_multi_tenant():
+    from app.db.migrate import discover
+
+    migrations = discover()
+    assert len(migrations) >= 5
+    assert migrations[4].version == 5
+    assert migrations[4].name == "multi_tenant_partitioning"
+    assert "CREATE TABLE IF NOT EXISTS tenants" in migrations[4].sql()
+
+
+def test_open_user_store_sqlite(tmp_path):
+    from app.db.factory import open_user_store
+
+    store = open_user_store(tmp_path / "users.db")
+    tid = store.create_tenant("Acme Books")
+    assert tid > 0
+    uid = store.create_user(tid, "user@acme.com", "hash123")
+    assert uid > 0
+    u = store.get_user_by_email("user@acme.com")
+    assert u is not None
+    assert u.tenant_id == tid
+    store.close()

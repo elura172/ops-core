@@ -53,6 +53,8 @@ class Settings:
     stripe_webhook_secret: str = ""
     order_db: str = "orders.db"
     review_db: str = "reviews.db"
+    user_db: str = "users.db"
+    inventory_db: str = "inventory.db"
     dry_run: bool = True
     #: Second key beside DRY_RUN=false, so live traffic needs two deliberate acts.
     live_enabled: bool = False
@@ -110,6 +112,8 @@ class Settings:
             tokens=tokens,
             order_db=os.getenv("ORDER_DB", os.getenv("POSTGRES_URL", _default_db("orders.db"))).strip() or os.getenv("POSTGRES_URL", _default_db("orders.db")),
             review_db=os.getenv("REVIEW_DB", os.getenv("POSTGRES_URL", _default_db("reviews.db"))).strip() or os.getenv("POSTGRES_URL", _default_db("reviews.db")),
+            user_db=os.getenv("USER_DB", os.getenv("POSTGRES_URL", _default_db("users.db"))).strip() or os.getenv("POSTGRES_URL", _default_db("users.db")),
+            inventory_db=os.getenv("INVENTORY_DB", os.getenv("POSTGRES_URL", _default_db("inventory.db"))).strip() or os.getenv("POSTGRES_URL", _default_db("inventory.db")),
             dry_run=dry_run,
             live_enabled=_flag("LIVE_ENABLED"),
             signing_verified=_flag("LAUNCH_SIGNING_VERIFIED"),
@@ -145,6 +149,8 @@ class Settings:
             ),
             order_db=os.getenv("ORDER_DB", os.getenv("POSTGRES_URL", _default_db("orders.db"))).strip() or os.getenv("POSTGRES_URL", _default_db("orders.db")),
             review_db=os.getenv("REVIEW_DB", os.getenv("POSTGRES_URL", _default_db("reviews.db"))).strip() or os.getenv("POSTGRES_URL", _default_db("reviews.db")),
+            user_db=os.getenv("USER_DB", os.getenv("POSTGRES_URL", _default_db("users.db"))).strip() or os.getenv("POSTGRES_URL", _default_db("users.db")),
+            inventory_db=os.getenv("INVENTORY_DB", os.getenv("POSTGRES_URL", _default_db("inventory.db"))).strip() or os.getenv("POSTGRES_URL", _default_db("inventory.db")),
             dry_run=True,
             live_enabled=_flag("LIVE_ENABLED"),
             signing_verified=_flag("LAUNCH_SIGNING_VERIFIED"),

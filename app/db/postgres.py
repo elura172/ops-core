@@ -24,7 +24,7 @@ from psycopg_pool import ConnectionPool
 
 from app.domain.audit import AuditEvent
 from app.observability.logging import get_logger
-from app.review.queue import AlreadyExecuted, ReviewItem, ReviewStatus, _validate_claim
+from app.review.queue import AlreadyExecuted, ReviewItem, ReviewStatus, _merge_payload, _validate_claim
 
 logger = get_logger("review_store")
 
@@ -47,92 +47,96 @@ def _row_to_item(row: dict[str, Any]) -> ReviewItem:
 
 
 class PostgresReviewStore:
-    """Durable review state shared by any number of worker processes.
+    """Postgres-backed review store."""
 
-    Every transition is a single transaction whose write carries its own
-    ``WHERE status = ...`` predicate, so correctness never depends on what a
-    worker read a moment earlier. The audit trail is written in the same
-    transaction as the state change it describes.
-    """
-
-    def __init__(self, dsn: str, *, pool_size: int = 10) -> None:
-        self.pool: ConnectionPool[psycopg.Connection[DictRow]] = ConnectionPool(
+    def __init__(self, dsn: str, *, pool_size: int = 3) -> None:
+        self.pool = ConnectionPool(
             dsn,
             min_size=1,
             max_size=pool_size,
-            kwargs={"row_factory": dict_row},
-            open=True,
+            max_idle=60.0,
+            timeout=30.0,
+            kwargs={"autocommit": True, "row_factory": dict_row},
         )
 
     @contextmanager
     def _transaction(self) -> Iterator[psycopg.Connection[DictRow]]:
-        with self.pool.connection() as connection, connection.transaction():
-            yield connection
+        with self.pool.connection() as connection:
+            with connection.transaction():
+                yield connection
 
-    def _fetch(self, connection: psycopg.Connection[DictRow], review_id: str) -> ReviewItem:
+    def _fetch(self, connection: psycopg.Connection[DictRow], review_id: str, tenant_id: int = 1) -> ReviewItem:
         row = connection.execute(
-            "SELECT * FROM reviews WHERE review_id = %s", (review_id,)
+            "SELECT * FROM reviews WHERE review_id = %s AND tenant_id = %s",
+            (review_id, tenant_id),
         ).fetchone()
         if row is None:
             raise KeyError(review_id)
         return _row_to_item(row)
 
-    def submit(self, item: ReviewItem) -> ReviewItem:
-        if item.status != ReviewStatus.PENDING:
-            raise ValueError("new review items must be pending")
-        with self._transaction() as connection:
-            cursor = connection.execute(
-                "INSERT INTO reviews (review_id, operation, payload, status, created_at) "
-                "VALUES (%s, %s, %s, %s, %s) ON CONFLICT (review_id) DO NOTHING",
+    def submit(self, item: ReviewItem, tenant_id: int = 1) -> ReviewItem:
+        with self.pool.connection() as connection:
+            connection.execute(
+                "INSERT INTO reviews (review_id, tenant_id, operation, payload, status, reviewer, reason, created_at) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
                 (
                     item.review_id,
+                    tenant_id,
                     item.operation,
-                    Jsonb(item.payload),
+                    Jsonb(_json_safe(item.payload)),
                     item.status.value,
-                    item.created_at.astimezone(UTC),
+                    item.reviewer,
+                    item.reason,
+                    item.created_at,
                 ),
             )
-            if cursor.rowcount != 1:
-                raise ValueError("review_id already exists")
         return item
 
-    def get(self, review_id: str) -> ReviewItem | None:
+    def get(self, review_id: str, tenant_id: int = 1) -> ReviewItem | None:
         with self.pool.connection() as connection:
             connection.row_factory = dict_row
             row = connection.execute(
-                "SELECT * FROM reviews WHERE review_id = %s", (review_id,)
+                "SELECT * FROM reviews WHERE review_id = %s AND tenant_id = %s",
+                (review_id, tenant_id),
             ).fetchone()
         return _row_to_item(row) if row else None
 
-    def list_items(self, pending_only: bool = False) -> list[ReviewItem]:
-        query = "SELECT * FROM reviews"
-        params: tuple[str, ...] = ()
+    def list_items(self, pending_only: bool = False, tenant_id: int = 1) -> list[ReviewItem]:
+        query = "SELECT * FROM reviews WHERE tenant_id = %s"
+        params: list[Any] = [tenant_id]
         if pending_only:
-            query += " WHERE status = %s"
-            params = (ReviewStatus.PENDING.value,)
+            query += " AND status = %s"
+            params.append(ReviewStatus.PENDING.value)
         with self.pool.connection() as connection:
             connection.row_factory = dict_row
-            rows = connection.execute(query + " ORDER BY created_at", params).fetchall()
+            rows = connection.execute(query + " ORDER BY created_at", tuple(params)).fetchall()
         return [_row_to_item(row) for row in rows]
 
-    def pending(self) -> list[ReviewItem]:
-        return self.list_items(pending_only=True)
+    def pending(self, tenant_id: int = 1) -> list[ReviewItem]:
+        return self.list_items(pending_only=True, tenant_id=tenant_id)
 
     def decide(
-        self, review_id: str, *, approve: bool, reviewer: str, reason: str = "", payload_update: dict[str, Any] | None = None
+        self,
+        review_id: str,
+        *,
+        approve: bool,
+        reviewer: str,
+        reason: str = "",
+        payload_update: dict[str, Any] | None = None,
+        tenant_id: int = 1,
     ) -> ReviewItem:
         if not reviewer.strip():
             raise ValueError("reviewer is required")
         status = ReviewStatus.APPROVED if approve else ReviewStatus.REJECTED
         with self._transaction() as connection:
-            item = self._fetch(connection, review_id)
+            item = self._fetch(connection, review_id, tenant_id)
             if item.status != ReviewStatus.PENDING:
                 raise ValueError("review item has already been decided")
             if payload_update:
                 _merge_payload(item.payload, payload_update)
                 cursor = connection.execute(
                     "UPDATE reviews SET status = %s, reviewer = %s, reason = %s, decided_at = %s, payload = %s "
-                    "WHERE review_id = %s AND status = %s",
+                    "WHERE review_id = %s AND tenant_id = %s AND status = %s",
                     (
                         status.value,
                         reviewer,
@@ -140,19 +144,21 @@ class PostgresReviewStore:
                         datetime.now(UTC),
                         Jsonb(_json_safe(item.payload)),
                         review_id,
+                        tenant_id,
                         ReviewStatus.PENDING.value,
                     ),
                 )
             else:
                 cursor = connection.execute(
                     "UPDATE reviews SET status = %s, reviewer = %s, reason = %s, decided_at = %s "
-                    "WHERE review_id = %s AND status = %s",
+                    "WHERE review_id = %s AND tenant_id = %s AND status = %s",
                     (
                         status.value,
                         reviewer,
                         reason,
                         datetime.now(UTC),
                         review_id,
+                        tenant_id,
                         ReviewStatus.PENDING.value,
                     ),
                 )
@@ -167,50 +173,44 @@ class PostgresReviewStore:
                     review_id,
                     {"operation": item.operation},
                 ),
+                tenant_id=tenant_id,
             )
-            return self._fetch(connection, review_id)
+            return self._fetch(connection, review_id, tenant_id)
 
-    def claim_for_execution(self, review_id: str, actor: str) -> ReviewItem:
+    def claim_for_execution(self, review_id: str, actor: str, tenant_id: int = 1) -> ReviewItem:
         with self._transaction() as connection:
-            # This read is advisory only -- it exists to raise the precise error
-            # for items that are plainly unclaimable. It proves nothing about
-            # what the row will be when we write.
-            item = self._fetch(connection, review_id)
+            item = self._fetch(connection, review_id, tenant_id)
             _validate_claim(item)
-            # The conditional UPDATE is the entire at-most-once guarantee. A
-            # racer that read APPROVED above blocks here on the winner's row
-            # lock, re-evaluates the predicate once the winner commits, matches
-            # zero rows, and loses.
             cursor = connection.execute(
                 "UPDATE reviews SET status = %s, executed_by = %s, executed_at = %s "
-                "WHERE review_id = %s AND status = %s",
+                "WHERE review_id = %s AND tenant_id = %s AND status = %s",
                 (
                     ReviewStatus.EXECUTING.value,
                     actor,
                     datetime.now(UTC),
                     review_id,
+                    tenant_id,
                     ReviewStatus.APPROVED.value,
                 ),
             )
             if cursor.rowcount != 1:
-                # Re-read on the post-commit snapshot so the loser is told what
-                # actually happened (already executing, executed, or failed).
-                lost = self._fetch(connection, review_id)
+                lost = self._fetch(connection, review_id, tenant_id)
                 _validate_claim(lost)
                 raise AlreadyExecuted(lost)
-            return self._fetch(connection, review_id)
+            return self._fetch(connection, review_id, tenant_id)
 
-    def complete_execution(self, review_id: str, result: dict[str, Any]) -> ReviewItem:
+    def complete_execution(self, review_id: str, result: dict[str, Any], tenant_id: int = 1) -> ReviewItem:
         with self._transaction() as connection:
-            item = self._fetch(connection, review_id)
+            item = self._fetch(connection, review_id, tenant_id)
             connection.execute(
                 "UPDATE reviews SET status = %s, result = %s, executed_at = %s "
-                "WHERE review_id = %s",
+                "WHERE review_id = %s AND tenant_id = %s",
                 (
                     ReviewStatus.EXECUTED.value,
                     Jsonb(_json_safe(result)),
                     datetime.now(UTC),
                     review_id,
+                    tenant_id,
                 ),
             )
             self._record(
@@ -222,16 +222,17 @@ class PostgresReviewStore:
                     review_id,
                     {"operation": item.operation, "approved_by": item.reviewer or "unknown"},
                 ),
+                tenant_id=tenant_id,
             )
-            return self._fetch(connection, review_id)
+            return self._fetch(connection, review_id, tenant_id)
 
-    def fail_execution(self, review_id: str, error: str) -> ReviewItem:
+    def fail_execution(self, review_id: str, error: str, tenant_id: int = 1) -> ReviewItem:
         with self._transaction() as connection:
-            item = self._fetch(connection, review_id)
+            item = self._fetch(connection, review_id, tenant_id)
             connection.execute(
                 "UPDATE reviews SET status = %s, failure = %s, executed_at = %s "
-                "WHERE review_id = %s",
-                (ReviewStatus.FAILED.value, error, datetime.now(UTC), review_id),
+                "WHERE review_id = %s AND tenant_id = %s",
+                (ReviewStatus.FAILED.value, error, datetime.now(UTC), review_id, tenant_id),
             )
             self._record(
                 connection,
@@ -242,15 +243,11 @@ class PostgresReviewStore:
                     review_id,
                     {"operation": item.operation},
                 ),
+                tenant_id=tenant_id,
             )
-            return self._fetch(connection, review_id)
+            return self._fetch(connection, review_id, tenant_id)
 
     def recover_stale_executions(self, older_than: timedelta) -> list[ReviewItem]:
-        """Move abandoned EXECUTING items to FAILED so they are not stuck forever.
-
-        The outcome of an interrupted mutation is unknown, so recovery means a
-        human re-approves rather than an automatic retry.
-        """
         cutoff = datetime.now(UTC) - older_than
         with self._transaction() as connection:
             rows = connection.execute(
@@ -274,14 +271,16 @@ class PostgresReviewStore:
                         row["review_id"],
                         {"operation": row["operation"]},
                     ),
+                    tenant_id=row.get("tenant_id", 1),
                 )
             return [_row_to_item(row) for row in rows]
 
-    def _record(self, connection: psycopg.Connection[DictRow], event: AuditEvent) -> None:
+    def _record(self, connection: psycopg.Connection[DictRow], event: AuditEvent, tenant_id: int = 1) -> None:
         connection.execute(
-            "INSERT INTO audit_events (action, actor, outcome, resource_id, detail, occurred_at) "
-            "VALUES (%s, %s, %s, %s, %s, %s)",
+            "INSERT INTO audit_events (tenant_id, action, actor, outcome, resource_id, detail, occurred_at) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s)",
             (
+                tenant_id,
                 event.action,
                 event.actor,
                 event.outcome,
@@ -291,16 +290,53 @@ class PostgresReviewStore:
             ),
         )
 
-    def audit_trail(self, resource_id: str | None = None) -> list[dict[str, Any]]:
-        query = "SELECT * FROM audit_events"
-        params: tuple[str, ...] = ()
+    def audit_trail(self, resource_id: str | None = None, tenant_id: int = 1) -> list[dict[str, Any]]:
+        query = "SELECT * FROM audit_events WHERE tenant_id = %s"
+        params: list[Any] = [tenant_id]
         if resource_id:
-            query += " WHERE resource_id = %s"
-            params = (resource_id,)
+            query += " AND resource_id = %s"
+            params.append(resource_id)
         with self.pool.connection() as connection:
             connection.row_factory = dict_row
-            rows = connection.execute(query + " ORDER BY sequence", params).fetchall()
+            rows = connection.execute(query + " ORDER BY sequence", tuple(params)).fetchall()
         return [dict(row) for row in rows]
+
+    def get_tenant_analytics(self, tenant_id: int) -> dict[str, Any]:
+        with self.pool.connection() as connection:
+            connection.row_factory = dict_row
+            rows = connection.execute(
+                "SELECT operation, payload, status FROM reviews WHERE tenant_id = %s",
+                (tenant_id,),
+            ).fetchall()
+
+        total_actions = 0
+        syncs = 0
+        contentions_prevented = 0
+        revenue_protected_cad = 0.0
+
+        for row in rows:
+            if row["status"] in ("APPROVED", "EXECUTING", "EXECUTED"):
+                total_actions += 1
+                op = row["operation"]
+                if op == "sync_inventory":
+                    syncs += 1
+                elif op == "resolve_order_contention":
+                    contentions_prevented += 1
+                    try:
+                        payload = row["payload"] if isinstance(row["payload"], dict) else {}
+                        loser = payload.get("loser_claim", {})
+                        winner = payload.get("winner_claim", {})
+                        val = float(winner.get("price_cad", loser.get("price_cad", 0)))
+                        revenue_protected_cad += val
+                    except Exception:
+                        pass
+
+        return {
+            "total_automated_actions": total_actions,
+            "inventory_syncs": syncs,
+            "collisions_prevented": contentions_prevented,
+            "revenue_protected_cad": round(revenue_protected_cad, 2),
+        }
 
     def close(self) -> None:
         self.pool.close()
@@ -309,5 +345,4 @@ class PostgresReviewStore:
 def _json_safe(value: dict[str, Any]) -> dict[str, Any]:
     """Match the SQLite store, which serializes results with ``default=str``."""
     import json
-
-    return json.loads(json.dumps(value, default=str))  # type: ignore[no-any-return]
+    return json.loads(json.dumps(value, default=str))

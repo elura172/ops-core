@@ -1,5 +1,6 @@
 import sqlite3
 import threading
+from datetime import datetime, timezone
 from pathlib import Path
 from dataclasses import dataclass
 from typing import Optional
@@ -39,7 +40,7 @@ class User:
     password_hash: str
     role: str
 
-class UserStore:
+class SQLiteUserStore:
     def __init__(self, path: str | Path):
         self.connection = sqlite3.connect(
             str(path), check_same_thread=False, isolation_level=None
@@ -60,7 +61,6 @@ class UserStore:
             pass
 
     def create_tenant(self, name: str) -> int:
-        from datetime import datetime, timezone
         with self._lock:
             cursor = self.connection.execute(
                 "INSERT INTO tenants(name, created_at) VALUES (?, ?)",
@@ -122,4 +122,98 @@ class UserStore:
                 (status, stripe_customer_id)
             )
 
+    def close(self) -> None:
+        self.connection.close()
 
+
+class PostgresUserStore:
+    def __init__(self, dsn: str, *, pool_size: int = 3) -> None:
+        from psycopg.rows import dict_row
+        from psycopg_pool import ConnectionPool
+
+        self.pool = ConnectionPool(
+            dsn,
+            min_size=1,
+            max_size=pool_size,
+            max_idle=60.0,
+            timeout=30.0,
+            kwargs={"autocommit": True, "row_factory": dict_row},
+        )
+
+    def create_tenant(self, name: str) -> int:
+        with self.pool.connection() as conn:
+            row = conn.execute(
+                "INSERT INTO tenants (name, created_at) VALUES (%s, %s) RETURNING tenant_id",
+                (name, datetime.now(timezone.utc)),
+            ).fetchone()
+            return row["tenant_id"]
+
+    def create_user(self, tenant_id: int, email: str, password_hash: str, role: str = "admin") -> int:
+        with self.pool.connection() as conn:
+            row = conn.execute(
+                "INSERT INTO users (tenant_id, email, password_hash, role) VALUES (%s, %s, %s, %s) RETURNING user_id",
+                (tenant_id, email, password_hash, role),
+            ).fetchone()
+            return row["user_id"]
+
+    def get_user_by_email(self, email: str) -> Optional[User]:
+        with self.pool.connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM users WHERE email = %s",
+                (email,),
+            ).fetchone()
+            if row:
+                return User(**row)
+            return None
+
+    def list_tenants(self) -> list[int]:
+        with self.pool.connection() as conn:
+            rows = conn.execute("SELECT tenant_id FROM tenants ORDER BY tenant_id").fetchall()
+            return [row["tenant_id"] for row in rows]
+
+    def get_tenant_integrations(self, tenant_id: int) -> dict[str, str]:
+        with self.pool.connection() as conn:
+            rows = conn.execute(
+                "SELECT provider, encrypted_credentials FROM tenant_integrations WHERE tenant_id = %s",
+                (tenant_id,),
+            ).fetchall()
+            return {row["provider"]: row["encrypted_credentials"] for row in rows}
+
+    def get_tenant_billing_status(self, tenant_id: int) -> dict:
+        with self.pool.connection() as conn:
+            row = conn.execute(
+                "SELECT stripe_customer_id, subscription_status FROM tenants WHERE tenant_id = %s",
+                (tenant_id,),
+            ).fetchone()
+            if row:
+                return dict(row)
+            return {"stripe_customer_id": None, "subscription_status": "inactive"}
+
+    def update_tenant_stripe_customer(self, tenant_id: int, stripe_customer_id: str):
+        with self.pool.connection() as conn:
+            conn.execute(
+                "UPDATE tenants SET stripe_customer_id = %s WHERE tenant_id = %s",
+                (stripe_customer_id, tenant_id),
+            )
+
+    def update_subscription_status(self, stripe_customer_id: str, status: str):
+        with self.pool.connection() as conn:
+            conn.execute(
+                "UPDATE tenants SET subscription_status = %s WHERE stripe_customer_id = %s",
+                (status, stripe_customer_id),
+            )
+
+    def close(self) -> None:
+        self.pool.close()
+
+
+UserStore = SQLiteUserStore
+
+
+def open_user_store(target: str | Path):
+    target_str = str(target)
+    if target_str.startswith(("postgres://", "postgresql://")):
+        from app.db.migrate import migrate
+        migrate(target_str)
+        return PostgresUserStore(target_str)
+    return SQLiteUserStore(target)

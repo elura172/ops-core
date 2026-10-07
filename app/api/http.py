@@ -24,7 +24,7 @@ from app.api.security import (
 from app.api.tiktok_client import TikTokClient
 from app.api.webhook_service import handle_order_webhook
 from app.config import Settings
-from app.db.factory import open_order_repository, open_review_store, open_inventory_store
+from app.db.factory import open_order_repository, open_review_store, open_inventory_store, open_user_store
 from app.observability import metrics
 from app.observability.alerts import AlertManager
 from app.observability.logging import (
@@ -125,7 +125,7 @@ def create_app(
         # The durable store writes its own audit trail inside each transaction, so
         # the executor is given no second sink.
         review_store = open_review_store(settings.review_db)
-        inventory_store = open_inventory_store(settings.review_db)
+        inventory_store = open_inventory_store(settings.inventory_db)
         recovered = review_store.recover_stale_executions(timedelta(minutes=15))
         if recovered:
             metrics.stale_recoveries_total().inc(len(recovered))
@@ -431,9 +431,7 @@ def create_app(
 
     
     from app.auth import get_password_hash, verify_password, create_access_token
-    from app.db.users import UserStore
-    from app.config import _default_db
-    user_store = UserStore(_default_db("users.db"))
+    user_store = open_user_store(settings.user_db)
 
     @app.post("/auth/signup")
     def signup(req: SignupRequest):
