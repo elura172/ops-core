@@ -108,7 +108,7 @@ class ApprovedActionExecutor:
             AmazonSPAPIAdapter(dry_run=True),
             BiblioListingAdapter(dry_run=True),
             AlibrisListingAdapter(dry_run=True),
-            EbayListingAdapter(dry_run=True),
+            EbayListingAdapter(dry_run=True, api_token=credentials.get("ebay", "mock_token")),
             ShopifyListingAdapter(dry_run=True),
             SquareCatalogAdapter(dry_run=True, access_token=credentials.get("square", "")),
         )
@@ -151,7 +151,7 @@ class ApprovedActionExecutor:
             AmazonSPAPIAdapter(dry_run=True, refresh_token=credentials.get("amazon", "mock_token")),
             BiblioListingAdapter(dry_run=True),
             AlibrisListingAdapter(dry_run=True),
-            EbayListingAdapter(dry_run=True),
+            EbayListingAdapter(dry_run=True, api_token=credentials.get("ebay", "mock_token")),
             ShopifyListingAdapter(dry_run=True, access_token=credentials.get("shopify", "")),
             SquareCatalogAdapter(dry_run=True, access_token=credentials.get("square", "")),
         )

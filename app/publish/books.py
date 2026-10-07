@@ -297,8 +297,9 @@ class AlibrisListingAdapter(BookListingAdapter):
 
 @dataclass
 class EbayListingAdapter(BookListingAdapter):
-    """eBay Inventory API Adapter. Explicitly drafts listings so photos can be attached."""
+    """eBay Inventory API Adapter. Drafts listings on eBay so condition photos and attributes can be attached."""
     api_token: str = "mock_token"
+    marketplace_id: str = "EBAY_CA"
     dry_run: bool = True
 
     @property
@@ -313,28 +314,50 @@ class EbayListingAdapter(BookListingAdapter):
         price_cad: Decimal,
         details: dict[str, Any],
     ) -> str | None:
-        has_image = "spine_image_base64" in details
-        image_status = "with_image" if has_image else "no_image"
-        
-        if self.dry_run:
-            logger.info("ebay.list_book_draft.dry_run", sku=sku, image=image_status)
-            return f"ebay-draft-{sku}"
-            
-        logger.info("ebay.list_book_draft.created", sku=sku, image=image_status)
-        return f"ebay-draft-{sku}"
+        from app.api.ebay_service import EbayService
+
+        authors = details.get("authors") or ([details["author"]] if "author" in details else ["Unknown"])
+        format_str = details.get("format", "hardcover")
+        section = details.get("section", "General")
+        shelf = details.get("shelf", "")
+        provenance = details.get("provenance", "")
+        image_urls = details.get("image_urls")
+
+        res = EbayService.push_inventory_item_raw(
+            sku=sku,
+            title=title,
+            authors=authors,
+            format_str=format_str,
+            condition=condition,
+            price_cad=price_cad,
+            section=section,
+            shelf=shelf,
+            provenance=provenance,
+            access_token=self.api_token,
+            marketplace_id=self.marketplace_id,
+            image_urls=image_urls,
+            dry_run=self.dry_run,
+        )
+        return res.get("listing_draft_id")
 
     def delist_book(self, sku: str) -> bool:
-        if self.dry_run:
-            logger.info("ebay.delist_book.dry_run", sku=sku)
-            return True
-        return True
+        from app.api.ebay_service import EbayService
+
+        return EbayService.delist_item(
+            sku=sku,
+            access_token=self.api_token,
+            dry_run=self.dry_run,
+        )
 
     def cancel_order(self, order_id: str, reason: str = "OUT_OF_STOCK") -> bool:
-        if self.dry_run:
-            logger.info("ebay.cancel_order.dry_run", order_id=order_id, reason=reason)
-            return True
-        logger.info("ebay.cancel_order.success", order_id=order_id, reason=reason)
-        return True
+        from app.api.ebay_service import EbayService
+
+        return EbayService.cancel_order(
+            order_id=order_id,
+            reason=reason,
+            access_token=self.api_token,
+            dry_run=self.dry_run,
+        )
 
 
 @dataclass

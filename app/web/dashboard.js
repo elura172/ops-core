@@ -1141,8 +1141,22 @@ async function renderBookshelf() {
           pushSquareBtn.disabled = false;
         }
       };
+
+      const pushEbayBtn = node("button", "🛍️ eBay", "ghost-sm");
+      pushEbayBtn.title = "Push draft listing to eBay Shop";
+      pushEbayBtn.onclick = async () => {
+        pushEbayBtn.disabled = true;
+        try {
+          const res = await api(`/inventory/${encodeURIComponent(item.sku)}/ebay/draft`, { method: "POST" });
+          message(`Drafted "${item.title}" for eBay Shop (${res.listing_draft_id || "draft"}).`);
+          pushEbayBtn.textContent = "✓ Drafted";
+        } catch(e) {
+          alert(e.message);
+          pushEbayBtn.disabled = false;
+        }
+      };
       
-      actions.append(priceLabel, priceInput, saveBtn, delistBtn, checkoutBtn, pushSquareBtn);
+      actions.append(priceLabel, priceInput, saveBtn, delistBtn, checkoutBtn, pushSquareBtn, pushEbayBtn);
     } else {
       actions.append(node("span", `Status: ${human(item.status)}`, "muted"));
     }
@@ -1575,6 +1589,23 @@ if ($("btn-sync-square-all")) {
       btn.textContent = "📲 Sync Square POS";
     } finally {
       setTimeout(() => { btn.disabled = false; btn.textContent = "📲 Sync Square POS"; }, 3500);
+    }
+  };
+}
+if ($("btn-sync-ebay-all")) {
+  $("btn-sync-ebay-all").onclick = async () => {
+    const btn = $("btn-sync-ebay-all");
+    btn.disabled = true;
+    btn.textContent = "Syncing with eBay...";
+    try {
+      const res = await api("/inventory/ebay/sync-all", { method: "POST" });
+      message(`Synced ${res.synced_count} active volume(s) to eBay Shop.`);
+      btn.textContent = `✓ Synced (${res.synced_count})`;
+    } catch(err) {
+      alert(`eBay sync error: ${err.message}`);
+      btn.textContent = "🛍️ Sync eBay Shop";
+    } finally {
+      setTimeout(() => { btn.disabled = false; btn.textContent = "🛍️ Sync eBay Shop"; }, 3500);
     }
   };
 }

@@ -122,11 +122,12 @@ class CorvusWarden:
         """
         Corvus's internal ruleset.
         """
-        # Rule 1: Always auto-approve Square POS inventory syncs.
-        # A physical book has left the building; the vault must be updated instantly to prevent online double-sells.
+        # Rule 1: Always auto-approve physical POS and marketplace inventory syncs.
+        # A book has sold (in-store via Square, or online via eBay/Shopify/Amazon);
+        # the vault must be updated instantly to prevent collisions.
         if operation == "sync_inventory":
             source = payload.get("source_channel", "")
-            if source in ("square", "in_store", "pos"):
+            if source in ("square", "in_store", "pos", "ebay", "shopify", "amazon", "abebooks", "biblio"):
                 return True
 
         # Rule 2: Order contention handling.

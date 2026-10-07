@@ -51,6 +51,11 @@ class Settings:
     square_webhook_secret: str = ""
     stripe_secret_key: str = ""
     stripe_webhook_secret: str = ""
+    ebay_client_id: str = ""
+    ebay_client_secret: str = ""
+    ebay_access_token: str = ""
+    ebay_verification_token: str = ""
+    ebay_marketplace_id: str = "EBAY_CA"
     order_db: str = "orders.db"
     review_db: str = "reviews.db"
     user_db: str = "users.db"
@@ -109,6 +114,11 @@ class Settings:
             square_webhook_secret=os.getenv("SQUARE_WEBHOOK_SECRET", ""),
             stripe_secret_key=os.getenv("STRIPE_SECRET_KEY", ""),
             stripe_webhook_secret=os.getenv("STRIPE_WEBHOOK_SECRET", ""),
+            ebay_client_id=os.getenv("EBAY_CLIENT_ID", ""),
+            ebay_client_secret=os.getenv("EBAY_CLIENT_SECRET", ""),
+            ebay_access_token=os.getenv("EBAY_ACCESS_TOKEN", ""),
+            ebay_verification_token=os.getenv("EBAY_VERIFICATION_TOKEN", ""),
+            ebay_marketplace_id=os.getenv("EBAY_MARKETPLACE_ID", "EBAY_CA"),
             tokens=tokens,
             order_db=os.getenv("ORDER_DB", os.getenv("POSTGRES_URL", _default_db("orders.db"))).strip() or os.getenv("POSTGRES_URL", _default_db("orders.db")),
             review_db=os.getenv("REVIEW_DB", os.getenv("POSTGRES_URL", _default_db("reviews.db"))).strip() or os.getenv("POSTGRES_URL", _default_db("reviews.db")),
@@ -143,6 +153,11 @@ class Settings:
             square_webhook_secret=os.getenv("SQUARE_WEBHOOK_SECRET", ""),
             stripe_secret_key=os.getenv("STRIPE_SECRET_KEY", ""),
             stripe_webhook_secret=os.getenv("STRIPE_WEBHOOK_SECRET", ""),
+            ebay_client_id=os.getenv("EBAY_CLIENT_ID", ""),
+            ebay_client_secret=os.getenv("EBAY_CLIENT_SECRET", ""),
+            ebay_access_token=os.getenv("EBAY_ACCESS_TOKEN", ""),
+            ebay_verification_token=os.getenv("EBAY_VERIFICATION_TOKEN", ""),
+            ebay_marketplace_id=os.getenv("EBAY_MARKETPLACE_ID", "EBAY_CA"),
             tokens=TokenRegistry.from_env(
                 os.getenv("OPS_TOKENS", "").strip()
                 or "10a4c7c9fc5206d6f36dc6944a81bb6f4a3cb0e25014ae3b12e6c3e52712292a:admin:admin"

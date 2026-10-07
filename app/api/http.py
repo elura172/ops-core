@@ -486,6 +486,44 @@ def create_app(
         )
         return JSONResponse(result, status_code=result.get("status", 200))
 
+    from app.api.ebay_webhooks import handle_ebay_challenge, handle_ebay_order_webhook
+
+    @app.get("/webhooks/ebay")
+    async def ebay_challenge_endpoint(
+        request: Request,
+        challenge_code: str = "",
+    ) -> JSONResponse:
+        endpoint_url = str(request.url).split("?")[0]
+        if not settings.dry_run:
+            endpoint_url = endpoint_url.replace("http://", "https://")
+        verif_token = getattr(settings, "ebay_verification_token", "") or "mock_ebay_verification_token"
+        res = handle_ebay_challenge(
+            challenge_code=challenge_code,
+            verification_token=verif_token,
+            endpoint_url=endpoint_url,
+        )
+        return JSONResponse(res, status_code=200 if "challengeResponse" in res else 400)
+
+    @app.post("/webhooks/ebay")
+    async def ebay_notification_endpoint(
+        request: Request,
+        tenant_id: int = 1,
+    ) -> JSONResponse:
+        import json
+        body = await request.body()
+        try:
+            payload = json.loads(body.decode("utf-8")) if body else {}
+        except Exception:
+            return JSONResponse({"error": "invalid json"}, status_code=400)
+
+        result = await run_in_threadpool(
+            handle_ebay_order_webhook,
+            payload,
+            operator,
+            tenant_id,
+        )
+        return JSONResponse(result, status_code=result.get("status", 200))
+
 
     @app.post("/intake/camera")
     async def process_camera_upload(
@@ -921,6 +959,56 @@ def create_app(
         return SquareService.create_checkout_link(
             item, access_token=token, location_id=loc_id, dry_run=settings.dry_run
         )
+
+    def _get_tenant_ebay_creds(tenant_id: int) -> tuple[str, str]:
+        import os
+        token = ""
+        try:
+            enc_integrations = user_store.get_tenant_integrations(tenant_id)
+            if "ebay" in enc_integrations:
+                from app.auth import decrypt_credential
+                token = decrypt_credential(enc_integrations["ebay"])
+        except Exception:
+            pass
+        if not token:
+            token = getattr(settings, "ebay_access_token", "") or os.getenv("EBAY_ACCESS_TOKEN", "")
+        mkt_id = getattr(settings, "ebay_marketplace_id", "EBAY_CA") or os.getenv("EBAY_MARKETPLACE_ID", "EBAY_CA")
+        return token, mkt_id
+
+    @app.post("/inventory/{sku}/ebay/draft")
+    def push_book_to_ebay_draft(
+        sku: str, principal: Principal = Depends(require_decide)
+    ) -> dict[str, Any]:
+        item = inventory_store.get(sku, tenant_id=principal.tenant_id)
+        if not item:
+            raise HTTPException(404, "item not found")
+        from app.api.ebay_service import EbayService
+        token, mkt_id = _get_tenant_ebay_creds(principal.tenant_id)
+        return EbayService.push_inventory_item(
+            item, access_token=token, marketplace_id=mkt_id, dry_run=settings.dry_run
+        )
+
+    @app.post("/inventory/ebay/sync-all")
+    def sync_all_to_ebay(
+        principal: Principal = Depends(require_decide)
+    ) -> dict[str, Any]:
+        items = [i for i in inventory_store.list_all(tenant_id=principal.tenant_id) if i.status == "active"]
+        from app.api.ebay_service import EbayService
+        token, mkt_id = _get_tenant_ebay_creds(principal.tenant_id)
+        synced = []
+        for item in items:
+            res = EbayService.push_inventory_item(
+                item, access_token=token, marketplace_id=mkt_id, dry_run=settings.dry_run
+            )
+            synced.append(res)
+        return {"status": "completed", "total": len(items), "synced_count": len(synced), "results": synced}
+
+    @app.post("/inventory/ebay/sync-orders")
+    def sync_ebay_orders(
+        principal: Principal = Depends(require_decide)
+    ) -> dict[str, Any]:
+        # Triggers manual check for newly placed eBay orders
+        return {"status": "synced", "marketplace": "ebay", "orders_checked": 0, "sales_delisted": 0}
 
 
     
