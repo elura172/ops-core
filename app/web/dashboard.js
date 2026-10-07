@@ -1,5 +1,6 @@
 "use strict";
 const $ = id => document.getElementById(id);
+let checkedItems = new Set();
 let token = "", session = null, items = [], selected = null, generation = 0, selection = 0, busy = false;
 const labels = {intake_book:"Intake Book", create_product_draft:"Create product draft", update_inventory:"Update stock", update_prices:"Update prices", publish:"Publish content", send_customer_response:"Send customer response", sync_inventory:"Cross-Channel Sync", fulfill_order:"Fulfill Order", resolve_order_contention:"Resolve Contention"};
 const human = text => String(text).replaceAll("_", " ");
@@ -29,20 +30,120 @@ async function api(path, options = {}) {
   }
   return body;
 }
+
+function renderBatchDetail() {
+  if (checkedItems.size === 0) {
+    if (selected) select(selected);
+    else {
+      $("detail").replaceChildren(node("h2", "A moment of attention."),node("p", "Select an action to read its contents before making a decision."));
+    }
+    return;
+  }
+  
+  const detail = $("detail");
+  detail.replaceChildren(node("h2", `Batch Mode: ${checkedItems.size} Selected`));
+  const selectedItems = items.filter(i => checkedItems.has(i.review_id));
+  
+  const pendingCount = selectedItems.filter(i => i.status === "PENDING").length;
+  const approvedCount = selectedItems.filter(i => i.status === "APPROVED").length;
+  
+  if (pendingCount > 0) {
+    detail.append(node("p", `${pendingCount} items are awaiting your decision. Batch approval skips inline editing and approves them as-is.`));
+    const btnBox = node("div", undefined, "actions");
+    const approveBtn = node("button", `Approve ${pendingCount} Actions`, "primary");
+    approveBtn.onclick = async () => {
+      busy = true; $("refresh").disabled = true;
+      let success = 0, fail = 0;
+      detail.replaceChildren(node("p", "Processing batch approvals..."));
+      for (const item of selectedItems.filter(i => i.status === "PENDING")) {
+        try {
+          await api(`/reviews/${encodeURIComponent(item.review_id)}/decision`, { method: "POST", body: JSON.stringify({approve: true, reason: ""}) });
+          checkedItems.delete(item.review_id);
+          success++;
+        } catch (e) { fail++; }
+      }
+      busy = false; message(`Batch completed: ${success} approved, ${fail} failed.`); refresh();
+    };
+    btnBox.append(approveBtn);
+    detail.append(btnBox);
+  }
+  
+  if (approvedCount > 0) {
+    detail.append(node("p", `${approvedCount} items are ready for execution.`));
+    const execBox = node("div", undefined, "actions");
+    const execBtn = node("button", `Execute ${approvedCount} Actions`, "primary");
+    execBtn.onclick = async () => {
+      busy = true; $("refresh").disabled = true;
+      let success = 0, fail = 0;
+      detail.replaceChildren(node("p", "Processing batch executions..."));
+      for (const item of selectedItems.filter(i => i.status === "APPROVED")) {
+        try {
+          await api(`/reviews/${encodeURIComponent(item.review_id)}/execute`, { method: "POST" });
+          checkedItems.delete(item.review_id);
+          success++;
+        } catch (e) { fail++; }
+      }
+      busy = false; message(`Batch execution completed: ${success} executed, ${fail} failed.`); refresh();
+    };
+    execBox.append(execBtn);
+    detail.append(execBox);
+  }
+}
+
 function renderQueue() {
   $("count").textContent = `${items.length} actions · ${items.filter(i=>i.status === "PENDING").length} awaiting review`;
   const list = $("items"); list.replaceChildren();
   const shown = items.filter(i=>$("filter").value === "ALL" || i.status === $("filter").value);
+  
+  if (shown.length) {
+    const selAll = node("button", "Toggle Select All");
+    selAll.style.marginBottom = "10px";
+    selAll.onclick = () => {
+      const allChecked = shown.every(i => checkedItems.has(i.review_id));
+      if (allChecked) checkedItems.clear();
+      else shown.forEach(i => checkedItems.add(i.review_id));
+      renderQueue();
+      renderBatchDetail();
+    };
+    list.append(selAll);
+  }
+  
   if (!shown.length) list.append(node("p", items.length ? "No actions match this filter." : "Your queue is clear. New proposals will appear here when a connected workflow submits them.", "empty"));
   for (const item of shown) {
+    const row = node("div");
+    row.style.display = "flex";
+    row.style.alignItems = "center";
+    
+    const cb = node("input");
+    cb.type = "checkbox";
+    cb.checked = checkedItems.has(item.review_id);
+    cb.style.marginRight = "8px";
+    cb.onclick = (e) => {
+      e.stopPropagation();
+      if (cb.checked) checkedItems.add(item.review_id);
+      else checkedItems.delete(item.review_id);
+      renderBatchDetail();
+    };
+    
     const button = node("button", undefined, "item");
+    button.style.flex = "1";
     button.setAttribute("aria-pressed", String(item.review_id === selected));
     button.append(node("span", human(item.status), `badge ${item.status.toLowerCase()}`), node("strong", labels[item.operation] || human(item.operation)), node("small", item.review_id));
     button.disabled = busy;
-    button.onclick = ()=>select(item.review_id);
-    list.append(button);
+    button.onclick = ()=> {
+      if (checkedItems.size > 0) {
+        cb.checked = !cb.checked;
+        cb.onclick({stopPropagation: ()=>{}});
+      } else {
+        select(item.review_id);
+      }
+    };
+    
+    row.append(cb, button);
+    list.append(row);
   }
 }
+
 function fields(parent, data) {
   const dl = node("dl");
   for (const [key, value] of Object.entries(data)) {
