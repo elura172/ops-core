@@ -46,6 +46,8 @@ class Settings:
     webhook_secret: str
     tokens: TokenRegistry
     shippo_api_key: str = ""
+    shopify_store_url: str = ""
+    shopify_access_token: str = ""
     square_webhook_secret: str = ""
     order_db: str = "orders.db"
     review_db: str = "reviews.db"
@@ -98,6 +100,8 @@ class Settings:
             tts_shop_id=required("TTS_SHOP_ID"),
             webhook_secret=required("TTS_WEBHOOK_SECRET"),
             shippo_api_key=os.getenv("SHIPPO_API_KEY", ""),
+            shopify_store_url=os.getenv("SHOPIFY_STORE_URL", ""),
+            shopify_access_token=os.getenv("SHOPIFY_ACCESS_TOKEN", ""),
             square_webhook_secret=os.getenv("SQUARE_WEBHOOK_SECRET", ""),
             tokens=tokens,
             order_db=os.getenv("ORDER_DB", os.getenv("POSTGRES_URL", _default_db("orders.db"))).strip() or os.getenv("POSTGRES_URL", _default_db("orders.db")),
@@ -126,6 +130,8 @@ class Settings:
             tts_shop_id=os.getenv("TTS_SHOP_ID", ""),
             webhook_secret=os.getenv("TTS_WEBHOOK_SECRET", ""),
             shippo_api_key=os.getenv("SHIPPO_API_KEY", ""),
+            shopify_store_url=os.getenv("SHOPIFY_STORE_URL", ""),
+            shopify_access_token=os.getenv("SHOPIFY_ACCESS_TOKEN", ""),
             square_webhook_secret=os.getenv("SQUARE_WEBHOOK_SECRET", ""),
             tokens=TokenRegistry.from_env(
                 os.getenv("OPS_TOKENS", "").strip()

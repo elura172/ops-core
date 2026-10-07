@@ -16,6 +16,7 @@ from app.publish.books import (
     BiblioListingAdapter,
     BookListingOrchestrator,
     EbayListingAdapter,
+    ShopifyListingAdapter,
 )
 from app.publish.layer import DryRunPublisher, PublishGate, PublishRequest
 from app.review.queue import AlreadyExecuted, ReviewItem, ReviewStore
@@ -95,6 +96,7 @@ class ApprovedActionExecutor:
             BiblioListingAdapter(dry_run=True),
             AlibrisListingAdapter(dry_run=True),
             EbayListingAdapter(dry_run=True),
+            ShopifyListingAdapter(dry_run=True),
         )
         orchestrator = BookListingOrchestrator(adapters)
         result = orchestrator.list_inventory(payload)
@@ -129,6 +131,7 @@ class ApprovedActionExecutor:
             BiblioListingAdapter(dry_run=True),
             AlibrisListingAdapter(dry_run=True),
             EbayListingAdapter(dry_run=True),
+            ShopifyListingAdapter(dry_run=True),
         )
         sync = MultiChannelInventorySync(adapters)
         
@@ -182,6 +185,7 @@ class ApprovedActionExecutor:
                 "biblio": BiblioListingAdapter(dry_run=True),
                 "alibris": AlibrisListingAdapter(dry_run=True),
                 "ebay": EbayListingAdapter(dry_run=True),
+                "shopify": ShopifyListingAdapter(dry_run=True),
             }
             adapter = adapters.get(str(loser_channel).lower())
             if adapter and loser_order_id:
