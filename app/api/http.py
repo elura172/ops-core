@@ -432,8 +432,8 @@ def create_app(
     
     from app.auth import get_password_hash, verify_password, create_access_token
     from app.db.users import UserStore
-
-    user_store = UserStore("users.db")
+    from app.config import _default_db
+    user_store = UserStore(_default_db("users.db"))
 
     @app.post("/auth/signup")
     def signup(req: SignupRequest):
