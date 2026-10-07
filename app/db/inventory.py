@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import json
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any, Protocol
 
-import psycopg
-from psycopg.rows import dict_row
+
 
 @dataclass
 class InventoryItem:
@@ -46,6 +46,7 @@ def _row_to_item(row: dict[str, Any]) -> InventoryItem:
 class PostgresInventoryStore:
     def __init__(self, dsn: str) -> None:
         from psycopg_pool import ConnectionPool
+        from psycopg.rows import dict_row
         self.pool = ConnectionPool(dsn, min_size=1, max_size=5, kwargs={"row_factory": dict_row})
 
     def add(self, item: InventoryItem) -> None:

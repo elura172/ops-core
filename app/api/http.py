@@ -96,7 +96,7 @@ def create_app(
         # The durable store writes its own audit trail inside each transaction, so
         # the executor is given no second sink.
         review_store = open_review_store(settings.review_db)
-    inventory_store = open_inventory_store(settings.review_db)
+        inventory_store = open_inventory_store(settings.review_db)
         recovered = review_store.recover_stale_executions(timedelta(minutes=15))
         if recovered:
             metrics.stale_recoveries_total().inc(len(recovered))
@@ -107,12 +107,12 @@ def create_app(
         operator = OperatorService(
             review_store,
             ApprovedActionExecutor(
-                inventory_store=inventory_store,
                 TikTokClient(
                     settings.tts_access_token, settings.tts_shop_id, dry_run=settings.dry_run
                 ),
                 publish_gate=PublishGate(DryRunPublisher(), enabled=settings.publish_enabled),
                 shippo_api_key=settings.shippo_api_key,
+                inventory_store=inventory_store,
             ),
         )
     if order_repository is None:
@@ -355,7 +355,7 @@ def create_app(
 
     
     @app.get("/inventory")
-    def list_inventory(principal: Principal = Depends(require_auth)) -> list[dict[str, Any]]:
+    def list_inventory(principal: Principal = Depends(require_read)) -> list[dict[str, Any]]:
         return [
             {
                 "sku": i.sku, "title": i.title, "authors": i.authors, "format": i.format,
