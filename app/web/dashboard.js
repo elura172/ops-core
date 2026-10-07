@@ -18,6 +18,7 @@ function disconnect() {
   $("login-section").hidden = false; 
   if ($("billing-section")) $("billing-section").hidden = true;
   if ($("analytics-panel")) $("analytics-panel").hidden = true;
+  if ($("onboarding-section")) $("onboarding-section").hidden = true;
   $("refresh").disabled = false;
 }
 async function api(path, options = {}) {
@@ -392,6 +393,7 @@ async function handleAuth(path, body, button) {
 
     if (identity.subscription_status !== "active") {
         $("workspace").hidden = true;
+        $("onboarding-section").hidden = true;
         $("billing-section").hidden = false;
         
         // Setup checkout flow
@@ -415,8 +417,18 @@ async function handleAuth(path, body, button) {
         };
     } else {
         $("billing-section").hidden = true;
-        $("workspace").hidden = false;
-        await refresh();
+        // Check integrations for onboarding
+        const integrations = await api("/integrations");
+        if (epoch !== generation) return;
+        
+        if (Object.keys(integrations.connected_providers || []).length === 0) {
+            $("workspace").hidden = true;
+            $("onboarding-section").hidden = false;
+        } else {
+            $("onboarding-section").hidden = true;
+            $("workspace").hidden = false;
+            await refresh();
+        }
     }
   } catch(error) {
     disconnect();
@@ -437,6 +449,31 @@ $("form-signup").onsubmit = async event => {
   handleAuth("/auth/signup", {store_name: $("signup-store").value, email: $("signup-email").value, password: $("signup-password").value}, event.target.querySelector("button"));
   $("signup-password").value = "";
 };
+
+if ($("form-onboarding")) {
+  $("form-onboarding").onsubmit = async event => {
+    event.preventDefault();
+    const provider = $("onboarding-provider").value;
+    const key = $("onboarding-key").value;
+    const button = $("form-onboarding").querySelector("button");
+    button.disabled = true;
+    try {
+      await api("/integrations", {
+        method: "POST",
+        body: JSON.stringify({ provider: provider, api_key: key })
+      });
+      message(`Connected ${provider} successfully! Welcome to Corvus.`);
+      $("onboarding-key").value = "";
+      $("onboarding-section").hidden = true;
+      $("workspace").hidden = false;
+      await refresh();
+    } catch(e) {
+      message(e.message);
+    } finally {
+      button.disabled = false;
+    }
+  };
+}
 
 $("logout").onclick = ()=>{disconnect(); message("Disconnected. Your token and displayed action data have been cleared.");};
 $("refresh").onclick = ()=>{message(""); refresh();};

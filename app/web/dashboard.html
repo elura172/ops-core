@@ -54,6 +54,35 @@
       </div>
     </section>
 
+    <section id="onboarding-section" class="panel detail" hidden style="margin-top: 2rem; max-width: 600px; margin-left: auto; margin-right: auto; padding: 3rem;">
+      <div style="text-align: center;">
+        <p class="eyebrow" style="color: var(--accent);">WELCOME TO CORVUS</p>
+        <h2 style="margin: 1rem 0;">Connect Your First Channel</h2>
+        <p style="margin-bottom: 2rem; color: var(--fg-muted);">Corvus needs an API connection to start protecting your inventory. Let's connect your first marketplace.</p>
+        
+        <form id="form-onboarding" style="display: flex; flex-direction: column; gap: 1.5rem; text-align: left;">
+          <div>
+            <label for="onboarding-provider">Marketplace / POS</label>
+            <select id="onboarding-provider" required style="width: 100%; padding: 0.75rem; font-size: 1rem;">
+              <option value="" disabled selected>Select channel...</option>
+              <option value="shopify">Shopify</option>
+              <option value="amazon">Amazon SP-API</option>
+              <option value="tiktok">TikTok Shop</option>
+              <option value="square">Square POS</option>
+            </select>
+          </div>
+          
+          <div>
+            <label for="onboarding-key">API Key</label>
+            <input id="onboarding-key" type="password" required autocomplete="off" spellcheck="false" style="width: 100%; padding: 0.75rem; font-size: 1rem;">
+            <p style="font-size: 0.8rem; color: var(--fg-muted); margin-top: 0.5rem;">Your key will be encrypted at rest in the Sovereign Vault.</p>
+          </div>
+          
+          <button type="submit" class="primary" style="padding: 1rem; font-size: 1.1rem;">Securely Connect Channel →</button>
+        </form>
+      </div>
+    </section>
+
     <section id="workspace" hidden>
       <div class="toolbar"><div><span id="mode" class="badge"></span> <span id="count"></span></div><button id="refresh">Refresh queue ↻</button></div>
       <div class="desk">

@@ -142,9 +142,15 @@ def create_app(
         response.headers["Referrer-Policy"] = "no-referrer"
         return response
 
-    @app.get("/", include_in_schema=False)
-    def root() -> RedirectResponse:
-        return RedirectResponse(url="/dashboard", status_code=302)
+
+    @app.get("/", response_class=HTMLResponse, include_in_schema=False)
+    def landing_page() -> HTMLResponse:
+        return HTMLResponse(
+            files("app.web").joinpath("index.html").read_text(),
+            headers={
+                "Content-Security-Policy": "default-src 'self'; style-src 'self' 'unsafe-inline';",
+            },
+        )
 
     @app.get("/dashboard", response_class=HTMLResponse, include_in_schema=False)
     def dashboard() -> HTMLResponse:
