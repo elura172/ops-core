@@ -24,7 +24,7 @@ from app.api.security import (
 from app.api.tiktok_client import TikTokClient
 from app.api.webhook_service import handle_order_webhook
 from app.config import Settings
-from app.db.factory import open_order_repository, open_review_store, open_inventory_store, open_user_store
+from app.db.factory import open_order_repository, open_review_store, open_inventory_store, open_user_store, open_want_list_store
 from app.observability import metrics
 from app.observability.alerts import AlertManager
 from app.observability.logging import (
@@ -138,6 +138,7 @@ def create_app(
         # the executor is given no second sink.
         review_store = open_review_store(settings.review_db)
         inventory_store = open_inventory_store(settings.inventory_db)
+        want_list_store = open_want_list_store(settings.want_list_db)
         recovered = review_store.recover_stale_executions(timedelta(minutes=15))
         if recovered:
             metrics.stale_recoveries_total().inc(len(recovered))
@@ -154,11 +155,15 @@ def create_app(
                 publish_gate=PublishGate(DryRunPublisher(), enabled=settings.publish_enabled),
                 shippo_api_key=settings.shippo_api_key,
                 inventory_store=inventory_store,
+                want_list_store=want_list_store,
             ),
         )
     else:
         review_store = operator.reviews
         inventory_store = getattr(operator.executor, "inventory_store", None) or open_inventory_store(settings.inventory_db)
+        want_list_store = getattr(operator.executor, "want_list_store", None) or open_want_list_store(settings.want_list_db)
+        if hasattr(operator.executor, "want_list_store") and not operator.executor.want_list_store:
+            operator.executor.want_list_store = want_list_store
 
     # Seed demo items for tenant 1 if empty
     try:
@@ -644,6 +649,38 @@ def create_app(
                 },
                 "pricing_evidence": price_data["evidence"]
             }
+
+            # Check for collector want list match (Priority Courtesy Hold)
+            try:
+                from app.domain.want_list import WantListMatcher
+                w_matcher = WantListMatcher()
+                active_wants = want_list_store.list_wants(tenant_id=principal.tenant_id, status="active")
+                collectors_map = {c.id: c for c in want_list_store.list_collectors(tenant_id=principal.tenant_id)}
+                w_cand = {
+                    "title": cand_title or book.title,
+                    "authors": resolved_authors,
+                    "condition": condition,
+                    "format": fmt_str,
+                    "price_cad": price_data["recommended_price_cad"],
+                }
+                w_match = w_matcher.find_best_match(active_wants, collectors_map, w_cand)
+                if w_match and w_match.matched:
+                    c_name = w_match.collector.name if w_match.collector else "Collector"
+                    payload["disambiguation"]["triage_reason"] = (
+                        f"MATCHES COLLECTOR WANT: {c_name} has an active want for '{w_match.want_item.title}' "
+                        f"(Budget: ${w_match.want_item.max_price_cad or 'Open'}). "
+                        f"Priority 48h courtesy hold recommended."
+                    )
+                    payload["want_match"] = {
+                        "matched": True,
+                        "collector_name": c_name,
+                        "collector_id": w_match.collector.id if w_match.collector else "",
+                        "want_id": w_match.want_item.id if w_match.want_item else "",
+                        "match_score": w_match.match_score,
+                    }
+            except Exception as w_exc:
+                logger.debug("want_match.check_failed", error=str(w_exc))
+
             try:
                 result = operator.propose("intake_book", payload, tenant_id=principal.tenant_id)
                 proposals.append(result)
@@ -701,8 +738,8 @@ def create_app(
         for idx, book in enumerate(sample_books, start=1):
             price_data = await run_in_threadpool(pricing.discover_price, book["title"], ", ".join(book["authors"]), book["condition"], book.get("format", "hardcover"))
             payload = {
-                "section": "Sci-Fi / Fantasy",
-                "shelf": "B-03",
+                "section": "Sci-Fi / Fantasy" if idx <= 3 else "Canadiana / Rare",
+                "shelf": "B-03" if idx <= 3 else "Vault-1",
                 "extraction": {
                     "title": book["title"],
                     "authors": book["authors"],
@@ -727,6 +764,38 @@ def create_app(
                 },
                 "pricing_evidence": price_data["evidence"]
             }
+
+            # Check for collector want list match (Priority Courtesy Hold)
+            try:
+                from app.domain.want_list import WantListMatcher
+                w_matcher = WantListMatcher()
+                active_wants = want_list_store.list_wants(tenant_id=principal.tenant_id, status="active")
+                collectors_map = {c.id: c for c in want_list_store.list_collectors(tenant_id=principal.tenant_id)}
+                w_cand = {
+                    "title": book["title"],
+                    "authors": book["authors"],
+                    "condition": book["condition"],
+                    "format": book["format"],
+                    "price_cad": price_data["recommended_price_cad"],
+                }
+                w_match = w_matcher.find_best_match(active_wants, collectors_map, w_cand)
+                if w_match and w_match.matched:
+                    c_name = w_match.collector.name if w_match.collector else "Collector"
+                    payload["disambiguation"]["triage_reason"] = (
+                        f"MATCHES COLLECTOR WANT: {c_name} has an active want for '{w_match.want_item.title}' "
+                        f"(Budget: ${w_match.want_item.max_price_cad or 'Open'}). "
+                        f"Priority 48h courtesy hold recommended."
+                    )
+                    payload["want_match"] = {
+                        "matched": True,
+                        "collector_name": c_name,
+                        "collector_id": w_match.collector.id if w_match.collector else "",
+                        "want_id": w_match.want_item.id if w_match.want_item else "",
+                        "match_score": w_match.match_score,
+                    }
+            except Exception as w_exc:
+                logger.debug("want_match.check_failed", error=str(w_exc))
+
             res = operator.propose("intake_book", payload, tenant_id=principal.tenant_id)
             proposals.append(res)
 
@@ -1172,6 +1241,291 @@ def create_app(
             raise HTTPException(401, "Invalid token")
             
         return operator.reviews.get_tenant_analytics(tenant_id)
+
+    # =========================================================================
+    # Collector CRM & Want Lists & Priority Courtesy Holds
+    # =========================================================================
+
+    @app.get("/collectors")
+    def list_collectors_endpoint(
+        q: str = "", principal: Principal = Depends(require_read)
+    ) -> list[dict[str, Any]]:
+        collectors = want_list_store.list_collectors(tenant_id=principal.tenant_id, query=q)
+        wants = want_list_store.list_wants(tenant_id=principal.tenant_id, status="active")
+        wants_count: dict[str, int] = {}
+        for w in wants:
+            wants_count[w.collector_id] = wants_count.get(w.collector_id, 0) + 1
+        return [
+            {
+                "id": c.id,
+                "name": c.name,
+                "email": c.email,
+                "phone": c.phone,
+                "notes": c.notes,
+                "active_wants_count": wants_count.get(c.id, 0),
+                "created_at": c.created_at.isoformat(),
+                "updated_at": c.updated_at.isoformat(),
+            }
+            for c in collectors
+        ]
+
+    @app.post("/collectors")
+    def create_collector_endpoint(
+        payload: dict[str, Any], principal: Principal = Depends(require_decide)
+    ) -> dict[str, Any]:
+        import uuid
+        from app.db.want_list import Collector
+        name = str(payload.get("name", "")).strip()
+        if not name:
+            raise HTTPException(400, "Collector name is required")
+        col_id = payload.get("id") or f"col-{uuid.uuid4().hex[:8]}"
+        collector = Collector(
+            id=col_id,
+            tenant_id=principal.tenant_id,
+            name=name,
+            email=str(payload.get("email", "")).strip(),
+            phone=str(payload.get("phone", "")).strip(),
+            notes=str(payload.get("notes", "")).strip(),
+        )
+        saved = want_list_store.create_collector(collector)
+        return {
+            "id": saved.id,
+            "name": saved.name,
+            "email": saved.email,
+            "phone": saved.phone,
+            "notes": saved.notes,
+            "created_at": saved.created_at.isoformat(),
+        }
+
+    @app.get("/collectors/{collector_id}")
+    def get_collector_detail_endpoint(
+        collector_id: str, principal: Principal = Depends(require_read)
+    ) -> dict[str, Any]:
+        collector = want_list_store.get_collector(collector_id, tenant_id=principal.tenant_id)
+        if not collector:
+            raise HTTPException(404, "Collector not found")
+        wants = want_list_store.list_wants(tenant_id=principal.tenant_id, collector_id=collector_id)
+        holds = [h for h in want_list_store.list_holds(tenant_id=principal.tenant_id) if h.collector_id == collector_id]
+        return {
+            "id": collector.id,
+            "name": collector.name,
+            "email": collector.email,
+            "phone": collector.phone,
+            "notes": collector.notes,
+            "created_at": collector.created_at.isoformat(),
+            "updated_at": collector.updated_at.isoformat(),
+            "wants": [
+                {
+                    "id": w.id,
+                    "title": w.title,
+                    "author": w.author,
+                    "max_price_cad": float(w.max_price_cad) if w.max_price_cad is not None else None,
+                    "min_condition": w.min_condition,
+                    "binding": w.binding,
+                    "keywords": w.keywords,
+                    "status": w.status,
+                    "created_at": w.created_at.isoformat(),
+                }
+                for w in wants
+            ],
+            "holds": [
+                {
+                    "id": h.id,
+                    "sku": h.sku,
+                    "book_title": h.book_title,
+                    "book_author": h.book_author,
+                    "price_cad": float(h.price_cad) if h.price_cad is not None else None,
+                    "held_at": h.held_at.isoformat(),
+                    "expires_at": h.expires_at.isoformat(),
+                    "status": h.status,
+                    "notes": h.notes,
+                }
+                for h in holds
+            ],
+        }
+
+    @app.put("/collectors/{collector_id}")
+    def update_collector_endpoint(
+        collector_id: str, payload: dict[str, Any], principal: Principal = Depends(require_decide)
+    ) -> dict[str, Any]:
+        updated = want_list_store.update_collector(collector_id, tenant_id=principal.tenant_id, **payload)
+        if not updated:
+            raise HTTPException(404, "Collector not found")
+        return {"status": "ok", "id": updated.id, "name": updated.name}
+
+    @app.delete("/collectors/{collector_id}")
+    def delete_collector_endpoint(
+        collector_id: str, principal: Principal = Depends(require_decide)
+    ) -> dict[str, Any]:
+        deleted = want_list_store.delete_collector(collector_id, tenant_id=principal.tenant_id)
+        if not deleted:
+            raise HTTPException(404, "Collector not found")
+        return {"status": "deleted", "id": collector_id}
+
+    @app.get("/wants")
+    def list_all_wants_endpoint(
+        status: str = "active", principal: Principal = Depends(require_read)
+    ) -> list[dict[str, Any]]:
+        wants = want_list_store.list_wants(tenant_id=principal.tenant_id, status=status if status != "all" else None)
+        collectors = {c.id: c.name for c in want_list_store.list_collectors(tenant_id=principal.tenant_id)}
+        return [
+            {
+                "id": w.id,
+                "collector_id": w.collector_id,
+                "collector_name": collectors.get(w.collector_id, "Unknown"),
+                "title": w.title,
+                "author": w.author,
+                "max_price_cad": float(w.max_price_cad) if w.max_price_cad is not None else None,
+                "min_condition": w.min_condition,
+                "binding": w.binding,
+                "keywords": w.keywords,
+                "status": w.status,
+                "created_at": w.created_at.isoformat(),
+            }
+            for w in wants
+        ]
+
+    @app.post("/collectors/{collector_id}/wants")
+    def create_want_endpoint(
+        collector_id: str, payload: dict[str, Any], principal: Principal = Depends(require_decide)
+    ) -> dict[str, Any]:
+        import uuid
+        from decimal import Decimal
+        from app.db.want_list import WantItem
+        collector = want_list_store.get_collector(collector_id, tenant_id=principal.tenant_id)
+        if not collector:
+            raise HTTPException(404, "Collector not found")
+        title = str(payload.get("title", "")).strip()
+        if not title:
+            raise HTTPException(400, "Title is required")
+        raw_price = payload.get("max_price_cad")
+        max_price = Decimal(str(raw_price)) if raw_price is not None and str(raw_price).strip() else None
+        want = WantItem(
+            id=f"wnt-{uuid.uuid4().hex[:8]}",
+            collector_id=collector_id,
+            tenant_id=principal.tenant_id,
+            title=title,
+            author=str(payload.get("author", "")).strip(),
+            max_price_cad=max_price,
+            min_condition=str(payload["min_condition"]).strip() if payload.get("min_condition") else None,
+            binding=str(payload["binding"]).strip() if payload.get("binding") else None,
+            keywords=str(payload.get("keywords", "")).strip(),
+            status="active",
+        )
+        saved = want_list_store.create_want(want)
+        return {
+            "id": saved.id,
+            "collector_id": saved.collector_id,
+            "collector_name": collector.name,
+            "title": saved.title,
+            "author": saved.author,
+            "max_price_cad": float(saved.max_price_cad) if saved.max_price_cad is not None else None,
+            "min_condition": saved.min_condition,
+            "binding": saved.binding,
+            "keywords": saved.keywords,
+            "status": saved.status,
+        }
+
+    @app.put("/wants/{want_id}")
+    def update_want_endpoint(
+        want_id: str, payload: dict[str, Any], principal: Principal = Depends(require_decide)
+    ) -> dict[str, Any]:
+        updated = want_list_store.update_want(want_id, tenant_id=principal.tenant_id, **payload)
+        if not updated:
+            raise HTTPException(404, "Want item not found")
+        return {"status": "ok", "id": updated.id, "title": updated.title}
+
+    @app.delete("/wants/{want_id}")
+    def delete_want_endpoint(
+        want_id: str, principal: Principal = Depends(require_decide)
+    ) -> dict[str, Any]:
+        deleted = want_list_store.delete_want(want_id, tenant_id=principal.tenant_id)
+        if not deleted:
+            raise HTTPException(404, "Want item not found")
+        return {"status": "deleted", "id": want_id}
+
+    @app.get("/holds")
+    def list_holds_endpoint(
+        status: str = "", principal: Principal = Depends(require_read)
+    ) -> list[dict[str, Any]]:
+        from datetime import UTC, datetime
+        now = datetime.now(UTC)
+        holds = want_list_store.list_holds(tenant_id=principal.tenant_id, status=status or None)
+        collectors = {c.id: c for c in want_list_store.list_collectors(tenant_id=principal.tenant_id)}
+        result = []
+        for h in holds:
+            rem_sec = max(0.0, (h.expires_at - now).total_seconds())
+            is_expired = h.status == "active" and now > h.expires_at
+            col = collectors.get(h.collector_id)
+            result.append({
+                "id": h.id,
+                "sku": h.sku,
+                "want_item_id": h.want_item_id,
+                "collector_id": h.collector_id,
+                "collector_name": h.collector_name or (col.name if col else "Collector"),
+                "collector_phone": col.phone if col else "",
+                "collector_email": col.email if col else "",
+                "book_title": h.book_title,
+                "book_author": h.book_author,
+                "price_cad": float(h.price_cad) if h.price_cad is not None else None,
+                "held_at": h.held_at.isoformat(),
+                "expires_at": h.expires_at.isoformat(),
+                "status": h.status,
+                "notes": h.notes,
+                "is_expired": is_expired,
+                "remaining_seconds": rem_sec,
+                "remaining_hours": round(rem_sec / 3600.0, 1),
+                "claimed_at": h.claimed_at.isoformat() if h.claimed_at else None,
+                "released_at": h.released_at.isoformat() if h.released_at else None,
+            })
+        return result
+
+    @app.post("/holds/{hold_id}/claim")
+    def claim_hold_endpoint(
+        hold_id: str, payload: dict[str, Any] = None, principal: Principal = Depends(require_decide)
+    ) -> dict[str, Any]:
+        payload = payload or {}
+        outcome = operator.executor.handlers["claim_collector_hold"]({
+            "hold_id": hold_id,
+            "tenant_id": principal.tenant_id,
+            "notes": payload.get("notes", "Claimed by collector"),
+        })
+        return outcome
+
+    @app.post("/holds/{hold_id}/release")
+    def release_hold_endpoint(
+        hold_id: str, payload: dict[str, Any] = None, principal: Principal = Depends(require_decide)
+    ) -> dict[str, Any]:
+        payload = payload or {}
+        outcome = operator.executor.handlers["release_collector_hold"]({
+            "hold_id": hold_id,
+            "tenant_id": principal.tenant_id,
+            "reason": payload.get("reason", "manual_release"),
+        })
+        return outcome
+
+    @app.post("/holds/{hold_id}/extend")
+    def extend_hold_endpoint(
+        hold_id: str, payload: dict[str, Any] = None, principal: Principal = Depends(require_decide)
+    ) -> dict[str, Any]:
+        from datetime import timedelta
+        payload = payload or {}
+        hours = int(payload.get("hours", 24))
+        hold = want_list_store.get_hold(hold_id, tenant_id=principal.tenant_id)
+        if not hold:
+            raise HTTPException(404, "Hold not found")
+        new_expires = hold.expires_at + timedelta(hours=hours)
+        updated = want_list_store.update_hold(
+            hold_id,
+            tenant_id=principal.tenant_id,
+            expires_at=new_expires,
+            notes=f"{hold.notes} (Extended +{hours}h)".strip(),
+        )
+        return {
+            "status": "extended",
+            "hold_id": hold_id,
+            "expires_at": updated.expires_at.isoformat() if updated else new_expires.isoformat(),
+        }
 
     from app.api.billing import get_billing_router
     app.include_router(get_billing_router(settings, user_store), prefix="/billing")

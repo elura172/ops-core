@@ -135,6 +135,11 @@
             <span class="tab-icon">📚</span>
             <span class="tab-label">Bookshelf Inventory</span>
           </button>
+          <button type="button" id="tab-collectors" class="nav-tab">
+            <span class="tab-icon">📇</span>
+            <span class="tab-label">Collectors & Wants</span>
+            <span id="tab-holds-badge" class="tab-count" style="display:none; background: #e0a82e; color: #1a1610; font-weight: bold; border-radius: 10px; padding: 2px 7px; font-size: 11px;">0</span>
+          </button>
           <button type="button" id="tab-intake" class="nav-tab">
             <span class="tab-icon">📷</span>
             <span class="tab-label">Intake Studio</span>
@@ -249,6 +254,58 @@
         </div>
 
         <div id="bookshelf-items" class="bookshelf-grid"></div>
+      </section>
+
+      <!-- VIEW 2.5: COLLECTORS & WANT LISTS (CRM & COURTESY HOLDS) -->
+      <section id="collectors-panel" class="panel collectors-panel" hidden>
+        <div class="panel-header">
+          <div>
+            <p class="eyebrow">CLIENT RELATIONSHIPS & COURTESY EMBARGOES</p>
+            <h2>Collector CRM & Want Lists</h2>
+            <p class="muted">Manage antiquarian collectors, search active wants, and process 48-hour priority courtesy holds before public marketplace listing.</p>
+          </div>
+          <div class="header-actions">
+            <button type="button" id="btn-new-collector" class="primary" style="padding: 8px 14px; font-size: 13px;">+ New Collector</button>
+            <button type="button" id="btn-new-want" class="secondary" style="padding: 8px 14px; font-size: 13px; margin-left: 8px;">+ Add Want</button>
+            <button type="button" id="btn-refresh-collectors" class="ghost-sm" style="margin-left: 8px;">↻</button>
+          </div>
+        </div>
+
+        <!-- SECTION 1: PRIORITY COURTESY HOLDS (DESK) -->
+        <div class="collector-section-block">
+          <div class="collector-section-header">
+            <div class="title-with-badge">
+              <h3>⏱️ Priority Courtesy Holds (48h Embargo)</h3>
+              <span id="holds-active-count-chip" class="pill-badge pill-gold">0 Active Holds</span>
+            </div>
+            <p class="muted text-sm">Books held for collectors skip automatic eBay, AbeBooks, and floor listings for 48 hours.</p>
+          </div>
+          <div id="holds-desk-list" class="holds-desk-grid"></div>
+        </div>
+
+        <!-- SECTION 2: COLLECTOR DIRECTORY -->
+        <div class="collector-section-block" style="margin-top: 2rem;">
+          <div class="collector-section-header">
+            <div class="title-with-badge">
+              <h3>👥 Collector Profiles & Archetypes</h3>
+            </div>
+            <div class="search-input-wrap">
+              <input id="collector-search-input" type="search" placeholder="Search collectors by name, phone, or notes...">
+            </div>
+          </div>
+          <div id="collectors-grid" class="collectors-cards-grid"></div>
+        </div>
+
+        <!-- SECTION 3: ACTIVE WANT LIST LEDGER -->
+        <div class="collector-section-block" style="margin-top: 2rem;">
+          <div class="collector-section-header">
+            <div class="title-with-badge">
+              <h3>📖 Active Antiquarian Wants</h3>
+              <span id="wants-count-chip" class="pill-badge">0 Active</span>
+            </div>
+          </div>
+          <div id="wants-table-wrap" class="wants-table-container"></div>
+        </div>
       </section>
 
       <!-- VIEW 3: INTAKE STUDIO -->

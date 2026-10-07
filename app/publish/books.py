@@ -551,4 +551,17 @@ class BookListingOrchestrator:
             else:
                 results[adapter.channel_name] = {"status": "failed"}
 
-        return {"sku": sku, "status": "completed", "marketplace_results": results}
+        return {
+            "sku": sku,
+            "status": "completed",
+            "marketplace_results": results,
+            "details": {
+                **details,
+                "sku": sku,
+                "title": title,
+                "authors": authors,
+                "condition": condition,
+                "in_store_price_cad": val.get("in_store_price_cad", price_cad),
+                "online_price_cad": price_cad,
+            },
+        }

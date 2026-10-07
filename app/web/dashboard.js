@@ -623,6 +623,14 @@ async function refresh() {
     const loaded = await api("/reviews");
     if (epoch !== generation) return;
     items = loaded; renderQueue();
+    api("/holds").then(holds => {
+      const activeHolds = (holds || []).filter(h => h.status === "active").length;
+      const b = $("tab-holds-badge");
+      if (b) {
+        b.textContent = activeHolds ? String(activeHolds) : "";
+        b.style.display = activeHolds ? "inline-block" : "none";
+      }
+    }).catch(() => {});
     if (selected && items.some(i=>i.review_id === selected)) await select(selected);
     else { selected = null; $("detail").replaceChildren(node("h2", "A moment of attention."),node("p", "Select an action to read its contents before making a decision.")); }
   } catch(error) {
@@ -1543,6 +1551,7 @@ function switchTab(active) {
   const tabs = {
     queue: $("tab-queue"),
     bookshelf: $("tab-bookshelf"),
+    collectors: $("tab-collectors"),
     intake: $("tab-intake"),
     settings: $("tab-settings"),
     analytics: $("tab-analytics")
@@ -1550,6 +1559,7 @@ function switchTab(active) {
   const panels = {
     queue: $("view-desk"),
     bookshelf: $("bookshelf-panel"),
+    collectors: $("collectors-panel"),
     intake: $("intake-panel"),
     settings: $("settings-panel"),
     analytics: $("analytics-panel")
@@ -1569,12 +1579,14 @@ function switchTab(active) {
   }
 
   if (active === "bookshelf") loadBookshelf();
+  else if (active === "collectors") loadCollectorsView();
   else if (active === "analytics") loadAnalytics();
   else if (active === "settings") loadSettings();
 }
 
 if ($("tab-queue")) $("tab-queue").onclick = () => switchTab("queue");
 if ($("tab-bookshelf")) $("tab-bookshelf").onclick = () => switchTab("bookshelf");
+if ($("tab-collectors")) $("tab-collectors").onclick = () => switchTab("collectors");
 if ($("btn-sync-square-all")) {
   $("btn-sync-square-all").onclick = async () => {
     const btn = $("btn-sync-square-all");
@@ -1766,3 +1778,440 @@ if ($("form-integration")) {
     }
   };
 }
+
+// =============================================================================
+// COLLECTOR CRM & WANT LISTS & PRIORITY COURTESY HOLDS
+// =============================================================================
+
+let cachedCollectors = [];
+let cachedWants = [];
+let cachedHolds = [];
+
+async function loadCollectorsView() {
+  const desk = $("holds-desk-list");
+  const grid = $("collectors-grid");
+  const tblWrap = $("wants-table-wrap");
+
+  if (desk) desk.innerHTML = '<p class="muted">Loading courtesy holds...</p>';
+  if (grid) grid.innerHTML = '<p class="muted">Loading collectors...</p>';
+  if (tblWrap) tblWrap.innerHTML = '<p class="muted">Loading wants...</p>';
+
+  try {
+    const [holds, collectors, wants] = await Promise.all([
+      api("/holds"),
+      api("/collectors"),
+      api("/wants?status=all"),
+    ]);
+
+    cachedHolds = holds || [];
+    cachedCollectors = collectors || [];
+    cachedWants = wants || [];
+
+    renderHolds(cachedHolds);
+    renderCollectors(cachedCollectors);
+    renderWants(cachedWants);
+
+    const activeHolds = cachedHolds.filter(h => h.status === "active").length;
+    const badge = $("tab-holds-badge");
+    if (badge) {
+      badge.textContent = activeHolds ? String(activeHolds) : "";
+      badge.style.display = activeHolds ? "inline-block" : "none";
+    }
+    const chip = $("holds-active-count-chip");
+    if (chip) chip.textContent = `${activeHolds} Active Hold${activeHolds === 1 ? '' : 's'}`;
+
+    const wChip = $("wants-count-chip");
+    if (wChip) {
+      const actW = cachedWants.filter(w => w.status === "active").length;
+      wChip.textContent = `${actW} Active`;
+    }
+  } catch (err) {
+    message(`Error loading collector data: ${err.message}`);
+  }
+}
+
+function renderHolds(holds) {
+  const container = $("holds-desk-list");
+  if (!container) return;
+  container.replaceChildren();
+
+  const activeHolds = holds.filter(h => h.status === "active");
+  if (!activeHolds.length) {
+    const empty = node("div", undefined, "empty-state-box");
+    empty.style.gridColumn = "1 / -1";
+    empty.innerHTML = `
+      <p style="margin: 0; font-size: 14px;"><strong>No active courtesy holds.</strong></p>
+      <p style="margin: 4px 0 0; font-size: 12px;">When newly photographed or cataloged books match an active collector want, they are intercepted here under a 48-hour marketplace embargo.</p>
+    `;
+    container.append(empty);
+    return;
+  }
+
+  for (const h of activeHolds) {
+    const card = node("div", undefined, "hold-card");
+
+    // Header: Title, SKU, Price
+    const header = node("div", undefined, "hold-card-header");
+    const titleCol = node("div");
+    const title = node("div", h.book_title || "Untitled Volume", "hold-book-title");
+    const author = node("div", `by ${h.book_author || "Unknown"} · SKU: ${h.sku}`, "hold-book-author");
+    titleCol.append(title, author);
+
+    const price = node("div", h.price_cad ? `$${Number(h.price_cad).toFixed(2)} CAD` : "Price TBD", "hold-price");
+    header.append(titleCol, price);
+
+    // Collector info
+    const colBox = node("div", undefined, "hold-collector-box");
+    const colName = node("div", undefined, "hold-collector-name");
+    colName.innerHTML = `<span>👤</span> <span>${h.collector_name}</span>`;
+    const colContact = node("div", `${h.collector_phone || "No phone"} · ${h.collector_email || "No email"}`, "hold-collector-contact");
+    colBox.append(colName, colContact);
+
+    // Countdown timer
+    const timerBar = node("div", undefined, "hold-timer-bar");
+    if (h.is_expired) {
+      timerBar.innerHTML = `<span class="hold-timer-expired">🚨 EXPIRED (48h reached)</span> <span>Ready to release</span>`;
+    } else {
+      timerBar.innerHTML = `<span class="hold-timer-active">⏳ ${h.remaining_hours}h remaining</span> <span>Embargo active</span>`;
+    }
+
+    // Actions
+    const actions = node("div", undefined, "hold-actions");
+    const claimBtn = node("button", "✅ Claim / Sold", "primary");
+    claimBtn.onclick = () => claimHold(h.id, h.book_title, h.collector_name);
+
+    const releaseBtn = node("button", "🌐 Release to Floor", "secondary");
+    releaseBtn.onclick = () => releaseHold(h.id, h.book_title);
+
+    const extendBtn = node("button", "+24h", "ghost-sm");
+    extendBtn.title = "Extend hold by 24 hours";
+    extendBtn.onclick = () => extendHold(h.id);
+
+    actions.append(claimBtn, releaseBtn, extendBtn);
+
+    card.append(header, colBox, timerBar, actions);
+    container.append(card);
+  }
+}
+
+async function claimHold(holdId, title, collectorName) {
+  if (!confirm(`Confirm acquisition: Mark '${title}' as claimed/sold to ${collectorName}?\n\nThis will record the sale and delist the volume across all connected online channels.`)) return;
+  try {
+    await api(`/holds/${holdId}/claim`, { method: "POST", body: JSON.stringify({ notes: `Claimed by ${collectorName}` }) });
+    message(`Acquisition recorded: '${title}' claimed for ${collectorName}. Delisted everywhere.`);
+    loadCollectorsView();
+    if (typeof loadBookshelf === "function") loadBookshelf();
+  } catch (err) {
+    alert(`Claim error: ${err.message}`);
+  }
+}
+
+async function releaseHold(holdId, title) {
+  if (!confirm(`Release courtesy hold on '${title}'?\n\nThis will re-activate the book on the physical floor and publish listings across eBay, AbeBooks, and Square.`)) return;
+  try {
+    await api(`/holds/${holdId}/release`, { method: "POST", body: JSON.stringify({ reason: "collector_passed" }) });
+    message(`Hold released: '${title}' returned to active floor & marketplaces.`);
+    loadCollectorsView();
+    if (typeof loadBookshelf === "function") loadBookshelf();
+  } catch (err) {
+    alert(`Release error: ${err.message}`);
+  }
+}
+
+async function extendHold(holdId) {
+  try {
+    const res = await api(`/holds/${holdId}/extend`, { method: "POST", body: JSON.stringify({ hours: 24 }) });
+    message(`Hold extended by 24 hours (Expires: ${new Date(res.expires_at).toLocaleString()}).`);
+    loadCollectorsView();
+  } catch (err) {
+    alert(`Extend error: ${err.message}`);
+  }
+}
+
+function renderCollectors(collectors) {
+  const container = $("collectors-grid");
+  if (!container) return;
+  container.replaceChildren();
+
+  const q = $("collector-search-input") ? $("collector-search-input").value.trim().toLowerCase() : "";
+  const filtered = q
+    ? collectors.filter(c => c.name.toLowerCase().includes(q) || (c.email && c.email.toLowerCase().includes(q)) || (c.notes && c.notes.toLowerCase().includes(q)))
+    : collectors;
+
+  if (!filtered.length) {
+    container.innerHTML = '<div class="empty-state-box" style="grid-column: 1 / -1;">No collectors found matching search query.</div>';
+    return;
+  }
+
+  for (const c of filtered) {
+    const card = node("div", undefined, "collector-card");
+    const top = node("div", undefined, "collector-card-top");
+    const nameCol = node("div");
+    const name = node("div", c.name, "collector-name");
+    const contact = node("div", `${c.phone || "No phone"} · ${c.email || "No email"}`, "collector-contact-line");
+    nameCol.append(name, contact);
+
+    const wantsCount = node("span", `${c.active_wants_count || 0} Wants`, "pill-badge pill-green");
+    top.append(nameCol, wantsCount);
+
+    const notes = node("div", c.notes || "General antiquarian collector.", "collector-notes");
+
+    const footer = node("div", undefined, "collector-card-footer");
+    const addWantBtn = node("button", "+ Add Want", "ghost-sm");
+    addWantBtn.onclick = () => showNewWantModal(c.id);
+
+    const viewWantsBtn = node("button", "Filter Wants", "ghost-sm");
+    viewWantsBtn.onclick = () => {
+      const filteredWants = cachedWants.filter(w => w.collector_id === c.id);
+      renderWants(filteredWants);
+      message(`Showing ${filteredWants.length} want(s) for ${c.name}.`);
+    };
+
+    footer.append(viewWantsBtn, addWantBtn);
+    card.append(top, notes, footer);
+    container.append(card);
+  }
+}
+
+function renderWants(wants) {
+  const container = $("wants-table-wrap");
+  if (!container) return;
+  container.replaceChildren();
+
+  if (!wants.length) {
+    container.innerHTML = '<div class="empty-state-box">No active wants registered. Click "+ Add Want" to record a collector request.</div>';
+    return;
+  }
+
+  const table = node("table", undefined, "wants-table");
+  const thead = node("thead");
+  thead.innerHTML = `
+    <tr>
+      <th>Wanted Title</th>
+      <th>Author</th>
+      <th>Collector</th>
+      <th>Max Budget</th>
+      <th>Min Grade</th>
+      <th>Binding</th>
+      <th>Keywords / Notes</th>
+      <th>Status</th>
+      <th>Actions</th>
+    </tr>
+  `;
+  table.append(thead);
+
+  const tbody = node("tbody");
+  for (const w of wants) {
+    const tr = node("tr");
+    const budgetStr = w.max_price_cad ? `$${Number(w.max_price_cad).toFixed(2)} CAD` : "Open Budget";
+    const statusPill = w.status === "active" ? '<span class="pill-badge pill-green">Active</span>' : `<span class="pill-badge">${w.status}</span>`;
+
+    tr.innerHTML = `
+      <td><strong>${w.title}</strong></td>
+      <td>${w.author || '<span class="muted">—</span>'}</td>
+      <td>${w.collector_name || "Collector"}</td>
+      <td style="font-weight: 600; color: var(--copper);">${budgetStr}</td>
+      <td>${w.min_condition || '<span class="muted">Any</span>'}</td>
+      <td>${w.binding || '<span class="muted">Any</span>'}</td>
+      <td style="max-width: 200px; font-size: 11.5px; color: var(--muted);">${w.keywords || "—"}</td>
+      <td>${statusPill}</td>
+      <td></td>
+    `;
+
+    const actionsTd = tr.querySelector("td:last-child");
+    if (w.status === "active") {
+      const delBtn = node("button", "✕", "ghost-sm");
+      delBtn.title = "Delete want";
+      delBtn.onclick = async () => {
+        if (!confirm(`Delete want '${w.title}'?`)) return;
+        try {
+          await api(`/wants/${w.id}`, { method: "DELETE" });
+          message(`Want '${w.title}' deleted.`);
+          loadCollectorsView();
+        } catch (err) {
+          alert(`Delete error: ${err.message}`);
+        }
+      };
+      actionsTd.append(delBtn);
+    }
+
+    tbody.append(tr);
+  }
+  table.append(tbody);
+  container.append(table);
+}
+
+function showNewCollectorModal() {
+  const overlay = node("div", undefined, "sanctuary-modal-overlay");
+  const modal = node("div", undefined, "audit-modal");
+
+  const header = node("div", undefined, "sanctuary-header");
+  header.append(node("h3", "📇 Register New Collector"));
+  const closeBtn = node("button", "✕", "ghost-sm");
+  closeBtn.onclick = () => overlay.remove();
+  header.append(closeBtn);
+  modal.append(header);
+
+  const form = node("form", undefined, "standard-form");
+  form.innerHTML = `
+    <div>
+      <label for="new-col-name">Collector Full Name *</label>
+      <input id="new-col-name" type="text" required placeholder="e.g. Dr. Arthur Pendelton" style="width: 100%;">
+    </div>
+    <div style="display: flex; gap: 12px; margin-top: 12px;">
+      <div style="flex: 1;">
+        <label for="new-col-email">Email Address</label>
+        <input id="new-col-email" type="email" placeholder="collector@domain.com" style="width: 100%;">
+      </div>
+      <div style="flex: 1;">
+        <label for="new-col-phone">Phone Number</label>
+        <input id="new-col-phone" type="tel" placeholder="(613) 555-0144" style="width: 100%;">
+      </div>
+    </div>
+    <div style="margin-top: 12px;">
+      <label for="new-col-notes">Collecting Interests & Profile Notes</label>
+      <textarea id="new-col-notes" rows="3" placeholder="e.g. Early Canadian literature, Hugh MacLennan first editions, fine bindings..." style="width: 100%;"></textarea>
+    </div>
+    <div style="margin-top: 18px; display: flex; justify-content: flex-end; gap: 8px;">
+      <button type="button" class="ghost-sm" id="modal-col-cancel">Cancel</button>
+      <button type="submit" class="primary">Save Collector Profile →</button>
+    </div>
+  `;
+
+  form.querySelector("#modal-col-cancel").onclick = () => overlay.remove();
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    const name = form.querySelector("#new-col-name").value.trim();
+    const email = form.querySelector("#new-col-email").value.trim();
+    const phone = form.querySelector("#new-col-phone").value.trim();
+    const notes = form.querySelector("#new-col-notes").value.trim();
+
+    try {
+      await api("/collectors", {
+        method: "POST",
+        body: JSON.stringify({ name, email, phone, notes }),
+      });
+      message(`Collector '${name}' registered successfully.`);
+      overlay.remove();
+      loadCollectorsView();
+    } catch (err) {
+      alert(`Error creating collector: ${err.message}`);
+    }
+  };
+
+  modal.append(form);
+  overlay.append(modal);
+  document.body.append(overlay);
+}
+
+function showNewWantModal(defaultCollectorId = "") {
+  const overlay = node("div", undefined, "sanctuary-modal-overlay");
+  const modal = node("div", undefined, "audit-modal");
+
+  const header = node("div", undefined, "sanctuary-header");
+  header.append(node("h3", "📖 Register Antiquarian Want"));
+  const closeBtn = node("button", "✕", "ghost-sm");
+  closeBtn.onclick = () => overlay.remove();
+  header.append(closeBtn);
+  modal.append(header);
+
+  const colOptions = cachedCollectors
+    .map(c => `<option value="${c.id}" ${c.id === defaultCollectorId ? "selected" : ""}>${c.name} (${c.phone || c.email || 'No contact'})</option>`)
+    .join("");
+
+  const form = node("form", undefined, "standard-form");
+  form.innerHTML = `
+    <div>
+      <label for="want-col-select">Select Collector *</label>
+      <select id="want-col-select" required style="width: 100%;">
+        <option value="" disabled ${!defaultCollectorId ? "selected" : ""}>Select collector...</option>
+        ${colOptions}
+      </select>
+    </div>
+    <div style="display: flex; gap: 12px; margin-top: 12px;">
+      <div style="flex: 2;">
+        <label for="want-title">Book Title *</label>
+        <input id="want-title" type="text" required placeholder="e.g. Two Solitudes" style="width: 100%;">
+      </div>
+      <div style="flex: 1;">
+        <label for="want-author">Author</label>
+        <input id="want-author" type="text" placeholder="e.g. Hugh MacLennan" style="width: 100%;">
+      </div>
+    </div>
+    <div style="display: flex; gap: 12px; margin-top: 12px;">
+      <div style="flex: 1;">
+        <label for="want-max-price">Max Budget (CAD $)</label>
+        <input id="want-max-price" type="number" step="0.50" placeholder="e.g. 175.00" style="width: 100%;">
+      </div>
+      <div style="flex: 1;">
+        <label for="want-condition">Minimum Condition</label>
+        <select id="want-condition" style="width: 100%;">
+          <option value="">Any Condition</option>
+          <option value="Fair">Fair or better</option>
+          <option value="Good" selected>Good or better</option>
+          <option value="Very Good">Very Good or better</option>
+          <option value="Near Fine">Near Fine or better</option>
+          <option value="Fine">Fine or As New</option>
+        </select>
+      </div>
+      <div style="flex: 1;">
+        <label for="want-binding">Binding</label>
+        <select id="want-binding" style="width: 100%;">
+          <option value="">Any Binding</option>
+          <option value="Hardcover" selected>Hardcover</option>
+          <option value="Paperback">Paperback</option>
+          <option value="Leather">Leather / Deluxe</option>
+        </select>
+      </div>
+    </div>
+    <div style="margin-top: 12px;">
+      <label for="want-keywords">Edition Details / Provenance Requirements</label>
+      <textarea id="want-keywords" rows="2" placeholder="e.g. Collins 1945 first edition in original jacket preferred..." style="width: 100%;"></textarea>
+    </div>
+    <div style="margin-top: 18px; display: flex; justify-content: flex-end; gap: 8px;">
+      <button type="button" class="ghost-sm" id="modal-want-cancel">Cancel</button>
+      <button type="submit" class="primary">Record Active Want →</button>
+    </div>
+  `;
+
+  form.querySelector("#modal-want-cancel").onclick = () => overlay.remove();
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    const collectorId = form.querySelector("#want-col-select").value;
+    const title = form.querySelector("#want-title").value.trim();
+    const author = form.querySelector("#want-author").value.trim();
+    const maxPrice = form.querySelector("#want-max-price").value;
+    const minCondition = form.querySelector("#want-condition").value;
+    const binding = form.querySelector("#want-binding").value;
+    const keywords = form.querySelector("#want-keywords").value.trim();
+
+    try {
+      await api(`/collectors/${collectorId}/wants`, {
+        method: "POST",
+        body: JSON.stringify({
+          title,
+          author,
+          max_price_cad: maxPrice ? Number(maxPrice) : null,
+          min_condition: minCondition || null,
+          binding: binding || null,
+          keywords,
+        }),
+      });
+      message(`Want for '${title}' added to collector want list.`);
+      overlay.remove();
+      loadCollectorsView();
+    } catch (err) {
+      alert(`Error creating want: ${err.message}`);
+    }
+  };
+
+  modal.append(form);
+  overlay.append(modal);
+  document.body.append(overlay);
+}
+
+if ($("btn-new-collector")) $("btn-new-collector").onclick = () => showNewCollectorModal();
+if ($("btn-new-want")) $("btn-new-want").onclick = () => showNewWantModal();
+if ($("btn-refresh-collectors")) $("btn-refresh-collectors").onclick = () => loadCollectorsView();
+if ($("collector-search-input")) $("collector-search-input").oninput = () => renderCollectors(cachedCollectors);
+

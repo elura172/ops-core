@@ -3,6 +3,7 @@ from __future__ import annotations
 import time
 from collections.abc import Callable
 from dataclasses import asdict
+from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
 
 from app.customer_support.email import CustomerResponse, DryRunMailer, Mailer
@@ -51,6 +52,7 @@ class ApprovedActionExecutor:
         audit: AuditSink | None = None,
         *,
         inventory_store: Any = None,
+        want_list_store: Any = None,
         publish_gate: PublishGate | None = None,
         mailer: Mailer | None = None,
         shippo_api_key: str = "",
@@ -59,6 +61,7 @@ class ApprovedActionExecutor:
         self.audit = audit
         self.shippo_api_key = shippo_api_key
         self.inventory_store = inventory_store
+        self.want_list_store = want_list_store
         self.publish_gate = publish_gate or PublishGate(DryRunPublisher(), enabled=False)
         self.mailer = mailer or DryRunMailer()
         # Bound lazily: a client only needs the methods for operations it is
@@ -74,6 +77,9 @@ class ApprovedActionExecutor:
             "fulfill_order": self._fulfill_order,
             "resolve_order_contention": self._resolve_order_contention,
             "update_location": self._update_location,
+            "collector_hold_notification": self._collector_hold_notification,
+            "claim_collector_hold": self._claim_collector_hold,
+            "release_collector_hold": self._release_collector_hold,
         }
 
     @property
@@ -101,7 +107,128 @@ class ApprovedActionExecutor:
         return asdict(self.publish_gate.execute(request, approved=True))
 
     def _intake_book(self, payload: dict[str, Any]) -> dict[str, Any]:
+        import uuid
+        from datetime import UTC, datetime, timedelta
+        from decimal import Decimal
+        from app.db.inventory import InventoryItem
         from app.publish.books import SquareCatalogAdapter
+
+        val = payload.get("valuation", {})
+        ext = payload.get("extraction", {})
+        dis = payload.get("disambiguation", {})
+        cand = dis.get("best_candidate", {})
+
+        title = cand.get("title") or ext.get("title", "Unknown Title")
+        raw_authors = cand.get("authors") or ext.get("authors") or ["Unknown"]
+        authors = [raw_authors] if isinstance(raw_authors, str) else list(raw_authors)
+        primary_author = authors[0] if authors else "Unknown"
+
+        condition = val.get("condition_grade", "Good")
+        fmt = ext.get("format", "Hardcover")
+        in_store_price = Decimal(str(val.get("in_store_price_cad", "0.00")))
+        online_price = Decimal(str(val.get("online_price_cad", "0.00")))
+        intake_tenant = payload.get("tenant_id") or getattr(self, "current_tenant_id", 1)
+        effective_price = online_price if online_price > 0 else in_store_price
+
+        # Check for Collector Want match (Priority Courtesy Hold)
+        matched_want = None
+        matched_collector = None
+        if self.want_list_store:
+            from app.domain.want_list import WantListMatcher
+            matcher = WantListMatcher()
+            active_wants = self.want_list_store.list_wants(tenant_id=intake_tenant, status="active")
+            candidate_dict = {
+                "title": title,
+                "authors": authors,
+                "format": fmt,
+                "condition": condition,
+                "price_cad": effective_price,
+            }
+            for want in active_wants:
+                collector = self.want_list_store.get_collector(want.collector_id, tenant_id=intake_tenant)
+                if not collector:
+                    continue
+                match_res = matcher.evaluate(want, collector, candidate_dict)
+                if match_res.matched:
+                    matched_want = want
+                    matched_collector = collector
+                    break
+
+        if matched_want and matched_collector:
+            sku = f"BK-{uuid.uuid4().hex[:8].upper()}"
+            section = payload.get("section") or "Holds / Vault"
+            shelf = payload.get("shelf") or "Courtesy Holds"
+            now = datetime.now(UTC)
+            expires_at = now + timedelta(hours=48)
+
+            if self.inventory_store:
+                item = InventoryItem(
+                    sku=sku,
+                    title=title,
+                    authors=authors,
+                    format=fmt,
+                    condition=condition,
+                    in_store_price_cad=in_store_price,
+                    online_price_cad=online_price,
+                    status="on_hold",
+                    created_at=now,
+                    updated_at=now,
+                    section=section,
+                    shelf=shelf,
+                )
+                self.inventory_store.add(item, tenant_id=intake_tenant)
+
+            from app.db.want_list import CollectorHold
+            hold = CollectorHold(
+                id=f"hld-{uuid.uuid4().hex[:10]}",
+                tenant_id=intake_tenant,
+                sku=sku,
+                want_item_id=matched_want.id,
+                collector_id=matched_collector.id,
+                held_at=now,
+                expires_at=expires_at,
+                status="active",
+                notes=f"Auto-held on intake for want '{matched_want.title}'. 48-hour priority courtesy hold.",
+                book_title=title,
+                book_author=primary_author,
+                collector_name=matched_collector.name,
+                price_cad=effective_price,
+            )
+            self.want_list_store.create_hold(hold)
+
+            channel_names = ["abebooks", "ebay", "amazon_spapi", "biblio", "alibris", "shopify", "square"]
+            marketplace_results = {
+                ch: {
+                    "status": "withheld",
+                    "reason": f"Priority courtesy hold for {matched_collector.name} (expires in 48h)",
+                }
+                for ch in channel_names
+            }
+
+            return {
+                "sku": sku,
+                "status": "on_hold",
+                "hold_id": hold.id,
+                "collector_id": matched_collector.id,
+                "collector_name": matched_collector.name,
+                "collector_phone": matched_collector.phone,
+                "collector_email": matched_collector.email,
+                "expires_at": expires_at.isoformat(),
+                "marketplace_results": marketplace_results,
+                "details": {
+                    "sku": sku,
+                    "title": title,
+                    "authors": authors,
+                    "format": fmt,
+                    "condition": condition,
+                    "in_store_price_cad": in_store_price,
+                    "online_price_cad": online_price,
+                    "section": section,
+                    "shelf": shelf,
+                },
+            }
+
+        # Normal multi-channel marketplace listing
         credentials = getattr(self, "current_credentials", {})
         adapters = (
             AbeBooksListingAdapter(dry_run=True, api_key=credentials.get("abebooks", "mock_key")),
@@ -116,9 +243,6 @@ class ApprovedActionExecutor:
         result = orchestrator.list_inventory(payload)
         
         if result.get("status") not in ("failed", "skipped") and self.inventory_store and "sku" in result.get("details", {}):
-            from app.db.inventory import InventoryItem
-            from datetime import UTC, datetime
-            from decimal import Decimal
             details = result["details"]
             section = payload.get("section") or details.get("section") or "General"
             shelf = payload.get("shelf") or details.get("shelf") or ""
@@ -136,10 +260,149 @@ class ApprovedActionExecutor:
                 section=section,
                 shelf=shelf,
             )
-            intake_tenant = payload.get("tenant_id") or getattr(self, "current_tenant_id", 1)
             self.inventory_store.add(item, tenant_id=intake_tenant)
             
         return result
+
+    def _collector_hold_notification(self, payload: dict[str, Any]) -> dict[str, Any]:
+        collector_email = payload.get("collector_email")
+        collector_name = payload.get("collector_name", "Collector")
+        title = payload.get("title", "Requested Volume")
+        price_cad = payload.get("price_cad", "0.00")
+        expires_at = payload.get("expires_at", "")
+        message = payload.get("message", "")
+
+        if self.mailer and collector_email:
+            try:
+                self.mailer.send(
+                    CustomerResponse(
+                        recipient=collector_email,
+                        subject=f"Priority Courtesy Hold: '{title}' at Elura Antiquarian Books",
+                        body_text=(
+                            f"Dear {collector_name},\n\n"
+                            f"We have acquired a volume matching your active want list:\n\n"
+                            f"'{title}'\n"
+                            f"Price: ${price_cad} CAD\n\n"
+                            f"As a preferred collector, we have placed a 48-hour priority courtesy hold on this book for you. "
+                            f"Your hold is active until {expires_at}.\n\n"
+                            f"Please reply or call the shop to claim this volume before it is released to the general public.\n\n"
+                            f"Warm regards,\n"
+                            f"Elura Antiquarian Vault"
+                        ),
+                    )
+                )
+            except Exception as exc:
+                logger.warning("collector_hold_notification.mailer_failed", error=str(exc))
+
+        return {
+            "status": "notified",
+            "collector_name": collector_name,
+            "collector_email": collector_email,
+            "message": message,
+        }
+
+    def _claim_collector_hold(self, payload: dict[str, Any]) -> dict[str, Any]:
+        hold_id = payload["hold_id"]
+        tenant_id = payload.get("tenant_id", 1)
+        notes = payload.get("notes", "Claimed by collector")
+        
+        if not self.want_list_store:
+            raise RuntimeError("WantListStore not configured")
+
+        hold = self.want_list_store.get_hold(hold_id, tenant_id=tenant_id)
+        if not hold:
+            raise KeyError(f"Hold {hold_id} not found")
+
+        now = datetime.now(UTC)
+        updated = self.want_list_store.update_hold(
+            hold_id, tenant_id=tenant_id, status="claimed", claimed_at=now, notes=notes
+        )
+        # Mark want item as fulfilled
+        self.want_list_store.update_want(hold.want_item_id, tenant_id=tenant_id, status="fulfilled")
+
+        # Mark inventory SKU as sold
+        if self.inventory_store:
+            self.inventory_store.delist(hold.sku, tenant_id=tenant_id)
+
+        # Multi-channel delist
+        sync_result = self._sync_inventory({"sku": hold.sku, "source_channel": "collector_claim", "tenant_id": tenant_id})
+
+        return {
+            "status": "claimed",
+            "hold_id": hold_id,
+            "sku": hold.sku,
+            "collector_id": hold.collector_id,
+            "collector_name": hold.collector_name,
+            "sync_result": sync_result,
+        }
+
+    def _release_collector_hold(self, payload: dict[str, Any]) -> dict[str, Any]:
+        hold_id = payload["hold_id"]
+        tenant_id = payload.get("tenant_id", 1)
+        reason = payload.get("reason", "manual_release")
+
+        if not self.want_list_store:
+            raise RuntimeError("WantListStore not configured")
+
+        hold = self.want_list_store.get_hold(hold_id, tenant_id=tenant_id)
+        if not hold:
+            raise KeyError(f"Hold {hold_id} not found")
+
+        now = datetime.now(UTC)
+        self.want_list_store.update_hold(
+            hold_id,
+            tenant_id=tenant_id,
+            status="released",
+            released_at=now,
+            notes=f"Released to floor: {reason}",
+        )
+
+        # Re-activate inventory item
+        book_item = None
+        if self.inventory_store:
+            book_item = self.inventory_store.get(hold.sku, tenant_id=tenant_id)
+            if book_item:
+                book_item.status = "active"
+                self.inventory_store.add(book_item, tenant_id=tenant_id)
+
+        # Trigger marketplace publishing now that the hold is released
+        credentials = getattr(self, "current_credentials", {})
+        adapters = (
+            AbeBooksListingAdapter(dry_run=True, api_key=credentials.get("abebooks", "mock_key")),
+            AmazonSPAPIAdapter(dry_run=True),
+            BiblioListingAdapter(dry_run=True),
+            AlibrisListingAdapter(dry_run=True),
+            EbayListingAdapter(dry_run=True, api_token=credentials.get("ebay", "mock_token")),
+            ShopifyListingAdapter(dry_run=True),
+            SquareCatalogAdapter(dry_run=True, access_token=credentials.get("square", "")),
+        )
+        orchestrator = BookListingOrchestrator(adapters)
+        publish_payload = {
+            "valuation": {
+                "channel_strategy": "multi_channel_antiquarian",
+                "online_price_cad": str(hold.price_cad or (book_item.online_price_cad if book_item else "0.00")),
+                "condition_grade": book_item.condition if book_item else "Good",
+            },
+            "extraction": {
+                "title": hold.book_title or (book_item.title if book_item else "Unknown"),
+                "authors": [hold.book_author] if hold.book_author else (book_item.authors if book_item else []),
+                "format": book_item.format if book_item else "Hardcover",
+            },
+            "disambiguation": {
+                "best_candidate": {
+                    "title": hold.book_title or (book_item.title if book_item else "Unknown"),
+                    "authors": [hold.book_author] if hold.book_author else (book_item.authors if book_item else []),
+                }
+            },
+        }
+        listing_result = orchestrator.list_inventory(publish_payload)
+
+        return {
+            "status": "released",
+            "hold_id": hold_id,
+            "sku": hold.sku,
+            "marketplace_results": listing_result.get("marketplace_results", {}),
+        }
 
     def _sync_inventory(self, payload: dict[str, Any]) -> dict[str, Any]:
         from app.publish.inventory_sync import MultiChannelInventorySync

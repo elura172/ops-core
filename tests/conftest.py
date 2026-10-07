@@ -81,6 +81,9 @@ def settings(tokens: TokenRegistry) -> Settings:
         # Both, or create_app() writes a real reviews.db into whatever directory
         # pytest was run from and keeps it open across the whole session.
         review_db=":memory:",
+        inventory_db=":memory:",
+        want_list_db=":memory:",
+        user_db=":memory:",
         dry_run=True,
     )
 

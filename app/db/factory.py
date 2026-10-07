@@ -68,3 +68,16 @@ def open_user_store(user_db: str) -> Any:
     from app.db.users import SQLiteUserStore
 
     return SQLiteUserStore(user_db)
+
+
+def open_want_list_store(want_db: str) -> Any:
+    if is_postgres_dsn(want_db):
+        from app.db.migrate import migrate
+        from app.db.want_list import PostgresWantListStore
+
+        migrate(want_db)
+        return PostgresWantListStore(want_db)
+
+    from app.db.want_list import SQLiteWantListStore
+
+    return SQLiteWantListStore(want_db)
