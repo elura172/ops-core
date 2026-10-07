@@ -5,7 +5,7 @@ from datetime import timedelta
 from importlib.resources import files
 from typing import Any
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, UploadFile, File
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, Response
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
@@ -109,6 +109,7 @@ def create_app(
                     settings.tts_access_token, settings.tts_shop_id, dry_run=settings.dry_run
                 ),
                 publish_gate=PublishGate(DryRunPublisher(), enabled=settings.publish_enabled),
+                shippo_api_key=settings.shippo_api_key,
             ),
         )
     if order_repository is None:
@@ -180,6 +181,19 @@ def create_app(
     ) -> list[dict[str, Any]]:
         return operator.list_reviews(pending_only)
 
+    class Proposal(BaseModel):
+        operation: str
+        payload: dict[str, Any]
+
+    @app.post("/reviews")
+    def propose_review(
+        proposal: Proposal, _: Principal = Depends(require_decide)
+    ) -> dict[str, Any]:
+        try:
+            return operator.propose(proposal.operation, proposal.payload)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+
     @app.post("/reviews/{review_id}/decision")
     def decision(
         review_id: str, decision: Decision, principal: Principal = Depends(require_decide)
@@ -244,8 +258,95 @@ def create_app(
         body = await request.body()
         # Persistence is synchronous; keep it off the event loop.
         result = await run_in_threadpool(
-            handle_order_webhook, body, x_signature, settings.webhook_secret, order_repository
+            handle_order_webhook,
+            body,
+            x_signature,
+            settings.webhook_secret,
+            order_repository,
+            operator,
         )
         return JSONResponse(result.body, status_code=result.status)
 
+    from app.api.pos_webhooks import handle_square_webhook
+
+    @app.post("/webhooks/square")
+    async def square_webhook(
+        request: Request, x_square_hmac_sha256: str = Header(default="")
+    ) -> JSONResponse:
+        body = await request.body()
+        # Square includes the URL in the HMAC. Fast API request.url provides it.
+        url = str(request.url)
+        if not settings.dry_run:
+            url = url.replace("http://", "https://")
+        
+        result = await run_in_threadpool(
+            handle_square_webhook,
+            url,
+            body,
+            x_square_hmac_sha256,
+            settings.square_webhook_secret,
+            operator
+        )
+        return JSONResponse(result, status_code=result.get("status", 200))
+
+
+    @app.post("/intake/camera")
+    async def process_camera_upload(
+        file: UploadFile = File(...), _: Principal = Depends(require_decide)
+    ) -> dict[str, Any]:
+        from app.ai.book_vision import GeminiBookVisionProvider, resolve_gemini_api_key
+        try:
+            api_key = resolve_gemini_api_key(settings.gemini_api_key if hasattr(settings, "gemini_api_key") else None)
+        except ValueError as exc:
+            raise HTTPException(500, "Vision AI not configured") from exc
+
+        provider = GeminiBookVisionProvider(api_key=api_key)
+        image_bytes = await file.read()
+        
+        try:
+            extraction = await run_in_threadpool(provider.extract_stack, image_bytes, file.content_type or "image/jpeg")
+        except Exception as exc:
+            raise HTTPException(502, f"Vision extraction failed: {exc}") from exc
+
+        proposals = []
+        for idx, book in enumerate(extraction.books):
+            payload = {
+                "extraction": {
+                    "title": book.title,
+                    "authors": book.authors,
+                    "format": book.format,
+                    "raw_spine_text": book.raw_spine_text,
+                    "visible_condition_cues": book.visible_condition_cues,
+                },
+                "disambiguation": {
+                    "best_candidate": {
+                        "title": book.title,
+                        "match_score": 0.85 if book.confidence == "high" else 0.5,
+                        "primary_isbn": "UNKNOWN",
+                    },
+                    "triage_reason": f"Auto-extracted from stack image (Position {book.stack_order}).",
+                },
+                "valuation": {
+                    "condition_grade": "Good" if "clean_as_new" in book.visible_condition_cues else "Acceptable",
+                    "channel_strategy": "multi_channel_antiquarian",
+                    "in_store_price_cad": "15.00",
+                    "online_price_cad": "20.00",
+                    "pricing_rationale": "Placeholder pricing based on visual spine extraction.",
+                }
+            }
+            try:
+                result = operator.propose("intake_book", payload)
+                proposals.append(result)
+            except Exception as exc:
+                logger.error("Failed to propose book", error=str(exc))
+
+        return {
+            "processed": len(extraction.books),
+            "orientation": extraction.orientation,
+            "proposals": proposals
+        }
+
     return app
+
+
+app = create_app()

@@ -23,6 +23,42 @@
         <section class="panel queue"><div class="queue-heading"><h2>Review queue</h2><label for="filter">Show</label><select id="filter"><option value="ALL">All actions</option><option>PENDING</option><option>APPROVED</option><option>EXECUTING</option><option>EXECUTED</option><option>FAILED</option><option>REJECTED</option></select></div><div id="items"></div></section>
         <section class="panel detail" aria-label="Action preview"><div id="detail"><p class="eyebrow">ACTION PREVIEW</p><h2>A moment of attention.</h2><p>Select an action to read its contents before making a decision.</p></div></section>
       </div>
+      
+        <section class="panel camera-intake" style="margin-top: 2rem;">
+        <div class="queue-heading"><h2>Stack Intake Camera</h2></div>
+        <form id="camera-upload" style="display: flex; gap: 1rem; align-items: center; margin-top: 1rem; flex-wrap: wrap;">
+          <label class="primary" style="padding: 0.5rem 1rem; cursor: pointer; border-radius: 6px; text-align: center;">
+            <input type="file" id="camera-file" accept="image/*" capture="environment" hidden>
+            📷 Snap Photo of Stack
+          </label>
+          <span id="camera-status" class="muted">Waiting for photo...</span>
+        </form>
+        <p class="muted" style="margin-top: 0.5rem;">Take a photo of a stack or shelf of books. The vision AI will extract each spine and propose them for intake review.</p>
+      </section>
+
+      <section class="panel manual-sync" style="margin-top: 2rem;">
+        <div class="queue-heading"><h2>Cross-Channel Inventory Sync</h2></div>
+        <form id="propose-sync" style="display: flex; gap: 1rem; align-items: flex-end; margin-top: 1rem;">
+          <div style="display: flex; flex-direction: column;">
+            <label for="sync-sku">Sold SKU</label>
+            <input id="sync-sku" type="text" required placeholder="BK-1234ABCD" autocomplete="off" spellcheck="false" style="padding: 0.5rem;">
+          </div>
+          <div style="display: flex; flex-direction: column;">
+            <label for="sync-channel">Source Channel</label>
+            <select id="sync-channel" required style="padding: 0.5rem;">
+              <option value="" disabled selected>Select channel...</option>
+              <option value="amazon_spapi">Amazon SP-API</option>
+              <option value="abebooks">AbeBooks</option>
+              <option value="biblio">Biblio</option>
+              <option value="alibris">Alibris</option>
+              <option value="ebay">eBay</option>
+              <option value="in_store">In-Store / POS</option>
+            </select>
+          </div>
+          <button type="submit" class="primary" style="padding: 0.5rem 1rem;">Propose Sync Action</button>
+        </form>
+        <p class="muted" style="margin-top: 0.5rem;">Submit a manual sync request. An operator must review and approve it from the queue before it delists the item elsewhere.</p>
+      </section>
     </section>
     <footer>◈ &nbsp; Prepared by automation. Directed by you.</footer>
   </main>

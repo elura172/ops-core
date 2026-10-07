@@ -1,7 +1,7 @@
 "use strict";
 const $ = id => document.getElementById(id);
 let token = "", session = null, items = [], selected = null, generation = 0, selection = 0, busy = false;
-const labels = {create_product_draft:"Create product draft", update_inventory:"Update stock", update_prices:"Update prices", publish:"Publish content", send_customer_response:"Send customer response"};
+const labels = {intake_book:"Intake Book", create_product_draft:"Create product draft", update_inventory:"Update stock", update_prices:"Update prices", publish:"Publish content", send_customer_response:"Send customer response", sync_inventory:"Cross-Channel Sync", fulfill_order:"Fulfill Order", resolve_order_contention:"Resolve Contention"};
 const human = text => String(text).replaceAll("_", " ");
 function node(tag, text, className) {
   const element = document.createElement(tag);
@@ -54,11 +54,79 @@ function fields(parent, data) {
 function renderDetail(item) {
   const detail = $("detail"); detail.replaceChildren();
   detail.append(node("p", "ACTION PREVIEW", "eyebrow"), node("h2", labels[item.operation] || human(item.operation)), node("span", human(item.status), `badge ${item.status.toLowerCase()}`));
-  detail.append(node("h3", "Proposed content")); fields(detail, item.payload);
-  const raw = node("details"); raw.append(node("summary", "View complete action data"), node("pre", JSON.stringify(item.payload, null, 2))); detail.append(raw);
+  
+  if (item.operation === "intake_book" && item.payload.valuation) {
+    const val = item.payload.valuation;
+    const ext = item.payload.extraction;
+    const dis = item.payload.disambiguation;
+    
+    detail.append(node("h3", "Book Intake Details"));
+    const summaryData = {
+      "Title": dis.best_candidate ? dis.best_candidate.title : ext.title,
+      "Author(s)": ext.authors && ext.authors.length ? ext.authors.join(", ") : "Unknown",
+      "Format": human(ext.format),
+      "Condition": val.condition_grade,
+      "Strategy": human(val.channel_strategy),
+      "In-Store Price": `$${val.in_store_price_cad}`,
+      "Online Price": `$${val.online_price_cad}`,
+      "Match Score": dis.best_candidate ? `${Math.round(dis.best_candidate.match_score * 100)}%` : "N/A"
+    };
+    fields(detail, summaryData);
+    detail.append(node("p", val.pricing_rationale, "muted"));
+    if (dis.triage_reason) detail.append(node("p", `Triage: ${dis.triage_reason}`, "muted"));
+    
+    const raw = node("details"); raw.append(node("summary", "View complete action data"), node("pre", JSON.stringify(item.payload, null, 2))); detail.append(raw);
+  } else if (item.operation === "sync_inventory") {
+    detail.append(node("h3", "Inventory Sync Details"));
+    fields(detail, {
+      "SKU Sold": item.payload.sku,
+      "Sold On": human(item.payload.source_channel)
+    });
+    detail.append(node("p", "Approving this action will explicitly delist this SKU from all other configured marketplace adapters.", "muted"));
+  } else if (item.operation === "fulfill_order") {
+    detail.append(node("h3", "Fulfillment Details"));
+    fields(detail, {
+      "Order ID": item.payload.order_id,
+      "Sales Channel": human(item.payload.source_channel),
+      "Items": item.payload.line_items ? item.payload.line_items.map(i => `${i.sku} (Qty: ${i.quantity})`).join(", ") : "Unknown",
+      "Customer": item.payload.shipping_address ? item.payload.shipping_address.name : "Unknown",
+      "Destination": item.payload.shipping_address ? `${item.payload.shipping_address.city}, ${item.payload.shipping_address.country}` : "Unknown",
+      "Requested Provider": item.payload.preferred_provider
+    });
+    detail.append(node("p", "Executing this action will generate a shipping label and notify the source channel of the tracking number.", "muted"));
+    const raw = node("details"); raw.append(node("summary", "View complete action data"), node("pre", JSON.stringify(item.payload, null, 2))); detail.append(raw);
+  } else if (item.operation === "resolve_order_contention") {
+    detail.append(node("h3", "Cross-Marketplace Order Contention"));
+    fields(detail, {
+      "Contended SKU": item.payload.sku,
+      "Winner Order": `${item.payload.winner_order_id} (${human(item.payload.winner_channel)})`,
+      "Loser Order": `${item.payload.loser_order_id} (${human(item.payload.loser_channel)})`,
+      "Action Required": human(item.payload.action),
+      "Substitute SKU": item.payload.substitute_sku || "None Available"
+    });
+    detail.append(node("p", `Reason: ${item.payload.reason || item.payload.contention_reason}`, "muted"));
+    const raw = node("details"); raw.append(node("summary", "View complete action data"), node("pre", JSON.stringify(item.payload, null, 2))); detail.append(raw);
+  } else {
+    detail.append(node("h3", "Proposed content")); fields(detail, item.payload);
+    const raw = node("details"); raw.append(node("summary", "View complete action data"), node("pre", JSON.stringify(item.payload, null, 2))); detail.append(raw);
+  }
+
   detail.append(node("h3", "Action history"));
   fields(detail, {review_id:item.review_id, created_at:item.created_at, reviewer:item.reviewer, reason:item.reason, decided_at:item.decided_at, executed_by:item.executed_by, executed_at:item.executed_at});
-  if (item.result !== null) { detail.append(node("h3", "Stored result"), node("pre", JSON.stringify(item.result, null, 2))); }
+  if (item.result !== null) {
+    detail.append(node("h3", "Stored result"));
+    if (item.result.packing_slip_base64) {
+      const dl = node("a");
+      dl.href = "data:application/pdf;base64," + item.result.packing_slip_base64;
+      dl.download = `packing_slip_${item.payload.order_id || 'order'}.pdf`;
+      dl.append(node("button", "Download Packing Slip (PDF)", "primary"));
+      detail.append(dl);
+      const { packing_slip_base64, ...rest } = item.result;
+      detail.append(node("pre", JSON.stringify(rest, null, 2)));
+    } else {
+      detail.append(node("pre", JSON.stringify(item.result, null, 2)));
+    }
+  }
   if (item.failure) detail.append(node("p", `Needs reconciliation: ${item.failure}`));
   if (item.execution_blocked) detail.append(node("p", `Execution unavailable: ${item.execution_blocked}`));
   const actions = node("div", undefined, "actions");
@@ -139,4 +207,67 @@ $("connect").onsubmit = async event => {
 $("logout").onclick = ()=>{disconnect(); message("Disconnected. Your token and displayed action data have been cleared.");};
 $("refresh").onclick = ()=>{message(""); refresh();};
 $("filter").onchange = renderQueue;
+$("propose-sync").onsubmit = async event => {
+  event.preventDefault();
+  const sku = $("sync-sku").value.trim();
+  const channel = $("sync-channel").value;
+  if (!sku || !channel) return;
+  const button = $("propose-sync").querySelector("button");
+  button.disabled = true;
+  try {
+    await api("/reviews", {
+      method: "POST",
+      body: JSON.stringify({
+        operation: "sync_inventory",
+        payload: { sku: sku, source_channel: channel }
+      })
+    });
+    $("sync-sku").value = "";
+    $("sync-channel").value = "";
+    message("Sync action proposed successfully.");
+    refresh();
+  } catch(error) {
+    message(error.message);
+  } finally {
+    button.disabled = false;
+  }
+};
 window.addEventListener("pagehide", disconnect);
+
+
+$("camera-file").onchange = async event => {
+  const file = event.target.files[0];
+  if (!file) return;
+  
+  $("camera-status").textContent = `Uploading ${file.name}...`;
+  const button = $("camera-upload").querySelector("label");
+  button.style.opacity = "0.5";
+  button.style.pointerEvents = "none";
+  
+  const formData = new FormData();
+  formData.append("file", file);
+  
+  try {
+    const epoch = generation;
+    const response = await fetch("/intake/camera", {
+      method: "POST",
+      headers: { "Authorization": `Bearer ${token}` },
+      body: formData
+    });
+    
+    if (epoch !== generation) return;
+    const body = await response.json();
+    if (!response.ok) throw new Error(body.detail || "Upload failed");
+    
+    $("camera-status").textContent = `Extracted ${body.processed} books (${body.orientation}).`;
+    message(`Vision AI extracted ${body.processed} books from the stack and queued them for review.`);
+    refresh();
+  } catch (error) {
+    $("camera-status").textContent = "Upload failed.";
+    message(error.message);
+  } finally {
+    $("camera-file").value = "";
+    button.style.opacity = "1";
+    button.style.pointerEvents = "auto";
+  }
+};

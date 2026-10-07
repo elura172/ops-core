@@ -9,6 +9,14 @@ from app.customer_support.email import CustomerResponse, DryRunMailer, Mailer
 from app.domain.audit import AuditEvent
 from app.observability import metrics
 from app.observability.logging import get_logger
+from app.publish.books import (
+    AbeBooksListingAdapter,
+    AlibrisListingAdapter,
+    AmazonSPAPIAdapter,
+    BiblioListingAdapter,
+    BookListingOrchestrator,
+    EbayListingAdapter,
+)
 from app.publish.layer import DryRunPublisher, PublishGate, PublishRequest
 from app.review.queue import AlreadyExecuted, ReviewItem, ReviewStore
 
@@ -42,9 +50,11 @@ class ApprovedActionExecutor:
         *,
         publish_gate: PublishGate | None = None,
         mailer: Mailer | None = None,
+        shippo_api_key: str = "",
     ) -> None:
         self.client = client
         self.audit = audit
+        self.shippo_api_key = shippo_api_key
         self.publish_gate = publish_gate or PublishGate(DryRunPublisher(), enabled=False)
         self.mailer = mailer or DryRunMailer()
         # Bound lazily: a client only needs the methods for operations it is
@@ -55,6 +65,10 @@ class ApprovedActionExecutor:
             "update_prices": lambda p: self.client.update_prices(p["changes"]),
             "publish": self._publish,
             "send_customer_response": self._send_customer_response,
+            "intake_book": self._intake_book,
+            "sync_inventory": self._sync_inventory,
+            "fulfill_order": self._fulfill_order,
+            "resolve_order_contention": self._resolve_order_contention,
         }
 
     @property
@@ -71,6 +85,92 @@ class ApprovedActionExecutor:
         # The review supplied the approval; the gate still decides whether
         # publishing is switched on at all.
         return asdict(self.publish_gate.execute(request, approved=True))
+
+    def _intake_book(self, payload: dict[str, Any]) -> dict[str, Any]:
+        adapters = (
+            AbeBooksListingAdapter(dry_run=True),
+            AmazonSPAPIAdapter(dry_run=True),
+            BiblioListingAdapter(dry_run=True),
+            AlibrisListingAdapter(dry_run=True),
+            EbayListingAdapter(dry_run=True),
+        )
+        orchestrator = BookListingOrchestrator(adapters)
+        return orchestrator.list_inventory(payload)
+
+    def _sync_inventory(self, payload: dict[str, Any]) -> dict[str, Any]:
+        from app.publish.inventory_sync import MultiChannelInventorySync
+        
+        adapters = (
+            AbeBooksListingAdapter(dry_run=True),
+            AmazonSPAPIAdapter(dry_run=True),
+            BiblioListingAdapter(dry_run=True),
+            AlibrisListingAdapter(dry_run=True),
+            EbayListingAdapter(dry_run=True),
+        )
+        sync = MultiChannelInventorySync(adapters)
+        
+        sku = payload.get("sku", "")
+        source_channel = payload.get("source_channel", "")
+        if not sku:
+            raise ValueError("sku is required for sync_inventory")
+            
+        return sync.process_sale(sku, source_channel)
+
+    def _fulfill_order(self, payload: dict[str, Any]) -> dict[str, Any]:
+        from app.domain.carriers import ShippoAdapter
+        from app.domain.packing_slip import generate_packing_slip
+        
+        provider = payload.get("preferred_provider", "USPS")
+        # In ops-core, keys typically come from settings.
+        api_key = self.shippo_api_key or "shippo_test_mock_key"
+        
+        # Instantiate adapter in dry_run mode by default for safety in this environment
+        adapter = ShippoAdapter(api_key=api_key, dry_run=True)
+        label_data = adapter.create_label(payload)
+        
+        mock_tracking = label_data["tracking_number"]
+        slip_b64 = generate_packing_slip(payload, mock_tracking, provider)
+        
+        # Combine the results
+        label_data["packing_slip_base64"] = slip_b64
+        
+        return label_data
+
+    def _resolve_order_contention(self, payload: dict[str, Any]) -> dict[str, Any]:
+        sku = payload.get("sku", "")
+        action = payload.get("action", "")
+        loser_order_id = payload.get("loser_order_id")
+        loser_channel = payload.get("loser_channel", "")
+        cancellation_reason = payload.get("cancellation_reason", "OUT_OF_STOCK")
+
+        results: dict[str, Any] = {
+            "sku": sku,
+            "action": action,
+            "loser_order_id": loser_order_id,
+            "loser_channel": loser_channel,
+            "status": "resolved",
+        }
+
+        if action in ("cancel_loser_marketplace_order", "cancel_marketplace_order"):
+            adapters = {
+                "abebooks": AbeBooksListingAdapter(dry_run=True),
+                "amazon": AmazonSPAPIAdapter(dry_run=True),
+                "amazon_spapi": AmazonSPAPIAdapter(dry_run=True),
+                "biblio": BiblioListingAdapter(dry_run=True),
+                "alibris": AlibrisListingAdapter(dry_run=True),
+                "ebay": EbayListingAdapter(dry_run=True),
+            }
+            adapter = adapters.get(str(loser_channel).lower())
+            if adapter and loser_order_id:
+                canceled = adapter.cancel_order(loser_order_id, reason=cancellation_reason)
+                results["marketplace_cancellation"] = "success" if canceled else "failed"
+            else:
+                results["marketplace_cancellation"] = "recorded"
+        elif action == "fulfill_substitute":
+            results["substitute_sku"] = payload.get("substitute_sku")
+            results["message"] = f"Substitute SKU {payload.get('substitute_sku')} routed for fulfillment."
+
+        return results
 
     def _send_customer_response(self, payload: dict[str, Any]) -> dict[str, Any]:
         response = CustomerResponse(

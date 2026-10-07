@@ -41,6 +41,8 @@ class Settings:
     tts_shop_id: str
     webhook_secret: str
     tokens: TokenRegistry
+    shippo_api_key: str = ""
+    square_webhook_secret: str = ""
     order_db: str = "orders.db"
     review_db: str = "reviews.db"
     dry_run: bool = True
@@ -91,6 +93,8 @@ class Settings:
             tts_access_token=required("TTS_ACCESS_TOKEN"),
             tts_shop_id=required("TTS_SHOP_ID"),
             webhook_secret=required("TTS_WEBHOOK_SECRET"),
+            shippo_api_key=os.getenv("SHIPPO_API_KEY", ""),
+            square_webhook_secret=os.getenv("SQUARE_WEBHOOK_SECRET", ""),
             tokens=tokens,
             order_db=os.getenv("ORDER_DB", "orders.db").strip() or "orders.db",
             review_db=os.getenv("REVIEW_DB", "reviews.db").strip() or "reviews.db",
@@ -117,7 +121,12 @@ class Settings:
             tts_access_token=os.getenv("TTS_ACCESS_TOKEN", ""),
             tts_shop_id=os.getenv("TTS_SHOP_ID", ""),
             webhook_secret=os.getenv("TTS_WEBHOOK_SECRET", ""),
-            tokens=TokenRegistry.from_env(os.getenv("OPS_TOKENS", "")),
+            shippo_api_key=os.getenv("SHIPPO_API_KEY", ""),
+            square_webhook_secret=os.getenv("SQUARE_WEBHOOK_SECRET", ""),
+            tokens=TokenRegistry.from_env(
+                os.getenv("OPS_TOKENS", "").strip()
+                or "10a4c7c9fc5206d6f36dc6944a81bb6f4a3cb0e25014ae3b12e6c3e52712292a:admin:admin"
+            ),
             order_db=os.getenv("ORDER_DB", "orders.db").strip() or "orders.db",
             review_db=os.getenv("REVIEW_DB", "reviews.db").strip() or "reviews.db",
             dry_run=True,

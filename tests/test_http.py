@@ -105,6 +105,29 @@ def test_valid_webhook_returns_200_and_applies(client):
     assert response.json()["outcome"] == "applied"
 
 
+def test_webhook_creates_fulfill_order_proposal(client):
+    # Send a PAID event, which triggers the fulfill_order proposal
+    body = b'{"event_id":"e-full","order_id":"o-full","status":"PAID"}'
+    response = client.post("/webhooks/orders", content=body, headers=sign(body))
+    assert response.status_code == 200
+
+    # Ensure the proposal was created in the review queue
+    response_reviews = client.get("/reviews", headers=auth(ADMIN_TOKEN))
+    assert response_reviews.status_code == 200
+    reviews = response_reviews.json()
+    
+    fulfill_reviews = [r for r in reviews if r["operation"] == "fulfill_order"]
+    assert len(fulfill_reviews) == 1
+    
+    # Detail should contain the payload
+    review_id = fulfill_reviews[0]["review_id"]
+    response_detail = client.get(f"/reviews/{review_id}", headers=auth(ADMIN_TOKEN))
+    assert response_detail.status_code == 200
+    detail = response_detail.json()
+    assert detail["payload"]["order_id"] == "o-full"
+    assert detail["payload"]["status"] == "PAID"
+
+
 def test_out_of_order_webhook_is_not_silently_dropped(client):
     body = b'{"event_id":"e-9","order_id":"o-9","status":"SHIPPED"}'
     response = client.post("/webhooks/orders", content=body, headers=sign(body))

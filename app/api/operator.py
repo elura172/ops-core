@@ -58,6 +58,25 @@ class OperatorService:
                 blocked = str(exc)
         return {**asdict(item), "execution_blocked": blocked}
 
+    def propose(self, operation: str, payload: dict[str, Any]) -> dict[str, Any]:
+        if operation not in self.executor.allowed_operations:
+            raise ValueError(f"Operation '{operation}' is not supported.")
+        
+        import uuid
+
+        from app.review.queue import ReviewItem
+        
+        review_id = f"rev-{uuid.uuid4().hex[:12]}"
+        item = ReviewItem(review_id=review_id, operation=operation, payload=payload)
+        self.reviews.submit(item)
+        
+        logger.info("review.proposed", review_id=item.review_id, operation=operation)
+        return {
+            "review_id": item.review_id,
+            "operation": item.operation,
+            "status": item.status.value,
+        }
+
     def execute(self, review_id: str, actor: str) -> dict[str, Any]:
         outcome = self.executor.execute(self.reviews, review_id, actor=actor)
         item = outcome["item"]

@@ -37,7 +37,7 @@ class WebhookResult:
 
 
 def handle_order_webhook(
-    body: bytes, signature: str, secret: str, repository: OrderRepository
+    body: bytes, signature: str, secret: str, repository: OrderRepository, operator: Any = None
 ) -> WebhookResult:
     """Framework-neutral webhook handler; never logs or returns raw payloads."""
     if not verify_signature(body, signature, secret):
@@ -57,6 +57,19 @@ def handle_order_webhook(
         # A storage failure must stay retryable; swallowing it loses the event.
         logger.error("webhook.persist_failed", exc_info=True, order_id=order_id, event_id=event_id)
         return WebhookResult(500, {"accepted": False, "error": "event could not be persisted"})
+
+    if operator and outcome.applied and outcome.status in (
+        OrderStatus.PAID,
+        OrderStatus.FULFILLMENT_PENDING,
+    ):
+        try:
+            operator.propose(
+                "fulfill_order",
+                {"order_id": order_id, "status": outcome.status.value},
+            )
+            logger.info("webhook.fulfillment_proposed", order_id=order_id)
+        except Exception as exc:
+            logger.error("webhook.fulfillment_propose_failed", order_id=order_id, error=str(exc))
 
     logger.info(
         "webhook.processed",
