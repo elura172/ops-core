@@ -49,6 +49,12 @@ pillow==12.3.0
     # via
     #   ops-core (pyproject.toml)
     #   fpdf2
+psycopg==3.3.6
+    # via ops-core (pyproject.toml)
+psycopg-binary==3.3.6
+    # via psycopg
+psycopg-pool==3.3.3
+    # via psycopg
 pydantic==2.13.5
     # via
     #   ops-core (pyproject.toml)
@@ -74,6 +80,7 @@ typing-extensions==4.16.0
     #   anyio
     #   fastapi
     #   opentelemetry-api
+    #   psycopg-pool
     #   pydantic
     #   pydantic-core
     #   shippo
