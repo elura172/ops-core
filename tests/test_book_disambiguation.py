@@ -135,3 +135,34 @@ def test_resolver_mocked_fetch():
         assert res.detected_isbn == "0441569595"
         assert res.needs_copyright_check is False
         assert res.suggested_catalog_action == "auto_list"
+
+
+def test_resolver_infers_author_for_uncredited_spine():
+    mock_docs = [
+        {
+            "key": "/works/OL12345W",
+            "title": "Total Consecration",
+            "author_name": ["St. Louis de Montfort"],
+            "first_publish_year": 1990,
+            "publisher": ["TAN Books", "TAN"],
+            "isbn": ["9780895556592"],
+            "edition_count": 12,
+        }
+    ]
+
+    resolver = OpenLibraryMetadataResolver()
+    spine = SpineExtractionItem(
+        stack_order=1,
+        box_2d=(0, 0, 100, 100),
+        title="Total Consecration",
+        authors=(),
+        publisher_imprint="TAN",
+        format=BookFormat.TRADE_PAPERBACK,
+        raw_spine_text="TOTAL CONSECRATION TAN",
+    )
+
+    with patch.object(resolver, "_fetch_search_docs", return_value=mock_docs):
+        res = resolver.resolve(spine)
+        assert res.matched is True
+        assert res.best_candidate is not None
+        assert res.best_candidate.authors == ("St. Louis de Montfort",)

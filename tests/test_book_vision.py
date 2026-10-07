@@ -167,3 +167,10 @@ def test_gemini_provider_strips_markdown_code_fences():
         assert len(result.books) == 0
         assert result.orientation == "horizontal_stack"
 
+
+def test_author_inference_in_system_prompt():
+    from app.ai.book_vision import BOOK_STACK_SYSTEM_PROMPT
+    assert "AUTHOR INFERENCE" in BOOK_STACK_SYSTEM_PROMPT
+    assert "TOTAL CONSECRATION" in BOOK_STACK_SYSTEM_PROMPT
+    assert "St. Louis de Montfort" in BOOK_STACK_SYSTEM_PROMPT
+

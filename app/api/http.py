@@ -487,7 +487,10 @@ def create_app(
             logger.error("Vision extraction failed", error=str(exc))
             raise HTTPException(502, f"Vision extraction failed: {exc}") from exc
 
-        # Initialize Pricing Engine
+        # Initialize Pricing Engine & Catalog Resolver
+        from app.discovery.books import OpenLibraryMetadataResolver
+        resolver = OpenLibraryMetadataResolver()
+
         scraper = AmazonScraperClient(
             api_key=getattr(settings, "shippo_api_key", "mock"),
             store=SnapshotStore(),
@@ -498,25 +501,45 @@ def create_app(
         proposals = []
         for idx, book in enumerate(extraction.books):
             condition = "Good" if "clean_as_new" in book.visible_condition_cues else "Acceptable"
-            # Run pricing with live market comps & format hint
             fmt_str = book.format.value if hasattr(book.format, "value") else str(book.format)
-            price_data = await run_in_threadpool(pricing.discover_price, book.title, ", ".join(book.authors), condition, fmt_str)
+
+            # Authors inference & catalog disambiguation
+            resolved_authors = [a for a in (book.authors or ()) if a and a.strip().lower() != "unknown"]
+            cand_title = book.title
+            cand_match_score = 0.85 if book.confidence == "high" else 0.5
+            cand_isbn = "UNKNOWN"
+            triage_reason = f"Auto-extracted from stack image (Position {book.stack_order})."
+
+            if not resolved_authors and book.title and book.title.strip().lower() != "unknown":
+                try:
+                    disambig = await run_in_threadpool(resolver.resolve, book)
+                    if disambig.matched and disambig.best_candidate and disambig.best_candidate.authors:
+                        resolved_authors = list(disambig.best_candidate.authors)
+                        cand_title = disambig.best_candidate.title
+                        cand_match_score = round(disambig.best_candidate.match_score, 2)
+                        cand_isbn = disambig.best_candidate.primary_isbn or "UNKNOWN"
+                        triage_reason = f"Inferred author ({', '.join(resolved_authors)}) via Open Library catalog matching."
+                except Exception as exc:
+                    logger.debug("author_inference.openlibrary_failed", error=str(exc))
+
+            author_str = ", ".join(resolved_authors)
+            price_data = await run_in_threadpool(pricing.discover_price, book.title, author_str, condition, fmt_str)
 
             payload = {
                 "extraction": {
                     "title": book.title,
-                    "authors": book.authors,
-                    "format": book.format,
+                    "authors": resolved_authors,
+                    "format": fmt_str,
                     "raw_spine_text": book.raw_spine_text,
                     "visible_condition_cues": book.visible_condition_cues,
                 },
                 "disambiguation": {
                     "best_candidate": {
-                        "title": book.title,
-                        "match_score": 0.85 if book.confidence == "high" else 0.5,
-                        "primary_isbn": "UNKNOWN",
+                        "title": cand_title,
+                        "match_score": cand_match_score,
+                        "primary_isbn": cand_isbn,
                     },
-                    "triage_reason": f"Auto-extracted from stack image (Position {book.stack_order}).",
+                    "triage_reason": triage_reason,
                 },
                 "valuation": {
                     "condition_grade": condition,

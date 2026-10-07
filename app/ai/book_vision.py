@@ -58,6 +58,10 @@ GUIDELINES:
 
 6. RAW TEXT:
    - Always record raw_spine_text with verbatim transcribed spine text for downstream fuzzy search.
+
+7. AUTHOR INFERENCE:
+   - When the spine does not visibly print the author's name (e.g. only Title and Publisher colophon/imprint like "TAN", "Penguin", "Dover", "Everyman", "Oxford" are present), use your deep bibliographic knowledge to INFER the canonical author (e.g. "TOTAL CONSECRATION" published by "TAN" -> "St. Louis de Montfort").
+   - Populate `authors` with the inferred canonical author(s) whenever the title and publisher imprint clearly identify the canonical work, rather than leaving `authors` empty or defaulting to ["Unknown"].
 """
 
 BOOK_STACK_GEMINI_SCHEMA = {
