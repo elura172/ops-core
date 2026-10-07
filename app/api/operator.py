@@ -18,7 +18,7 @@ class OperatorService:
     def health(self) -> dict[str, str]:
         return {"status": "ok", "mode": "dry-run" if self.executor.client.dry_run else "live"}
 
-    def list_reviews(self, pending_only: bool = False) -> list[dict[str, Any]]:
+    def list_reviews(self, pending_only: bool = False, tenant_id: int = 1) -> list[dict[str, Any]]:
         return [
             {
                 "review_id": item.review_id,
@@ -28,13 +28,13 @@ class OperatorService:
                 "reason": item.reason,
                 "executed_by": item.executed_by,
             }
-            for item in self.reviews.list_items(pending_only)
+            for item in self.reviews.list_items(pending_only, tenant_id=tenant_id)
         ]
 
     def decide(
-        self, review_id: str, approve: bool, reviewer: str, reason: str = "", payload_update: dict[str, Any] | None = None
+        self, review_id: str, approve: bool, reviewer: str, reason: str = "", payload_update: dict[str, Any] | None = None, tenant_id: int = 1
     ) -> dict[str, Any]:
-        item = self.reviews.decide(review_id, approve=approve, reviewer=reviewer, reason=reason, payload_update=payload_update)
+        item = self.reviews.decide(review_id, approve=approve, reviewer=reviewer, reason=reason, payload_update=payload_update, tenant_id=tenant_id)
         logger.info(
             "review.decided",
             review_id=item.review_id,
@@ -44,8 +44,8 @@ class OperatorService:
         )
         return {"review_id": item.review_id, "status": item.status.value, "reviewer": item.reviewer}
 
-    def review_detail(self, review_id: str) -> dict[str, Any]:
-        item = self.reviews.get(review_id)
+    def review_detail(self, review_id: str, tenant_id: int = 1) -> dict[str, Any]:
+        item = self.reviews.get(review_id, tenant_id=tenant_id)
         if item is None:
             raise KeyError(review_id)
         blocked = None
@@ -58,7 +58,7 @@ class OperatorService:
                 blocked = str(exc)
         return {**asdict(item), "execution_blocked": blocked}
 
-    def propose(self, operation: str, payload: dict[str, Any]) -> dict[str, Any]:
+    def propose(self, operation: str, payload: dict[str, Any], tenant_id: int = 1) -> dict[str, Any]:
         if operation not in self.executor.allowed_operations:
             raise ValueError(f"Operation '{operation}' is not supported.")
         
@@ -68,7 +68,7 @@ class OperatorService:
         
         review_id = f"rev-{uuid.uuid4().hex[:12]}"
         item = ReviewItem(review_id=review_id, operation=operation, payload=payload)
-        self.reviews.submit(item)
+        self.reviews.submit(item, tenant_id=tenant_id)
         
         logger.info("review.proposed", review_id=item.review_id, operation=operation)
         return {
@@ -77,8 +77,8 @@ class OperatorService:
             "status": item.status.value,
         }
 
-    def execute(self, review_id: str, actor: str) -> dict[str, Any]:
-        outcome = self.executor.execute(self.reviews, review_id, actor=actor)
+    def execute(self, review_id: str, actor: str, tenant_id: int = 1, credentials: dict[str, str] = None) -> dict[str, Any]:
+        outcome = self.executor.execute(self.reviews, review_id, actor=actor, tenant_id=tenant_id, credentials=credentials)
         item = outcome["item"]
         return {
             "review_id": item.review_id,

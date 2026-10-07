@@ -416,6 +416,7 @@ class ShopifyListingAdapter:
         logger.info("shopify.cancel_order.success", order_id=order_id)
         return True
 
+@dataclass
 class BookListingOrchestrator:
     """Routes approved book intake operations to the correct marketplace adapters."""
 

@@ -125,13 +125,15 @@ class ApprovedActionExecutor:
     def _sync_inventory(self, payload: dict[str, Any]) -> dict[str, Any]:
         from app.publish.inventory_sync import MultiChannelInventorySync
         
+        credentials = getattr(self, "current_credentials", {})
+        
         adapters = (
             AbeBooksListingAdapter(dry_run=True),
-            AmazonSPAPIAdapter(dry_run=True),
+            AmazonSPAPIAdapter(dry_run=True, refresh_token=credentials.get("amazon", "mock_token")),
             BiblioListingAdapter(dry_run=True),
             AlibrisListingAdapter(dry_run=True),
             EbayListingAdapter(dry_run=True),
-            ShopifyListingAdapter(dry_run=True),
+            ShopifyListingAdapter(dry_run=True, access_token=credentials.get("shopify", "")),
         )
         sync = MultiChannelInventorySync(adapters)
         
@@ -178,14 +180,15 @@ class ApprovedActionExecutor:
         }
 
         if action in ("cancel_loser_marketplace_order", "cancel_marketplace_order"):
+            credentials = getattr(self, "current_credentials", {})
             adapters = {
                 "abebooks": AbeBooksListingAdapter(dry_run=True),
-                "amazon": AmazonSPAPIAdapter(dry_run=True),
-                "amazon_spapi": AmazonSPAPIAdapter(dry_run=True),
+                "amazon": AmazonSPAPIAdapter(dry_run=True, refresh_token=credentials.get("amazon", "mock_token")),
+                "amazon_spapi": AmazonSPAPIAdapter(dry_run=True, refresh_token=credentials.get("amazon", "mock_token")),
                 "biblio": BiblioListingAdapter(dry_run=True),
                 "alibris": AlibrisListingAdapter(dry_run=True),
                 "ebay": EbayListingAdapter(dry_run=True),
-                "shopify": ShopifyListingAdapter(dry_run=True),
+                "shopify": ShopifyListingAdapter(dry_run=True, access_token=credentials.get("shopify", "")),
             }
             adapter = adapters.get(str(loser_channel).lower())
             if adapter and loser_order_id:
@@ -224,11 +227,17 @@ class ApprovedActionExecutor:
         if operation == "send_customer_response" and not getattr(self.mailer, "enabled", True):
             raise PermissionError("customer email sending is disabled")
 
-    def _dispatch(self, operation: str, payload: dict[str, Any]) -> dict[str, Any]:
+    def _dispatch(self, operation: str, payload: dict[str, Any], credentials: dict[str, str] = None) -> dict[str, Any]:
         handler = self.handlers.get(operation)
         if handler is None:
             raise ValueError(f"operation is not allowlisted: {operation}")
+            
+        self.current_credentials = credentials or {}
+        
         result = handler(payload)
+        
+        self.current_credentials = {}
+        
         if not isinstance(result, dict):
             raise TypeError(f"handler for {operation} must return a dictionary")
         return result
@@ -239,8 +248,8 @@ class ApprovedActionExecutor:
         if self.audit is not None:
             self.audit.record(AuditEvent(action, actor, outcome, resource_id, detail))
 
-    def execute(self, store: ReviewStore, review_id: str, *, actor: str) -> dict[str, Any]:
-        item = store.get(review_id)
+    def execute(self, store: ReviewStore, review_id: str, *, actor: str, tenant_id: int = 1, credentials: dict[str, str] = None) -> dict[str, Any]:
+        item = store.get(review_id, tenant_id=tenant_id)
         if item is None:
             raise KeyError(review_id)
 
@@ -251,7 +260,7 @@ class ApprovedActionExecutor:
         self.preflight(item.operation)
 
         try:
-            claimed = store.claim_for_execution(review_id, actor)
+            claimed = store.claim_for_execution(review_id, actor, tenant_id=tenant_id)
         except AlreadyExecuted as exc:
             metrics.executions_total().inc(outcome="replayed")
             logger.info("review.execute.replayed", review_id=review_id, actor=actor)
@@ -263,10 +272,10 @@ class ApprovedActionExecutor:
 
         started = time.monotonic()
         try:
-            result = self._dispatch(claimed.operation, claimed.payload)
+            result = self._dispatch(claimed.operation, claimed.payload, credentials=credentials)
         except Exception as exc:
             metrics.executions_total().inc(outcome="failed")
-            failed = store.fail_execution(review_id, str(exc))
+            failed = store.fail_execution(review_id, str(exc), tenant_id=tenant_id)
             self._audit(
                 "approved_action.execute",
                 actor,
@@ -282,7 +291,7 @@ class ApprovedActionExecutor:
             )
             raise ExecutionFailed(failed, str(exc)) from exc
 
-        executed = store.complete_execution(review_id, result)
+        executed = store.complete_execution(review_id, result, tenant_id=tenant_id)
         metrics.executions_total().inc(outcome="completed")
         metrics.execution_seconds().observe(time.monotonic() - started)
         self._audit(

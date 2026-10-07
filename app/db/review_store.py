@@ -329,12 +329,12 @@ class SQLiteReviewStore:
             ),
         )
 
-    def audit_trail(self, resource_id: str | None = None) -> list[dict[str, Any]]:
-        query = "SELECT * FROM audit_events"
+    def audit_trail(self, resource_id: str | None = None, tenant_id: int = 1) -> list[dict[str, Any]]:
+        query = "SELECT * FROM audit_events WHERE tenant_id = ?"
         params: tuple[int | str, ...] = (tenant_id,)
         if resource_id:
-            query += " WHERE resource_id = ?"
-            params = (resource_id,)
+            query += " AND resource_id = ?"
+            params = (tenant_id, resource_id)
         with self._lock:
             rows = self.connection.execute(query + " ORDER BY sequence", params).fetchall()
         return [dict(row) for row in rows]

@@ -73,3 +73,17 @@ class UserStore:
             return User(**dict(row))
         return None
 
+    def list_tenants(self) -> list[int]:
+        with self._lock:
+            rows = self.connection.execute("SELECT tenant_id FROM tenants").fetchall()
+            return [row["tenant_id"] for row in rows]
+
+    def get_tenant_integrations(self, tenant_id: int) -> dict[str, str]:
+        with self._lock:
+            rows = self.connection.execute(
+                "SELECT provider, encrypted_credentials FROM tenant_integrations WHERE tenant_id = ?",
+                (tenant_id,)
+            ).fetchall()
+            return {row["provider"]: row["encrypted_credentials"] for row in rows}
+
+

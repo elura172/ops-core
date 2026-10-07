@@ -173,9 +173,9 @@ class UnguardedSQLiteClaim(SQLiteReviewStore):
     catch that too.
     """
 
-    def claim_for_execution(self, review_id: str, actor: str) -> ReviewItem:
+    def claim_for_execution(self, review_id: str, actor: str, tenant_id: int = 1) -> ReviewItem:
         # Read outside the write transaction: the classic check-then-act race.
-        item = self.get(review_id)
+        item = self.get(review_id, tenant_id=tenant_id)
         if item is None:
             raise KeyError(review_id)
         if item.status is not ReviewStatus.EXECUTING:
@@ -185,15 +185,16 @@ class UnguardedSQLiteClaim(SQLiteReviewStore):
         with self._transaction() as connection:
             connection.execute(
                 "UPDATE reviews SET status = ?, executed_by = ?, executed_at = ? "
-                "WHERE review_id = ?",
+                "WHERE review_id = ? AND tenant_id = ?",
                 (
                     ReviewStatus.EXECUTING.value,
                     actor,
                     datetime.now(UTC).isoformat(),
                     review_id,
+                    tenant_id,
                 ),
             )
-            return self._fetch(connection, review_id)
+            return self._fetch(connection, review_id, tenant_id=tenant_id)
 
 
 def test_removing_sqlite_guards_breaks_at_most_once(tmp_path):

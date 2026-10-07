@@ -45,15 +45,15 @@ class AlreadyExecuted(Exception):
 class ReviewStore(Protocol):
     """Owns every review state transition so they stay atomic and durable."""
 
-    def submit(self, item: ReviewItem) -> ReviewItem: ...
-    def get(self, review_id: str) -> ReviewItem | None: ...
-    def list_items(self, pending_only: bool = False) -> list[ReviewItem]: ...
+    def submit(self, item: ReviewItem, tenant_id: int = 1) -> ReviewItem: ...
+    def get(self, review_id: str, tenant_id: int = 1) -> ReviewItem | None: ...
+    def list_items(self, pending_only: bool = False, tenant_id: int = 1) -> list[ReviewItem]: ...
     def decide(
-        self, review_id: str, *, approve: bool, reviewer: str, reason: str = "", payload_update: dict[str, Any] | None = None
+        self, review_id: str, *, approve: bool, reviewer: str, reason: str = "", payload_update: dict[str, Any] | None = None, tenant_id: int = 1
     ) -> ReviewItem: ...
-    def claim_for_execution(self, review_id: str, actor: str) -> ReviewItem: ...
-    def complete_execution(self, review_id: str, result: dict[str, Any]) -> ReviewItem: ...
-    def fail_execution(self, review_id: str, error: str) -> ReviewItem: ...
+    def claim_for_execution(self, review_id: str, actor: str, tenant_id: int = 1) -> ReviewItem: ...
+    def complete_execution(self, review_id: str, result: dict[str, Any], tenant_id: int = 1) -> ReviewItem: ...
+    def fail_execution(self, review_id: str, error: str, tenant_id: int = 1) -> ReviewItem: ...
     def recover_stale_executions(self, older_than: timedelta) -> list[ReviewItem]: ...
 
 
@@ -87,7 +87,7 @@ class ReviewQueue:
     def __init__(self) -> None:
         self.items: dict[str, ReviewItem] = {}
 
-    def submit(self, item: ReviewItem) -> ReviewItem:
+    def submit(self, item: ReviewItem, tenant_id: int = 1) -> ReviewItem:
         if item.review_id in self.items:
             raise ValueError("review_id already exists")
         if item.status != ReviewStatus.PENDING:
@@ -95,28 +95,28 @@ class ReviewQueue:
         self.items[item.review_id] = item
         return item
 
-    def get(self, review_id: str) -> ReviewItem | None:
+    def get(self, review_id: str, tenant_id: int = 1) -> ReviewItem | None:
         return self.items.get(review_id)
 
-    def list_items(self, pending_only: bool = False) -> list[ReviewItem]:
+    def list_items(self, pending_only: bool = False, tenant_id: int = 1) -> list[ReviewItem]:
         items = list(self.items.values())
         return [i for i in items if i.status is ReviewStatus.PENDING] if pending_only else items
 
-    def pending(self) -> list[ReviewItem]:
-        return self.list_items(pending_only=True)
+    def pending(self, tenant_id: int = 1) -> list[ReviewItem]:
+        return self.list_items(pending_only=True, tenant_id=tenant_id)
 
-    def _require(self, review_id: str) -> ReviewItem:
+    def _require(self, review_id: str, tenant_id: int = 1) -> ReviewItem:
         item = self.items.get(review_id)
         if item is None:
             raise KeyError(review_id)
         return item
 
     def decide(
-        self, review_id: str, *, approve: bool, reviewer: str, reason: str = "", payload_update: dict[str, Any] | None = None
+        self, review_id: str, *, approve: bool, reviewer: str, reason: str = "", payload_update: dict[str, Any] | None = None, tenant_id: int = 1
     ) -> ReviewItem:
         if not reviewer.strip():
             raise ValueError("reviewer is required")
-        item = self._require(review_id)
+        item = self._require(review_id, tenant_id=tenant_id)
         if item.status != ReviewStatus.PENDING:
             raise ValueError("review item has already been decided")
         if payload_update:
@@ -127,25 +127,25 @@ class ReviewQueue:
         item.decided_at = datetime.now(UTC)
         return item
 
-    def claim_for_execution(self, review_id: str, actor: str) -> ReviewItem:
-        item = self._require(review_id)
+    def claim_for_execution(self, review_id: str, actor: str, tenant_id: int = 1) -> ReviewItem:
+        item = self._require(review_id, tenant_id=tenant_id)
         _validate_claim(item)
         item.status = ReviewStatus.EXECUTING
         item.executed_by = actor
         item.executed_at = datetime.now(UTC)
         return item
 
-    def complete_execution(self, review_id: str, result: dict[str, Any]) -> ReviewItem:
-        item = self._require(review_id)
+    def complete_execution(self, review_id: str, result: dict[str, Any], tenant_id: int = 1) -> ReviewItem:
+        item = self._require(review_id, tenant_id=tenant_id)
         item.status = ReviewStatus.EXECUTED
         item.result = result
         item.executed_at = datetime.now(UTC)
         return item
 
-    def fail_execution(self, review_id: str, error: str) -> ReviewItem:
+    def fail_execution(self, review_id: str, error: str, tenant_id: int = 1) -> ReviewItem:
         """Leave the item terminal. The outcome of a partial mutation is unknown,
         so a human must re-approve rather than let a retry duplicate it."""
-        item = self._require(review_id)
+        item = self._require(review_id, tenant_id=tenant_id)
         item.status = ReviewStatus.FAILED
         item.failure = error
         item.executed_at = datetime.now(UTC)

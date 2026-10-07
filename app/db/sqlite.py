@@ -165,7 +165,7 @@ class SQLiteOrderRepository:
 
         self.connection.execute(
             "UPDATE orders SET status = ?, updated_at = ? WHERE order_id = ? AND tenant_id = ?",
-            (event.status.value, occurred_at, event.order_id),
+            (event.status.value, occurred_at, event.order_id, tenant_id),
         )
         if decision.skipped:
             logger.warning(
@@ -193,15 +193,16 @@ class SQLiteOrderRepository:
             for row in rows
         ]
 
-    def quarantined(self, *, include_resolved: bool = False) -> list[dict[str, Any]]:
-        query = "SELECT * FROM quarantined_events"
+    def quarantined(self, tenant_id: int = 1, *, include_resolved: bool = False) -> list[dict[str, Any]]:
+        query = "SELECT * FROM quarantined_events WHERE tenant_id = ?"
+        params = [tenant_id]
         if not include_resolved:
-            query += " WHERE resolved = 0"
+            query += " AND resolved = 0"
         with self._lock:
-            rows = self.connection.execute(query + " ORDER BY occurred_at", (tenant_id,)).fetchall()
+            rows = self.connection.execute(query + " ORDER BY occurred_at", params).fetchall()
         return [dict(row) for row in rows]
 
-    def resolve_quarantined(self, event_id: str) -> bool:
+    def resolve_quarantined(self, event_id: str, tenant_id: int = 1) -> bool:
         """Mark a conflicting event as handled. Returns False if it was not open."""
         with self._lock:
             self.connection.execute("BEGIN IMMEDIATE")
@@ -209,7 +210,7 @@ class SQLiteOrderRepository:
                 cursor = self.connection.execute(
                     "UPDATE quarantined_events SET resolved = 1 "
                     "WHERE event_id = ? AND tenant_id = ? AND resolved = 0",
-                    (event_id,),
+                    (event_id, tenant_id),
                 )
             except BaseException:
                 self.connection.execute("ROLLBACK")

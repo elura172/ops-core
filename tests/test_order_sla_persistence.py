@@ -77,7 +77,7 @@ def test_sqlite_legacy_upgrade_is_conservative_and_idempotent(tmp_path):
     connection.executescript(SCHEMA)
     timestamp = datetime.now(UTC).isoformat()
     connection.execute(
-        "INSERT INTO orders VALUES (?, ?, ?, ?)",
+        "INSERT INTO orders(order_id, created_at, status, updated_at) VALUES (?, ?, ?, ?)",
         ("legacy", timestamp, "FULFILLMENT_PENDING", timestamp),
     )
     connection.commit()

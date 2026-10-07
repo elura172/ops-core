@@ -47,8 +47,42 @@
     <section id="workspace" hidden>
       <div class="toolbar"><div><span id="mode" class="badge"></span> <span id="count"></span></div><button id="refresh">Refresh queue ↻</button></div>
       <div class="desk">
-        <section class="panel queue"><div class="queue-heading"><h2>Review queue</h2><button type="button" id="tab-queue" class="primary" style="margin-right:10px;">Review Queue</button><button type="button" id="tab-bookshelf">Bookshelf (Inventory)</button><label for="filter">Show</label><select id="filter"><option value="ALL">All actions</option><option>PENDING</option><option>APPROVED</option><option>EXECUTING</option><option>EXECUTED</option><option>FAILED</option><option>REJECTED</option></select></div><div id="items"></div></section>
+        <section class="panel queue"><div class="queue-heading"><h2>Review queue</h2><button type="button" id="tab-queue" class="primary" style="margin-right:10px;">Review Queue</button><button type="button" id="tab-bookshelf">Bookshelf (Inventory)</button>
+<button type="button" id="tab-settings">Settings</button><label for="filter">Show</label><select id="filter"><option value="ALL">All actions</option><option>PENDING</option><option>APPROVED</option><option>EXECUTING</option><option>EXECUTED</option><option>FAILED</option><option>REJECTED</option></select></div><div id="items"></div></section>
         <section id="bookshelf-panel" class="panel detail" hidden><h2>Inventory Bookshelf</h2><div id="bookshelf-items"></div></section>
+        <section id="settings-panel" class="panel detail" hidden>
+          <h2>Workspace Settings</h2>
+          <p class="muted">Connect your external channels. API keys are encrypted at rest.</p>
+          
+          <div style="margin-top: 1.5rem;">
+            <h3>Connected Integrations</h3>
+            <ul id="connected-integrations-list" style="margin-bottom: 2rem;">
+              <li class="muted">Loading...</li>
+            </ul>
+            
+            <h3>Add New Integration</h3>
+            <form id="form-integration" style="display: flex; flex-direction: column; gap: 1rem; max-width: 400px; margin-top: 1rem;">
+              <div>
+                <label for="integration-provider">Provider</label>
+                <select id="integration-provider" required style="width: 100%; padding: 0.5rem;">
+                  <option value="" disabled selected>Select channel...</option>
+                  <option value="shopify">Shopify</option>
+                  <option value="amazon">Amazon SP-API</option>
+                  <option value="tiktok">TikTok Shop</option>
+                  <option value="square">Square POS</option>
+                </select>
+              </div>
+              
+              <div>
+                <label for="integration-key">API Key / Token</label>
+                <input id="integration-key" type="password" required autocomplete="off" spellcheck="false" style="width: 100%; padding: 0.5rem;">
+              </div>
+              
+              <button type="submit" class="primary" style="align-self: flex-start; padding: 0.5rem 1rem;">Save Integration</button>
+            </form>
+          </div>
+        </section>
+
         <section id="queue-detail-panel" class="panel detail" aria-label="Action preview"><div id="detail"><p class="eyebrow">ACTION PREVIEW</p><h2>A moment of attention.</h2><p>Select an action to read its contents before making a decision.</p></div></section>
         </section>
       </div>

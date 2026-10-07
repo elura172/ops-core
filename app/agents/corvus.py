@@ -4,11 +4,10 @@ from typing import Any, Protocol
 logger = logging.getLogger("corvus")
 
 class Operator(Protocol):
-    def list_reviews(self, pending_only: bool = False) -> list[dict[str, Any]]: ...
-    def decide(self, review_id: str, approve: bool, reviewer: str, reason: str = "") -> dict[str, Any]: ...
-    def execute(self, review_id: str, actor: str) -> dict[str, Any]: ...
-    def review_detail(self, review_id: str) -> dict[str, Any]: ...
-
+    def list_reviews(self, pending_only: bool = False, tenant_id: int = 1) -> list[dict[str, Any]]: ...
+    def decide(self, review_id: str, approve: bool, reviewer: str, reason: str = "", payload_update: dict[str, Any] | None = None, tenant_id: int = 1) -> dict[str, Any]: ...
+    def execute(self, review_id: str, actor: str, tenant_id: int = 1, credentials: dict[str, str] = None) -> dict[str, Any]: ...
+    def review_detail(self, review_id: str, tenant_id: int = 1) -> dict[str, Any]: ...
 
 class CorvusWarden:
     """
@@ -24,46 +23,61 @@ class CorvusWarden:
     
     IDENTITY = "agent:corvus"
 
-    def __init__(self, operator: Operator):
+    def __init__(self, operator: Operator, user_store: Any = None):
         self.operator = operator
+        self.user_store = user_store
 
     def wake_and_triage(self) -> dict[str, int]:
         """
-        Corvus inspects the pending queue.
+        Corvus inspects the pending queue for all tenants.
         Returns a summary of his actions.
         """
-        pending = self.operator.list_reviews(pending_only=True)
         actions_taken = {"approved": 0, "ignored": 0, "failed": 0}
+        
+        tenants = [1]
+        if self.user_store:
+            tenants = self.user_store.list_tenants()
+            
+        from app.vault import decrypt_credential
 
-        for item in pending:
-            review_id = item["review_id"]
-            operation = item["operation"]
+        for tenant_id in tenants:
+            credentials = {}
+            if self.user_store:
+                enc_integrations = self.user_store.get_tenant_integrations(tenant_id)
+                for provider, enc_key in enc_integrations.items():
+                    credentials[provider] = decrypt_credential(enc_key)
+            
+            pending = self.operator.list_reviews(pending_only=True, tenant_id=tenant_id)
+            for item in pending:
+                review_id = item["review_id"]
+                operation = item["operation"]
 
-            # Fetch the full detail to see the payload
-            detail = self.operator.review_detail(review_id)
-            payload = detail.get("payload", {})
+                # Fetch the full detail to see the payload
+                detail = self.operator.review_detail(review_id, tenant_id=tenant_id)
+                payload = detail.get("payload", {})
 
-            if self._should_auto_approve(operation, payload):
-                logger.info("corvus.triage.approve", review_id=review_id, operation=operation)
-                try:
-                    reason = self._approval_reason(operation, payload)
-                    # 1. Corvus stamps the approval
-                    self.operator.decide(
-                        review_id=review_id,
-                        approve=True,
-                        reviewer=self.IDENTITY,
-                        reason=reason,
-                    )
-                    
-                    # 2. Corvus executes immediately
-                    self.operator.execute(review_id=review_id, actor=self.IDENTITY)
-                    actions_taken["approved"] += 1
-                except Exception as exc:
-                    logger.error("corvus.triage.error", review_id=review_id, error=str(exc))
-                    actions_taken["failed"] += 1
-            else:
-                logger.debug("corvus.triage.ignore", review_id=review_id, operation=operation)
-                actions_taken["ignored"] += 1
+                if self._should_auto_approve(operation, payload):
+                    logger.info("corvus.triage.approve", review_id=review_id, operation=operation, tenant_id=tenant_id)
+                    try:
+                        reason = self._approval_reason(operation, payload)
+                        # 1. Corvus stamps the approval
+                        self.operator.decide(
+                            review_id=review_id,
+                            approve=True,
+                            reviewer=self.IDENTITY,
+                            reason=reason,
+                            tenant_id=tenant_id
+                        )
+                        
+                        # 2. Corvus executes immediately
+                        self.operator.execute(review_id=review_id, actor=self.IDENTITY, tenant_id=tenant_id, credentials=credentials)
+                        actions_taken["approved"] += 1
+                    except Exception as exc:
+                        logger.error("corvus.triage.error", review_id=review_id, error=str(exc), tenant_id=tenant_id)
+                        actions_taken["failed"] += 1
+                else:
+                    logger.debug("corvus.triage.ignore", review_id=review_id, operation=operation, tenant_id=tenant_id)
+                    actions_taken["ignored"] += 1
 
         return actions_taken
 
