@@ -111,7 +111,8 @@ function renderBatchDetail() {
   delBox.style.borderTop = "1px solid var(--line-subtle)";
   const delBatchBtn = node("button", `🗑️ Delete ${selectedItems.length} Selected Proposals`, "danger-sm");
   delBatchBtn.onclick = async () => {
-    if (!confirm(`Permanently delete all ${selectedItems.length} selected proposals from the database? This cannot be undone.`)) return;
+    const count = selectedItems.length;
+    if (!confirm(`Are you sure you want to delete ${count} items? This action cannot be reversed.`)) return;
     busy = true; $("refresh").disabled = true;
     let success = 0, fail = 0;
     detail.replaceChildren(node("p", "Deleting proposals..."));
@@ -164,7 +165,7 @@ function renderQueue() {
         message("No inactive proposals to clear.");
         return;
       }
-      if (!confirm(`Permanently delete ${inactiveCount} inactive (completed / rejected) proposals from database?`)) return;
+      if (!confirm(`Are you sure you want to delete ${inactiveCount} items? This action cannot be reversed.`)) return;
       clearInactive.disabled = true;
       try {
         const res = await api("/reviews?status=INACTIVE", { method: "DELETE" });
@@ -424,7 +425,7 @@ function renderDetail(item) {
     const delProposalBtn = node("button", "🗑️ Delete Proposal", "danger-sm");
     delProposalBtn.style.marginLeft = "auto";
     delProposalBtn.onclick = async () => {
-      if (!confirm(`Are you sure you want to permanently delete proposal "${item.review_id}" from the database? This cannot be undone.`)) return;
+      if (!confirm(`Are you sure you want to delete 1 item (${item.review_id})? This action cannot be reversed.`)) return;
       delProposalBtn.disabled = true;
       try {
         await api(`/reviews/${encodeURIComponent(item.review_id)}`, { method: "DELETE" });
@@ -891,7 +892,7 @@ async function renderBookshelf() {
     deleteBookBtn.style.marginLeft = "auto";
     deleteBookBtn.title = "Permanently delete book from database";
     deleteBookBtn.onclick = async () => {
-      if (!confirm(`Are you sure you want to permanently delete "${item.title}" (${item.sku}) from the database? This cannot be undone.`)) return;
+      if (!confirm(`Are you sure you want to delete 1 item ("${item.title}")? This action cannot be reversed.`)) return;
       deleteBookBtn.disabled = true;
       try {
         await api(`/inventory/${encodeURIComponent(item.sku)}?hard=true`, { method: "DELETE" });
