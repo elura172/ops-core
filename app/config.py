@@ -100,8 +100,8 @@ class Settings:
             shippo_api_key=os.getenv("SHIPPO_API_KEY", ""),
             square_webhook_secret=os.getenv("SQUARE_WEBHOOK_SECRET", ""),
             tokens=tokens,
-            order_db=os.getenv("ORDER_DB", _default_db("orders.db")).strip() or _default_db("orders.db"),
-            review_db=os.getenv("REVIEW_DB", _default_db("reviews.db")).strip() or _default_db("reviews.db"),
+            order_db=os.getenv("ORDER_DB", os.getenv("POSTGRES_URL", _default_db("orders.db"))).strip() or os.getenv("POSTGRES_URL", _default_db("orders.db")),
+            review_db=os.getenv("REVIEW_DB", os.getenv("POSTGRES_URL", _default_db("reviews.db"))).strip() or os.getenv("POSTGRES_URL", _default_db("reviews.db")),
             dry_run=dry_run,
             live_enabled=_flag("LIVE_ENABLED"),
             signing_verified=_flag("LAUNCH_SIGNING_VERIFIED"),
@@ -131,8 +131,8 @@ class Settings:
                 os.getenv("OPS_TOKENS", "").strip()
                 or "10a4c7c9fc5206d6f36dc6944a81bb6f4a3cb0e25014ae3b12e6c3e52712292a:admin:admin"
             ),
-            order_db=os.getenv("ORDER_DB", _default_db("orders.db")).strip() or _default_db("orders.db"),
-            review_db=os.getenv("REVIEW_DB", _default_db("reviews.db")).strip() or _default_db("reviews.db"),
+            order_db=os.getenv("ORDER_DB", os.getenv("POSTGRES_URL", _default_db("orders.db"))).strip() or os.getenv("POSTGRES_URL", _default_db("orders.db")),
+            review_db=os.getenv("REVIEW_DB", os.getenv("POSTGRES_URL", _default_db("reviews.db"))).strip() or os.getenv("POSTGRES_URL", _default_db("reviews.db")),
             dry_run=True,
             live_enabled=_flag("LIVE_ENABLED"),
             signing_verified=_flag("LAUNCH_SIGNING_VERIFIED"),
