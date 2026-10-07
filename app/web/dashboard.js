@@ -35,7 +35,10 @@ async function api(path, options = {}) {
   const epoch = generation;
   const response = await fetch(path, {...options, cache:"no-store", headers:{"Authorization":`Bearer ${token}`, "Content-Type":"application/json"}});
   if (epoch !== generation) throw new Error("Session changed.");
-  const body = await response.json();
+  const text = await response.text();
+  if (epoch !== generation) throw new Error("Session changed.");
+  let body;
+  try { body = JSON.parse(text); } catch(_) { body = { detail: text || `Request failed (${response.status}).` }; }
   if (epoch !== generation) throw new Error("Session changed.");
   if (!response.ok) {
     if (response.status === 401 || response.status === 503) disconnect();
@@ -386,7 +389,9 @@ async function handleAuth(path, body, button) {
         headers: {"Content-Type": "application/json"},
         body: JSON.stringify(body)
     });
-    const data = await res.json();
+    const text = await res.text();
+    let data;
+    try { data = JSON.parse(text); } catch(_) { data = { detail: text || `Authentication failed (${res.status})` }; }
     if (!res.ok) throw new Error(formatError(data.detail) || "Authentication failed");
     
     token = data.access_token;
