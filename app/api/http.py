@@ -6,7 +6,7 @@ from datetime import timedelta
 from importlib.resources import files
 from typing import Any
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request, UploadFile, File
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, UploadFile, File, Form
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
 
 from starlette.concurrency import run_in_threadpool
@@ -234,17 +234,17 @@ def create_app(
         now_dt = datetime.now(UTC)
         if "BK-DUNE-1965" not in existing_skus:
             inventory_store.add(
-                InventoryItem("BK-DUNE-1965", "Dune (First Edition)", ["Frank Herbert"], "hardcover", "Fine", Decimal("950.00"), Decimal("995.00"), "active", now_dt, now_dt),
+                InventoryItem("BK-DUNE-1965", "Dune (First Edition)", ["Frank Herbert"], "hardcover", "Fine", Decimal("950.00"), Decimal("995.00"), "active", now_dt, now_dt, section="Sci-Fi / Fantasy", shelf="B-03"),
                 tenant_id=1,
             )
         if "BK-LOTR-SET" not in existing_skus:
             inventory_store.add(
-                InventoryItem("BK-LOTR-SET", "The Lord of the Rings (3 Vols)", ["J.R.R. Tolkien"], "hardcover", "Very Good", Decimal("180.00"), Decimal("210.00"), "active", now_dt, now_dt),
+                InventoryItem("BK-LOTR-SET", "The Lord of the Rings (3 Vols)", ["J.R.R. Tolkien"], "hardcover", "Very Good", Decimal("180.00"), Decimal("210.00"), "active", now_dt, now_dt, section="Classics", shelf="C-01"),
                 tenant_id=1,
             )
         if "BK-PHILIP-K-DICK" not in existing_skus:
             inventory_store.add(
-                InventoryItem("BK-PHILIP-K-DICK", "Do Androids Dream of Electric Sheep?", ["Philip K. Dick"], "paperback", "Good", Decimal("30.00"), Decimal("35.00"), "active", now_dt, now_dt),
+                InventoryItem("BK-PHILIP-K-DICK", "Do Androids Dream of Electric Sheep?", ["Philip K. Dick"], "paperback", "Good", Decimal("30.00"), Decimal("35.00"), "active", now_dt, now_dt, section="Sci-Fi / Fantasy", shelf="B-03"),
                 tenant_id=1,
             )
     except Exception as exc:
@@ -486,7 +486,10 @@ def create_app(
 
     @app.post("/intake/camera")
     async def process_camera_upload(
-        file: UploadFile = File(...), principal: Principal = Depends(require_decide)
+        file: UploadFile = File(...),
+        section: str = Form("General"),
+        shelf: str = Form(""),
+        principal: Principal = Depends(require_decide)
     ) -> dict[str, Any]:
         from app.ai.book_vision import (
             GeminiBookVisionProvider,
@@ -553,6 +556,8 @@ def create_app(
             price_data = await run_in_threadpool(pricing.discover_price, book.title, author_str, condition, fmt_str)
 
             payload = {
+                "section": section,
+                "shelf": shelf,
                 "extraction": {
                     "title": book.title,
                     "authors": resolved_authors,
@@ -634,6 +639,8 @@ def create_app(
         for idx, book in enumerate(sample_books, start=1):
             price_data = await run_in_threadpool(pricing.discover_price, book["title"], ", ".join(book["authors"]), book["condition"], book.get("format", "hardcover"))
             payload = {
+                "section": "Sci-Fi / Fantasy",
+                "shelf": "B-03",
                 "extraction": {
                     "title": book["title"],
                     "authors": book["authors"],
@@ -675,6 +682,8 @@ def create_app(
                 "sku": i.sku, "title": i.title, "authors": i.authors, "format": i.format,
                 "condition": i.condition, "in_store_price_cad": float(i.in_store_price_cad),
                 "online_price_cad": float(i.online_price_cad), "status": i.status,
+                "section": i.section, "shelf": i.shelf,
+                "last_audited_at": i.last_audited_at.isoformat() if i.last_audited_at else None,
                 "created_at": i.created_at.isoformat() if hasattr(i.created_at, "isoformat") else str(i.created_at)
             }
             for i in inventory_store.list_all(tenant_id=principal.tenant_id)
@@ -683,10 +692,15 @@ def create_app(
     @app.put("/inventory/{sku}")
     def update_inventory_item(sku: str, payload: dict[str, Any], principal: Principal = Depends(require_decide)) -> dict[str, Any]:
         from decimal import Decimal
-        in_store = Decimal(str(payload.get("in_store_price_cad", "0")))
-        online = Decimal(str(payload.get("online_price_cad", "0")))
-        inventory_store.update_prices(sku, in_store, online, tenant_id=principal.tenant_id)
-        operator.propose("update_prices", {"sku": sku, "in_store_price_cad": str(in_store), "online_price_cad": str(online)}, tenant_id=principal.tenant_id)
+        if "in_store_price_cad" in payload or "online_price_cad" in payload:
+            in_store = Decimal(str(payload.get("in_store_price_cad", "0")))
+            online = Decimal(str(payload.get("online_price_cad", "0")))
+            inventory_store.update_prices(sku, in_store, online, tenant_id=principal.tenant_id)
+            operator.propose("update_prices", {"sku": sku, "in_store_price_cad": str(in_store), "online_price_cad": str(online)}, tenant_id=principal.tenant_id)
+        if "section" in payload or "shelf" in payload:
+            sec = str(payload.get("section", "General"))
+            sh = str(payload.get("shelf", ""))
+            inventory_store.update_location(sku, sec, sh, tenant_id=principal.tenant_id)
         return {"status": "ok"}
 
     @app.delete("/inventory/{sku}")
@@ -701,6 +715,151 @@ def create_app(
         inventory_store.delist(sku, tenant_id=principal.tenant_id)
         operator.propose("update_inventory", {"sku": sku, "stock": 0}, tenant_id=principal.tenant_id)
         return {"status": "ok"}
+
+    @app.post("/inventory/audit")
+    async def run_shelf_audit(
+        section: str = Form("General"),
+        shelf: str = Form(""),
+        file: UploadFile | None = File(None),
+        principal: Principal = Depends(require_decide),
+    ) -> dict[str, Any]:
+        from app.domain.shelf_audit import ShelfAuditService
+        from app.db.inventory import ShelfAuditRecord
+
+        scanned_books: list[dict[str, Any]] = []
+
+        if file and file.filename:
+            from app.ai.book_vision import (
+                GeminiBookVisionProvider,
+                prepare_vision_image,
+                resolve_gemini_api_key,
+            )
+            try:
+                api_key = resolve_gemini_api_key(settings.gemini_api_key if hasattr(settings, "gemini_api_key") else None)
+            except ValueError as exc:
+                raise HTTPException(500, "Vision AI not configured") from exc
+
+            provider = GeminiBookVisionProvider(api_key=api_key)
+            raw_bytes = await file.read()
+            if not raw_bytes:
+                raise HTTPException(400, "Uploaded audit image is empty")
+
+            image_bytes, mime_type = prepare_vision_image(raw_bytes, file.content_type)
+            try:
+                extraction = await run_in_threadpool(provider.extract_stack, image_bytes, mime_type)
+                scanned_books = [b.to_dict() for b in extraction.books]
+            except Exception as exc:
+                logger.error("Vision audit extraction failed", error=str(exc))
+                raise HTTPException(502, f"Vision extraction failed: {exc}") from exc
+
+        expected_books = inventory_store.list_by_location(section, shelf, tenant_id=principal.tenant_id)
+        store_inventory = inventory_store.list_all(tenant_id=principal.tenant_id)
+
+        audit_res = ShelfAuditService.reconcile(
+            section=section,
+            shelf=shelf,
+            scanned_books=scanned_books,
+            expected_books=expected_books,
+            store_inventory=store_inventory,
+        )
+
+        for v in audit_res.verified_items:
+            inventory_store.mark_audited(v.sku, tenant_id=principal.tenant_id)
+
+        discrepancies = [
+            *[m.to_dict() for m in audit_res.missing_items],
+            *[mp.to_dict() for mp in audit_res.misplaced_items],
+            *[u.to_dict() for u in audit_res.uncataloged_items],
+        ]
+        audit_record = ShelfAuditRecord(
+            id=audit_res.id,
+            tenant_id=principal.tenant_id,
+            section=section,
+            shelf=shelf,
+            audited_by=principal.name or "operator",
+            total_expected=audit_res.total_expected,
+            total_scanned=audit_res.total_scanned,
+            verified_count=audit_res.verified_count,
+            missing_count=audit_res.missing_count,
+            misplaced_count=audit_res.misplaced_count,
+            discrepancies=discrepancies,
+            created_at=audit_res.created_at,
+        )
+        inventory_store.record_shelf_audit(audit_record)
+
+        return audit_res.to_dict()
+
+    @app.post("/inventory/audit/direct")
+    def run_shelf_audit_direct(
+        data: dict[str, Any],
+        principal: Principal = Depends(require_decide),
+    ) -> dict[str, Any]:
+        from app.domain.shelf_audit import ShelfAuditService
+        from app.db.inventory import ShelfAuditRecord
+
+        section = data.get("section", "General")
+        shelf = data.get("shelf", "")
+        scanned_books = data.get("scanned_books", [])
+
+        expected_books = inventory_store.list_by_location(section, shelf, tenant_id=principal.tenant_id)
+        store_inventory = inventory_store.list_all(tenant_id=principal.tenant_id)
+
+        audit_res = ShelfAuditService.reconcile(
+            section=section,
+            shelf=shelf,
+            scanned_books=scanned_books,
+            expected_books=expected_books,
+            store_inventory=store_inventory,
+        )
+
+        for v in audit_res.verified_items:
+            inventory_store.mark_audited(v.sku, tenant_id=principal.tenant_id)
+
+        discrepancies = [
+            *[m.to_dict() for m in audit_res.missing_items],
+            *[mp.to_dict() for mp in audit_res.misplaced_items],
+            *[u.to_dict() for u in audit_res.uncataloged_items],
+        ]
+        audit_record = ShelfAuditRecord(
+            id=audit_res.id,
+            tenant_id=principal.tenant_id,
+            section=section,
+            shelf=shelf,
+            audited_by=principal.name or "operator",
+            total_expected=audit_res.total_expected,
+            total_scanned=audit_res.total_scanned,
+            verified_count=audit_res.verified_count,
+            missing_count=audit_res.missing_count,
+            misplaced_count=audit_res.misplaced_count,
+            discrepancies=discrepancies,
+            created_at=audit_res.created_at,
+        )
+        inventory_store.record_shelf_audit(audit_record)
+
+        return audit_res.to_dict()
+
+    @app.get("/inventory/audits")
+    def list_shelf_audits(
+        limit: int = 20,
+        principal: Principal = Depends(require_read),
+    ) -> list[dict[str, Any]]:
+        audits = inventory_store.list_shelf_audits(tenant_id=principal.tenant_id, limit=limit)
+        return [
+            {
+                "id": a.id,
+                "section": a.section,
+                "shelf": a.shelf,
+                "audited_by": a.audited_by,
+                "total_expected": a.total_expected,
+                "total_scanned": a.total_scanned,
+                "verified_count": a.verified_count,
+                "missing_count": a.missing_count,
+                "misplaced_count": a.misplaced_count,
+                "discrepancies": a.discrepancies,
+                "created_at": a.created_at.isoformat() if hasattr(a.created_at, "isoformat") else str(a.created_at),
+            }
+            for a in audits
+        ]
 
 
     

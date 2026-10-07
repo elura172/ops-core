@@ -934,6 +934,8 @@ $("camera-file").onchange = async event => {
 
     const formData = new FormData();
     formData.append("file", fileToUpload);
+    if ($("intake-section")) formData.append("section", $("intake-section").value.trim() || "General");
+    if ($("intake-shelf")) formData.append("shelf", $("intake-shelf").value.trim() || "");
 
     const epoch = generation;
     const response = await fetch("/intake/camera", {
@@ -1002,16 +1004,88 @@ if ($("btn-sample-stack")) {
 let inventoryItems = [];
 async function renderBookshelf() {
   const list = $("bookshelf-items"); list.replaceChildren();
-  if (!inventoryItems.length) {
-    list.append(node("p", "Your bookshelf is empty. Approved book intakes will appear here once executed.", "empty"));
+
+  // Populate section dropdown
+  const sectionFilter = $("bookshelf-filter-section");
+  if (sectionFilter) {
+    const currentSec = sectionFilter.value || "ALL";
+    const sections = Array.from(new Set(inventoryItems.map(i => i.section || "General"))).filter(Boolean).sort();
+    sectionFilter.innerHTML = '<option value="ALL">All Sections</option>';
+    sections.forEach(s => {
+      const opt = document.createElement("option");
+      opt.value = s;
+      opt.textContent = s;
+      if (s === currentSec) opt.selected = true;
+      sectionFilter.appendChild(opt);
+    });
+  }
+
+  const shelfFilterVal = ($("bookshelf-filter-shelf") ? $("bookshelf-filter-shelf").value.trim().toLowerCase() : "");
+  const searchVal = ($("bookshelf-search") ? $("bookshelf-search").value.trim().toLowerCase() : "");
+  const filterSecVal = ($("bookshelf-filter-section") ? $("bookshelf-filter-section").value : "ALL");
+
+  const filtered = inventoryItems.filter(item => {
+    if (filterSecVal !== "ALL" && (item.section || "General") !== filterSecVal) return false;
+    if (shelfFilterVal && !(item.shelf || "").toLowerCase().includes(shelfFilterVal)) return false;
+    if (searchVal) {
+      const matchTitle = (item.title || "").toLowerCase().includes(searchVal);
+      const matchAuthor = (item.authors || []).join(" ").toLowerCase().includes(searchVal);
+      const matchSku = (item.sku || "").toLowerCase().includes(searchVal);
+      const matchShelf = (item.shelf || "").toLowerCase().includes(searchVal);
+      if (!matchTitle && !matchAuthor && !matchSku && !matchShelf) return false;
+    }
+    return true;
+  });
+
+  if (!filtered.length) {
+    const msg = inventoryItems.length ? "No books matched current shelf filters." : "Your bookshelf is empty. Approved book intakes will appear here once executed.";
+    list.append(node("p", msg, "empty"));
     return;
   }
-  for (const item of inventoryItems) {
+
+  for (const item of filtered) {
     const card = node("div", undefined, "bookshelf-card");
     
     card.append(node("h3", item.title));
     const meta = node("div", undefined, "bookshelf-meta");
     meta.innerHTML = `<strong>${item.authors.join(", ")}</strong><br>SKU: <code>${item.sku}</code> · Format: ${human(item.format)} · Grade: ${item.condition} · In-Store: $${Number(item.in_store_price_cad).toFixed(2)} CAD`;
+    
+    // Physical location badge
+    const locRow = node("div");
+    locRow.style.margin = "6px 0";
+    const locBadge = node("span", undefined, "bookshelf-location-badge");
+    locBadge.innerHTML = `📍 <strong>${item.section || "General"}</strong> · ${item.shelf || "Unassigned"} <small style="opacity:0.6; margin-left:4px;">✏️</small>`;
+    locBadge.title = "Click to update physical section or shelf";
+    locBadge.onclick = async () => {
+      const newSec = prompt(`Update Section for "${item.title}":`, item.section || "General");
+      if (newSec === null) return;
+      const newShelf = prompt(`Update Shelf for "${item.title}":`, item.shelf || "");
+      if (newShelf === null) return;
+      try {
+        await api(`/inventory/${encodeURIComponent(item.sku)}`, {
+          method: "PUT",
+          body: JSON.stringify({ section: newSec.trim() || "General", shelf: newShelf.trim() })
+        });
+        message(`Updated location for ${item.sku} to ${newSec} / ${newShelf}.`);
+        loadBookshelf();
+      } catch(err) {
+        alert(err.message);
+      }
+    };
+    locRow.append(locBadge);
+
+    // Audit freshness badge
+    const auditBadge = node("span", undefined, "bookshelf-audit-badge");
+    if (item.last_audited_at) {
+      const auditDate = new Date(item.last_audited_at).toLocaleDateString();
+      auditBadge.className = "bookshelf-audit-badge fresh";
+      auditBadge.innerHTML = `✓ Audited ${auditDate}`;
+    } else {
+      auditBadge.className = "bookshelf-audit-badge stale";
+      auditBadge.innerHTML = `⚠️ Unaudited`;
+    }
+    locRow.append(auditBadge);
+    meta.append(locRow);
     card.append(meta);
     
     if (item.status === "active") {
@@ -1083,6 +1157,282 @@ async function loadBookshelf() {
   } catch(e) { message(e.message); }
 }
 
+async function showShelfAuditModal() {
+  const overlay = node("div", undefined, "sanctuary-modal-overlay");
+  const modal = node("div", undefined, "audit-modal");
+
+  const header = node("div", undefined, "sanctuary-header");
+  header.append(node("h3", "🔍 Physical Shelf Audit & Reconciliation"));
+  const closeBtn = node("button", "✕", "ghost-sm");
+  closeBtn.onclick = () => overlay.remove();
+  header.append(closeBtn);
+  modal.append(header);
+
+  const sub = node("p", "Snap or upload a photo of the physical books on this shelf to verify inventory, detect misplaced volumes, and flag missing items.", "muted");
+  sub.style.fontSize = "12.5px";
+  modal.append(sub);
+
+  const targetRow = node("div");
+  targetRow.style.display = "flex";
+  targetRow.style.gap = "12px";
+  targetRow.style.margin = "14px 0";
+
+  const secInput = node("input");
+  secInput.placeholder = "Target Section (e.g. Sci-Fi / Fantasy)";
+  secInput.value = ($("bookshelf-filter-section") && $("bookshelf-filter-section").value !== "ALL") ? $("bookshelf-filter-section").value : "Sci-Fi / Fantasy";
+  secInput.style.flex = "1";
+
+  const shelfInput = node("input");
+  shelfInput.placeholder = "Target Shelf (e.g. B-03)";
+  shelfInput.value = ($("bookshelf-filter-shelf") ? $("bookshelf-filter-shelf").value.trim() : "") || "B-03";
+  shelfInput.style.flex = "1";
+
+  targetRow.append(secInput, shelfInput);
+  modal.append(targetRow);
+
+  const fileBox = node("div");
+  fileBox.style.padding = "16px";
+  fileBox.style.border = "2px dashed var(--line)";
+  fileBox.style.borderRadius = "8px";
+  fileBox.style.textAlign = "center";
+  fileBox.style.margin = "14px 0";
+
+  const fileInput = node("input");
+  fileInput.type = "file";
+  fileInput.accept = "image/*,.heic,.heif,.jpg,.jpeg,.png,.webp";
+  fileInput.id = "audit-file-input";
+
+  const statusP = node("p", "Select or snap shelf photo to begin audit", "muted");
+  statusP.style.marginTop = "8px";
+
+  const sampleAuditBtn = node("button", "📚 Audit with Sample Stack", "ghost-sm");
+  sampleAuditBtn.style.marginTop = "8px";
+  sampleAuditBtn.onclick = async () => {
+    sampleAuditBtn.disabled = true;
+    statusP.textContent = "Reconciling shelf with sample vision extraction...";
+    try {
+      const data = await api("/inventory/audit/direct", {
+        method: "POST",
+        body: JSON.stringify({
+          section: secInput.value.trim() || "General",
+          shelf: shelfInput.value.trim(),
+          scanned_books: [
+            { title: "Dune", authors: ["Frank Herbert"], raw_spine_text: "DUNE HERBERT" },
+            { title: "Do Androids Dream of Electric Sheep?", authors: ["Philip K. Dick"], raw_spine_text: "DO ANDROIDS DREAM OF ELECTRIC SHEEP" },
+            { title: "The Lord of the Rings", authors: ["J.R.R. Tolkien"], raw_spine_text: "TOLKIEN LOTR" }
+          ]
+        })
+      });
+      statusP.textContent = `Audit complete: ${data.verified_count} verified, ${data.missing_count} missing, ${data.misplaced_count} misplaced.`;
+      renderAuditResults(data, resultsContainer, secInput.value.trim(), shelfInput.value.trim(), overlay);
+      loadBookshelf();
+    } catch(err) {
+      statusP.textContent = `Audit failed: ${err.message}`;
+      sampleAuditBtn.disabled = false;
+    }
+  };
+
+  fileBox.append(fileInput, statusP, sampleAuditBtn);
+  modal.append(fileBox);
+
+  const resultsContainer = node("div");
+  modal.append(resultsContainer);
+
+  fileInput.onchange = async (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    const sec = secInput.value.trim() || "General";
+    const sh = shelfInput.value.trim();
+    statusP.textContent = `Analyzing shelf spines with Corvus Vision...`;
+    fileInput.disabled = true;
+
+    try {
+      const compressed = await prepareImageFile(file);
+      const fd = new FormData();
+      fd.append("file", compressed);
+      fd.append("section", sec);
+      fd.append("shelf", sh);
+
+      const res = await fetch("/inventory/audit", {
+        method: "POST",
+        headers: { "Authorization": `Bearer ${token}` },
+        body: fd
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "Audit failed");
+
+      statusP.textContent = `Audit completed: ${data.verified_count} verified, ${data.missing_count} missing, ${data.misplaced_count} misplaced.`;
+      renderAuditResults(data, resultsContainer, sec, sh, overlay);
+      loadBookshelf();
+    } catch (err) {
+      statusP.textContent = `Audit error: ${err.message}`;
+      fileInput.disabled = false;
+    }
+  };
+
+  overlay.append(modal);
+  document.body.append(overlay);
+  overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+}
+
+function renderAuditResults(data, container, section, shelf, overlay) {
+  container.replaceChildren();
+
+  const metrics = node("div", undefined, "audit-metrics-row");
+  const m1 = node("div", undefined, "audit-metric-box");
+  m1.append(node("div", String(data.verified_count), "audit-metric-num"), node("div", "Verified", "audit-metric-lbl"));
+  m1.querySelector(".audit-metric-num").style.color = "var(--green)";
+
+  const m2 = node("div", undefined, "audit-metric-box");
+  m2.append(node("div", String(data.missing_count), "audit-metric-num"), node("div", "Missing", "audit-metric-lbl"));
+  m2.querySelector(".audit-metric-num").style.color = "var(--red)";
+
+  const m3 = node("div", undefined, "audit-metric-box");
+  m3.append(node("div", String(data.misplaced_count), "audit-metric-num"), node("div", "Misplaced", "audit-metric-lbl"));
+  m3.querySelector(".audit-metric-num").style.color = "var(--amber)";
+
+  const m4 = node("div", undefined, "audit-metric-box");
+  m4.append(node("div", `${Math.round(data.compliance_rate * 100)}%`, "audit-metric-num"), node("div", "Compliance", "audit-metric-lbl"));
+
+  metrics.append(m1, m2, m3, m4);
+  container.append(metrics);
+
+  // Missing Items Actionable List
+  if (data.missing_items && data.missing_items.length) {
+    const group = node("div", undefined, "audit-group");
+    group.append(node("div", `🔴 Missing From Shelf (${data.missing_items.length})`, "audit-group-title"));
+    data.missing_items.forEach(item => {
+      const row = node("div", undefined, "audit-item-row");
+      const textDiv = node("div");
+      textDiv.append(node("div", item.title, "audit-item-title"), node("div", `SKU: ${item.sku} · Registered on ${item.section} / ${item.shelf}`, "audit-item-sub"));
+      
+      const delistBtn = node("button", "Delist Stock", "danger-sm");
+      delistBtn.title = "Sets stock to 0 across marketplaces to prevent phantom sales";
+      delistBtn.onclick = async () => {
+        delistBtn.disabled = true;
+        try {
+          await api(`/inventory/${encodeURIComponent(item.sku)}`, { method: "DELETE" });
+          message(`Delisted missing volume ${item.sku} from connected marketplaces.`);
+          delistBtn.textContent = "✓ Delisted";
+        } catch(e) {
+          alert(e.message);
+          delistBtn.disabled = false;
+        }
+      };
+      row.append(textDiv, delistBtn);
+      group.append(row);
+    });
+    container.append(group);
+  }
+
+  // Misplaced Items Actionable List
+  if (data.misplaced_items && data.misplaced_items.length) {
+    const group = node("div", undefined, "audit-group");
+    group.append(node("div", `🟡 Misplaced Here (${data.misplaced_items.length})`, "audit-group-title"));
+    data.misplaced_items.forEach(item => {
+      const row = node("div", undefined, "audit-item-row");
+      const textDiv = node("div");
+      textDiv.append(node("div", item.title, "audit-item-title"), node("div", `SKU: ${item.sku} · Registered at: ${item.registered_section} / ${item.registered_shelf}`, "audit-item-sub"));
+      
+      const relocateBtn = node("button", `Move to ${shelf || section}`, "ghost-sm");
+      relocateBtn.onclick = async () => {
+        relocateBtn.disabled = true;
+        try {
+          await api(`/inventory/${encodeURIComponent(item.sku)}`, {
+            method: "PUT",
+            body: JSON.stringify({ section: section, shelf: shelf })
+          });
+          message(`Moved ${item.sku} to ${section} / ${shelf}.`);
+          relocateBtn.textContent = "✓ Relocated";
+        } catch(e) {
+          alert(e.message);
+          relocateBtn.disabled = false;
+        }
+      };
+      row.append(textDiv, relocateBtn);
+      group.append(row);
+    });
+    container.append(group);
+  }
+
+  // Verified Items List
+  if (data.verified_items && data.verified_items.length) {
+    const group = node("div", undefined, "audit-group");
+    group.append(node("div", `🟢 Verified in Place (${data.verified_items.length})`, "audit-group-title"));
+    data.verified_items.forEach(item => {
+      const row = node("div", undefined, "audit-item-row");
+      row.append(node("div", `✓ ${item.title}`, "audit-item-title"), node("span", `Match: ${Math.round(item.match_score * 100)}%`, "muted"));
+      group.append(row);
+    });
+    container.append(group);
+  }
+
+  // Uncataloged Items
+  if (data.uncataloged_items && data.uncataloged_items.length) {
+    const group = node("div", undefined, "audit-group");
+    group.append(node("div", `⚪ Uncataloged Spines (${data.uncataloged_items.length})`, "audit-group-title"));
+    data.uncataloged_items.forEach(item => {
+      const row = node("div", undefined, "audit-item-row");
+      row.append(node("div", `Spine: ${item.title || item.raw_spine_text}`, "audit-item-title"), node("span", "Not in catalog", "muted"));
+      group.append(row);
+    });
+    container.append(group);
+  }
+}
+
+async function showShelfAuditHistoryModal() {
+  const overlay = node("div", undefined, "sanctuary-modal-overlay");
+  const modal = node("div", undefined, "audit-modal");
+
+  const header = node("div", undefined, "sanctuary-header");
+  header.append(node("h3", "📜 Shelf Audit Log & Compliance History"));
+  const closeBtn = node("button", "✕", "ghost-sm");
+  closeBtn.onclick = () => overlay.remove();
+  header.append(closeBtn);
+  modal.append(header);
+
+  const loadingP = node("p", "Loading audit history...", "muted");
+  modal.append(loadingP);
+  overlay.append(modal);
+  document.body.append(overlay);
+  overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+
+  try {
+    const audits = await api("/inventory/audits");
+    loadingP.remove();
+
+    if (!audits.length) {
+      modal.append(node("p", "No audits recorded yet. Run 'Audit Shelf' on any section to begin.", "muted"));
+      return;
+    }
+
+    const list = node("div");
+    list.style.display = "flex";
+    list.style.flexDirection = "column";
+    list.style.gap = "8px";
+    list.style.marginTop = "12px";
+
+    audits.forEach(a => {
+      const row = node("div", undefined, "audit-item-row");
+      const dateStr = new Date(a.created_at).toLocaleString();
+      const compRate = a.total_expected > 0 ? Math.round((a.verified_count / a.total_expected) * 100) : 100;
+      
+      const left = node("div");
+      left.innerHTML = `<strong>${a.section} · ${a.shelf || "General"}</strong><br><span class="muted">${dateStr} by ${a.audited_by}</span>`;
+      
+      const right = node("div");
+      right.style.textAlign = "right";
+      right.innerHTML = `<strong>${compRate}% Compliance</strong><br><span class="muted">${a.verified_count}✓ · ${a.missing_count} missing · ${a.misplaced_count} misplaced</span>`;
+      
+      row.append(left, right);
+      list.append(row);
+    });
+    modal.append(list);
+  } catch(err) {
+    loadingP.textContent = `Failed to load audit history: ${err.message}`;
+  }
+}
+
 function switchTab(active) {
   const tabs = {
     queue: $("tab-queue"),
@@ -1119,6 +1469,11 @@ function switchTab(active) {
 
 if ($("tab-queue")) $("tab-queue").onclick = () => switchTab("queue");
 if ($("tab-bookshelf")) $("tab-bookshelf").onclick = () => switchTab("bookshelf");
+if ($("btn-audit-shelf")) $("btn-audit-shelf").onclick = () => showShelfAuditModal();
+if ($("btn-audit-history")) $("btn-audit-history").onclick = () => showShelfAuditHistoryModal();
+if ($("bookshelf-filter-section")) $("bookshelf-filter-section").onchange = () => renderBookshelf();
+if ($("bookshelf-filter-shelf")) $("bookshelf-filter-shelf").oninput = () => renderBookshelf();
+if ($("bookshelf-search")) $("bookshelf-search").oninput = () => renderBookshelf();
 if ($("tab-intake")) $("tab-intake").onclick = () => switchTab("intake");
 if ($("tab-settings")) $("tab-settings").onclick = () => switchTab("settings");
 if ($("tab-analytics")) $("tab-analytics").onclick = () => switchTab("analytics");

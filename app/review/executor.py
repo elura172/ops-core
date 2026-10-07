@@ -72,11 +72,21 @@ class ApprovedActionExecutor:
             "sync_inventory": self._sync_inventory,
             "fulfill_order": self._fulfill_order,
             "resolve_order_contention": self._resolve_order_contention,
+            "update_location": self._update_location,
         }
 
     @property
     def allowed_operations(self) -> frozenset[str]:
         return frozenset(self.handlers)
+
+    def _update_location(self, payload: dict[str, Any]) -> dict[str, Any]:
+        sku = payload["sku"]
+        section = payload.get("section", "General")
+        shelf = payload.get("shelf", "")
+        tenant_id = payload.get("tenant_id", 1)
+        if self.inventory_store:
+            self.inventory_store.update_location(sku, section, shelf, tenant_id=tenant_id)
+        return {"status": "ok", "sku": sku, "section": section, "shelf": shelf}
 
     def _publish(self, payload: dict[str, Any]) -> dict[str, Any]:
         request = PublishRequest(
@@ -106,6 +116,8 @@ class ApprovedActionExecutor:
             from datetime import UTC, datetime
             from decimal import Decimal
             details = result["details"]
+            section = payload.get("section") or details.get("section") or "General"
+            shelf = payload.get("shelf") or details.get("shelf") or ""
             item = InventoryItem(
                 sku=details["sku"],
                 title=details["title"],
@@ -116,7 +128,9 @@ class ApprovedActionExecutor:
                 online_price_cad=Decimal(str(details["online_price_cad"])),
                 status="active",
                 created_at=datetime.now(UTC),
-                updated_at=datetime.now(UTC)
+                updated_at=datetime.now(UTC),
+                section=section,
+                shelf=shelf,
             )
             self.inventory_store.add(item)
             

@@ -202,13 +202,40 @@
 
       <!-- VIEW 2: BOOKSHELF (INVENTORY) -->
       <section id="bookshelf-panel" class="panel bookshelf-panel" hidden>
-        <div class="panel-header">
+        <div class="panel-header bookshelf-header-row">
           <div>
-            <p class="eyebrow">ACTIVE CATALOG</p>
+            <p class="eyebrow">ACTIVE CATALOG & LOCATIONS</p>
             <h2>Inventory Bookshelf</h2>
-            <p class="muted">Cataloged volumes active across in-store and connected digital marketplaces.</p>
+            <p class="muted">Cataloged volumes active across physical shelves and connected digital marketplaces.</p>
+          </div>
+          <div class="bookshelf-toolbar-actions">
+            <button type="button" id="btn-audit-shelf" class="primary">
+              <span>🔍 Audit Shelf</span>
+            </button>
+            <button type="button" id="btn-audit-history" class="ghost-sm" title="View past shelf audits">
+              <span>📜 Audit Log</span>
+            </button>
           </div>
         </div>
+
+        <!-- BOOKSHELF CONTROLS -->
+        <div class="bookshelf-controls">
+          <div class="bookshelf-control-item">
+            <label for="bookshelf-filter-section">Section</label>
+            <select id="bookshelf-filter-section">
+              <option value="ALL">All Sections</option>
+            </select>
+          </div>
+          <div class="bookshelf-control-item">
+            <label for="bookshelf-filter-shelf">Shelf</label>
+            <input id="bookshelf-filter-shelf" type="text" placeholder="e.g. B-03">
+          </div>
+          <div class="bookshelf-control-item flex-grow">
+            <label for="bookshelf-search">Search Catalog</label>
+            <input id="bookshelf-search" type="search" placeholder="Search title, author, SKU, or shelf...">
+          </div>
+        </div>
+
         <div id="bookshelf-items" class="bookshelf-grid"></div>
       </section>
 
@@ -224,6 +251,18 @@
 
         <div class="intake-dropzone">
           <form id="camera-upload" class="camera-upload-form">
+            <!-- LOCATION ASSIGNMENT FOR INTAKE -->
+            <div class="intake-location-bar">
+              <div class="intake-loc-field">
+                <label for="intake-section">Assign Section</label>
+                <input id="intake-section" type="text" placeholder="e.g. Sci-Fi / Fantasy" value="General">
+              </div>
+              <div class="intake-loc-field">
+                <label for="intake-shelf">Assign Shelf</label>
+                <input id="intake-shelf" type="text" placeholder="e.g. B-03" value="">
+              </div>
+            </div>
+
             <label class="camera-snap-cta">
               <input type="file" id="camera-file" accept="image/*,.heic,.heif,.jpg,.jpeg,.png,.webp" hidden>
               <span class="snap-icon">📷</span>
