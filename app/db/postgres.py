@@ -119,7 +119,7 @@ class PostgresReviewStore:
         return self.list_items(pending_only=True)
 
     def decide(
-        self, review_id: str, *, approve: bool, reviewer: str, reason: str = ""
+        self, review_id: str, *, approve: bool, reviewer: str, reason: str = "", payload_update: dict[str, Any] | None = None
     ) -> ReviewItem:
         if not reviewer.strip():
             raise ValueError("reviewer is required")
@@ -128,18 +128,34 @@ class PostgresReviewStore:
             item = self._fetch(connection, review_id)
             if item.status != ReviewStatus.PENDING:
                 raise ValueError("review item has already been decided")
-            cursor = connection.execute(
-                "UPDATE reviews SET status = %s, reviewer = %s, reason = %s, decided_at = %s "
-                "WHERE review_id = %s AND status = %s",
-                (
-                    status.value,
-                    reviewer,
-                    reason,
-                    datetime.now(UTC),
-                    review_id,
-                    ReviewStatus.PENDING.value,
-                ),
-            )
+            if payload_update:
+                _merge_payload(item.payload, payload_update)
+                cursor = connection.execute(
+                    "UPDATE reviews SET status = %s, reviewer = %s, reason = %s, decided_at = %s, payload = %s "
+                    "WHERE review_id = %s AND status = %s",
+                    (
+                        status.value,
+                        reviewer,
+                        reason,
+                        datetime.now(UTC),
+                        Jsonb(_json_safe(item.payload)),
+                        review_id,
+                        ReviewStatus.PENDING.value,
+                    ),
+                )
+            else:
+                cursor = connection.execute(
+                    "UPDATE reviews SET status = %s, reviewer = %s, reason = %s, decided_at = %s "
+                    "WHERE review_id = %s AND status = %s",
+                    (
+                        status.value,
+                        reviewer,
+                        reason,
+                        datetime.now(UTC),
+                        review_id,
+                        ReviewStatus.PENDING.value,
+                    ),
+                )
             if cursor.rowcount != 1:
                 raise ValueError("review item has already been decided")
             self._record(

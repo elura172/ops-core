@@ -32,9 +32,9 @@ class OperatorService:
         ]
 
     def decide(
-        self, review_id: str, approve: bool, reviewer: str, reason: str = ""
+        self, review_id: str, approve: bool, reviewer: str, reason: str = "", payload_update: dict[str, Any] | None = None
     ) -> dict[str, Any]:
-        item = self.reviews.decide(review_id, approve=approve, reviewer=reviewer, reason=reason)
+        item = self.reviews.decide(review_id, approve=approve, reviewer=reviewer, reason=reason, payload_update=payload_update)
         logger.info(
             "review.decided",
             review_id=item.review_id,

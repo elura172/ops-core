@@ -46,6 +46,7 @@ class Decision(BaseModel):
 
     approve: bool
     reason: str = ""
+    payload_update: dict[str, Any] | None = None
 
 
 def _authorize(tokens: TokenRegistry, permission: str) -> Callable[[str], Principal]:
@@ -203,7 +204,7 @@ def create_app(
         review_id: str, decision: Decision, principal: Principal = Depends(require_decide)
     ) -> dict[str, Any]:
         try:
-            return operator.decide(review_id, decision.approve, principal.name, decision.reason)
+            return operator.decide(review_id, decision.approve, principal.name, decision.reason, decision.payload_update)
         except KeyError as exc:
             raise HTTPException(404, "review not found") from exc
         except ValueError as exc:

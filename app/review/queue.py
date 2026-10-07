@@ -49,7 +49,7 @@ class ReviewStore(Protocol):
     def get(self, review_id: str) -> ReviewItem | None: ...
     def list_items(self, pending_only: bool = False) -> list[ReviewItem]: ...
     def decide(
-        self, review_id: str, *, approve: bool, reviewer: str, reason: str = ""
+        self, review_id: str, *, approve: bool, reviewer: str, reason: str = "", payload_update: dict[str, Any] | None = None
     ) -> ReviewItem: ...
     def claim_for_execution(self, review_id: str, actor: str) -> ReviewItem: ...
     def complete_execution(self, review_id: str, result: dict[str, Any]) -> ReviewItem: ...
@@ -68,6 +68,13 @@ def _validate_claim(item: ReviewItem) -> None:
     if item.status is not ReviewStatus.APPROVED:
         raise PermissionError("only approved review items may execute")
 
+
+def _merge_payload(base: dict[str, Any], update: dict[str, Any]) -> None:
+    for key, value in update.items():
+        if isinstance(value, dict) and key in base and isinstance(base[key], dict):
+            _merge_payload(base[key], value)
+        else:
+            base[key] = value
 
 class ReviewQueue:
     """In-process store for development and tests.
@@ -105,13 +112,15 @@ class ReviewQueue:
         return item
 
     def decide(
-        self, review_id: str, *, approve: bool, reviewer: str, reason: str = ""
+        self, review_id: str, *, approve: bool, reviewer: str, reason: str = "", payload_update: dict[str, Any] | None = None
     ) -> ReviewItem:
         if not reviewer.strip():
             raise ValueError("reviewer is required")
         item = self._require(review_id)
         if item.status != ReviewStatus.PENDING:
             raise ValueError("review item has already been decided")
+        if payload_update:
+            _merge_payload(item.payload, payload_update)
         item.status = ReviewStatus.APPROVED if approve else ReviewStatus.REJECTED
         item.reviewer = reviewer
         item.reason = reason

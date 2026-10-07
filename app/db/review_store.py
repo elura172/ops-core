@@ -151,7 +151,7 @@ class SQLiteReviewStore:
         return self.list_items(pending_only=True)
 
     def decide(
-        self, review_id: str, *, approve: bool, reviewer: str, reason: str = ""
+        self, review_id: str, *, approve: bool, reviewer: str, reason: str = "", payload_update: dict[str, Any] | None = None
     ) -> ReviewItem:
         if not reviewer.strip():
             raise ValueError("reviewer is required")
@@ -161,18 +161,34 @@ class SQLiteReviewStore:
             item = self._fetch(connection, review_id)
             if item.status != ReviewStatus.PENDING:
                 raise ValueError("review item has already been decided")
-            connection.execute(
-                "UPDATE reviews SET status = ?, reviewer = ?, reason = ?, decided_at = ? "
-                "WHERE review_id = ? AND status = ?",
-                (
-                    status.value,
-                    reviewer,
-                    reason,
-                    decided_at.isoformat(),
-                    review_id,
-                    ReviewStatus.PENDING.value,
-                ),
-            )
+            if payload_update:
+                _merge_payload(item.payload, payload_update)
+                connection.execute(
+                    "UPDATE reviews SET status = ?, reviewer = ?, reason = ?, decided_at = ?, payload = ? "
+                    "WHERE review_id = ? AND status = ?",
+                    (
+                        status.value,
+                        reviewer,
+                        reason,
+                        decided_at.isoformat(),
+                        json.dumps(item.payload, sort_keys=True),
+                        review_id,
+                        ReviewStatus.PENDING.value,
+                    ),
+                )
+            else:
+                connection.execute(
+                    "UPDATE reviews SET status = ?, reviewer = ?, reason = ?, decided_at = ? "
+                    "WHERE review_id = ? AND status = ?",
+                    (
+                        status.value,
+                        reviewer,
+                        reason,
+                        decided_at.isoformat(),
+                        review_id,
+                        ReviewStatus.PENDING.value,
+                    ),
+                )
             self._record(
                 connection,
                 AuditEvent(
