@@ -442,7 +442,11 @@ def create_app(
     async def process_camera_upload(
         file: UploadFile = File(...), principal: Principal = Depends(require_decide)
     ) -> dict[str, Any]:
-        from app.ai.book_vision import GeminiBookVisionProvider, resolve_gemini_api_key
+        from app.ai.book_vision import (
+            GeminiBookVisionProvider,
+            prepare_vision_image,
+            resolve_gemini_api_key,
+        )
         from app.pricing import PricingEngine
         from app.amazon.scraper import AmazonScraperClient, SnapshotStore
 
@@ -452,11 +456,16 @@ def create_app(
             raise HTTPException(500, "Vision AI not configured") from exc
 
         provider = GeminiBookVisionProvider(api_key=api_key)
-        image_bytes = await file.read()
+        raw_bytes = await file.read()
+        if not raw_bytes:
+            raise HTTPException(400, "Uploaded image file is empty")
+
+        image_bytes, mime_type = prepare_vision_image(raw_bytes, file.content_type)
         
         try:
-            extraction = await run_in_threadpool(provider.extract_stack, image_bytes, file.content_type or "image/jpeg")
+            extraction = await run_in_threadpool(provider.extract_stack, image_bytes, mime_type)
         except Exception as exc:
+            logger.error("Vision extraction failed", error=str(exc))
             raise HTTPException(502, f"Vision extraction failed: {exc}") from exc
 
         # Initialize Pricing Engine

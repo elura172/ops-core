@@ -110,3 +110,60 @@ def test_gemini_provider_parses_valid_response():
         assert book.title == "Snow Crash"
         assert book.authors == ("Neal Stephenson",)
         assert book.format == BookFormat.TRADE_PAPERBACK
+
+
+def test_prepare_vision_image_magic_bytes_and_resizing():
+    import io
+    from PIL import Image
+    from app.ai.book_vision import prepare_vision_image
+
+    # Create large image
+    im = Image.new("RGB", (2000, 1500), color="blue")
+    buf = io.BytesIO()
+    im.save(buf, format="JPEG")
+    raw_jpeg = buf.getvalue()
+
+    sanitized, mime = prepare_vision_image(raw_jpeg, "image/jpg")
+    assert mime == "image/jpeg"
+    assert len(sanitized) > 0
+
+    with Image.open(io.BytesIO(sanitized)) as check_im:
+        assert max(check_im.size) <= 1600
+
+    # Test PNG detection
+    png_im = Image.new("RGBA", (100, 100), color="green")
+    png_buf = io.BytesIO()
+    png_im.save(png_buf, format="PNG")
+    raw_png = png_buf.getvalue()
+
+    sanitized_png, mime_png = prepare_vision_image(raw_png, "application/octet-stream")
+    # Normalized to JPEG
+    assert mime_png == "image/jpeg"
+
+    # Test pass-through on non-image bytes
+    raw_junk = b"not-a-real-image-payload"
+    sanitized_junk, mime_junk = prepare_vision_image(raw_junk, "image/heic")
+    assert mime_junk == "image/heic"
+    assert sanitized_junk == raw_junk
+
+
+def test_gemini_provider_strips_markdown_code_fences():
+    mock_payload = {
+        "candidates": [
+            {
+                "content": {
+                    "parts": [
+                        {
+                            "text": "```json\n{\"books\": [], \"orientation\": \"horizontal_stack\", \"unidentified_spines_count\": 0}\n```"
+                        }
+                    ]
+                }
+            }
+        ]
+    }
+    provider = GeminiBookVisionProvider(api_key="fake-key")
+    with patch.object(provider, "_post_with_retry", return_value=mock_payload):
+        result = provider.extract_stack(b"fake-bytes")
+        assert len(result.books) == 0
+        assert result.orientation == "horizontal_stack"
+

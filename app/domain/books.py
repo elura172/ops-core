@@ -52,7 +52,9 @@ class SpineExtractionItem:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> SpineExtractionItem:
-        raw_box = data.get("box_2d") or [0, 0, 0, 0]
+        raw_box = list(data.get("box_2d") or [])
+        while len(raw_box) < 4:
+            raw_box.append(0)
         box = (
             int(raw_box[0]),
             int(raw_box[1]),

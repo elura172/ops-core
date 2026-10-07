@@ -73,6 +73,9 @@ class StructuredLogger:
             extra={"context": context, "correlation_id": get_correlation_id()},
         )
 
+    def debug(self, event: str, **context: Any) -> None:
+        self._emit(logging.DEBUG, event, **context)
+
     def info(self, event: str, **context: Any) -> None:
         self._emit(logging.INFO, event, **context)
 

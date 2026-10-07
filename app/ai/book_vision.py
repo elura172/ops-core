@@ -168,6 +168,55 @@ def resolve_gemini_api_key(explicit_key: str | None = None) -> str:
     )
 
 
+def prepare_vision_image(image_bytes: bytes, raw_mime: str | None = None) -> tuple[bytes, str]:
+    """Sanitizes image bytes, auto-orients EXIF, downscales massive dimensions, and detects clean MIME type."""
+    from PIL import Image, ImageOps
+    import io
+
+    if not image_bytes:
+        raise ValueError("image_bytes cannot be empty")
+
+    cleaned_mime = (raw_mime or "").split(";")[0].strip().lower()
+
+    # Magic byte inspection
+    if len(image_bytes) >= 3 and image_bytes[:3] == b"\xff\xd8\xff":
+        detected_mime = "image/jpeg"
+    elif len(image_bytes) >= 8 and image_bytes[:8] == b"\x89PNG\r\n\x1a\n":
+        detected_mime = "image/png"
+    elif len(image_bytes) >= 12 and image_bytes[:4] == b"RIFF" and image_bytes[8:12] == b"WEBP":
+        detected_mime = "image/webp"
+    elif len(image_bytes) >= 12 and image_bytes[4:8] == b"ftyp":
+        brand = image_bytes[8:12]
+        if brand in (b"heic", b"heix", b"heim", b"heis", b"mif1", b"msf1", b"hevc", b"hevx"):
+            detected_mime = "image/heic"
+        elif brand in (b"avif", b"avis"):
+            detected_mime = "image/avif"
+        else:
+            detected_mime = cleaned_mime if cleaned_mime in ("image/heic", "image/heif") else "image/jpeg"
+    else:
+        if cleaned_mime in ("image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"):
+            detected_mime = cleaned_mime
+        elif cleaned_mime in ("image/jpg", "image/pjpeg"):
+            detected_mime = "image/jpeg"
+        else:
+            detected_mime = "image/jpeg"
+
+    # Pillow normalization & EXIF auto-rotation
+    try:
+        with Image.open(io.BytesIO(image_bytes)) as img:
+            img = ImageOps.exif_transpose(img)
+            max_dim = 1600
+            if img.width > max_dim or img.height > max_dim:
+                img.thumbnail((max_dim, max_dim), Image.Resampling.LANCZOS)
+            buf = io.BytesIO()
+            img.convert("RGB").save(buf, format="JPEG", quality=85, optimize=True)
+            return buf.getvalue(), "image/jpeg"
+    except Exception as exc:
+        logger.debug(f"Pillow normalization skipped: {exc}")
+        safe_mime = detected_mime if detected_mime in ("image/jpeg", "image/png", "image/webp", "image/heic", "image/heif") else "image/jpeg"
+        return image_bytes, safe_mime
+
+
 class BookVisionProvider(Protocol):
     """Protocol for book stack vision extraction providers."""
 
@@ -200,6 +249,13 @@ class GeminiBookVisionProvider(BookVisionProvider):
         if not image_bytes:
             raise ValueError("image_bytes cannot be empty")
 
+        valid_mimes = {"image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"}
+        clean_mime = (mime_type or "image/jpeg").split(";")[0].strip().lower()
+        if clean_mime in ("image/jpg", "image/pjpeg"):
+            clean_mime = "image/jpeg"
+        if clean_mime not in valid_mimes:
+            clean_mime = "image/jpeg"
+
         b64_img = base64.b64encode(image_bytes).decode("ascii")
 
         body: dict[str, Any] = {
@@ -208,7 +264,7 @@ class GeminiBookVisionProvider(BookVisionProvider):
                     "parts": [
                         {
                             "inline_data": {
-                                "mime_type": mime_type,
+                                "mime_type": clean_mime,
                                 "data": b64_img,
                             }
                         },
@@ -298,9 +354,17 @@ class GeminiBookVisionProvider(BookVisionProvider):
         if not parts:
             raise TerminalProviderError("Gemini candidate contains no content parts")
 
-        text = parts[0].get("text", "")
+        text = parts[0].get("text", "").strip()
         if not text:
             raise TerminalProviderError("Empty text payload from Gemini candidate")
+
+        if text.startswith("```"):
+            lines = text.splitlines()
+            if lines[0].startswith("```"):
+                lines = lines[1:]
+            if lines and lines[-1].startswith("```"):
+                lines = lines[:-1]
+            text = "\n".join(lines).strip()
 
         try:
             parsed_json = json.loads(text)

@@ -75,3 +75,52 @@ def test_preview_decide_execute_result_flow(dashboard_client):
     assert item["reviewer"] == "ada"
     assert item["executed_by"] == "grace"
     assert item["result"]["dry_run"] is True
+
+
+def test_camera_upload_endpoint(dashboard_client):
+    from unittest.mock import patch
+    from app.domain.books import BookFormat, BookStackExtraction, SpineExtractionItem
+
+    reviewer = auth(REVIEWER_TOKEN)
+
+    mock_extraction = BookStackExtraction(
+        books=(
+            SpineExtractionItem(
+                stack_order=1,
+                box_2d=(10, 20, 100, 200),
+                title="Dune",
+                subtitle="Chronicles",
+                authors=("Frank Herbert",),
+                format=BookFormat.HARDCOVER_WITH_JACKET,
+                visible_condition_cues=("clean_as_new",),
+                raw_spine_text="DUNE FRANK HERBERT",
+                confidence="high",
+            ),
+        ),
+        orientation="horizontal_stack",
+    )
+
+    with (
+        patch("app.ai.book_vision.resolve_gemini_api_key", return_value="fake-key"),
+        patch(
+            "app.ai.book_vision.GeminiBookVisionProvider.extract_stack",
+            return_value=mock_extraction,
+        ),
+    ):
+        files = {"file": ("books.jpg", b"\xff\xd8\xff\xe0fakejpeg", "image/jpeg")}
+        resp = dashboard_client.post("/intake/camera", files=files, headers=reviewer)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["processed"] == 1
+        assert data["orientation"] == "horizontal_stack"
+        assert len(data["proposals"]) == 1
+
+
+def test_sample_stack_endpoint(dashboard_client):
+    reviewer = auth(REVIEWER_TOKEN)
+    resp = dashboard_client.post("/intake/sample", headers=reviewer)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["processed"] == 3
+    assert len(data["proposals"]) == 3
+

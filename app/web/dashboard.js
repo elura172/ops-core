@@ -527,72 +527,182 @@ $("propose-sync").onsubmit = async event => {
 window.addEventListener("pagehide", disconnect);
 
 
-$("camera-file").onchange = async event => {
-  const file = event.target.files[0];
-  if (!file) return;
-  
-  $("camera-status").textContent = `Processing image...`;
-  const button = $("camera-upload").querySelector("label");
-  button.style.opacity = "0.5";
-  button.style.pointerEvents = "none";
-  
+async function prepareImageFile(file) {
+  if (!file) return file;
+
+  // Strategy 1: Modern off-thread createImageBitmap
+  if (typeof window.createImageBitmap === "function") {
+    try {
+      const bitmap = await window.createImageBitmap(file);
+      const canvas = document.createElement("canvas");
+      let width = bitmap.width;
+      let height = bitmap.height;
+      const maxDim = 1600;
+      if (width > maxDim || height > maxDim) {
+        if (width > height) {
+          height = Math.round((height * maxDim) / width);
+          width = maxDim;
+        } else {
+          width = Math.round((width * maxDim) / height);
+          height = maxDim;
+        }
+      }
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(bitmap, 0, 0, width, height);
+      if (typeof bitmap.close === "function") bitmap.close();
+
+      const blob = await new Promise(res => canvas.toBlob(res, "image/jpeg", 0.82));
+      if (blob && blob.size > 0) {
+        const cleanName = (file.name || "stack_photo").replace(/\.[^.]+$/, "") + ".jpg";
+        return new File([blob], cleanName, { type: "image/jpeg" });
+      }
+    } catch (e) {
+      console.warn("createImageBitmap compression bypassed:", e);
+    }
+  }
+
+  // Strategy 2: HTML Image() element with safe timeout fallback
   try {
-    // Resize image to max 1200px to prevent Vercel 4.5MB limits and Gemini 503s on massive base64 payloads
-    const compressedFile = await new Promise((resolve, reject) => {
+    const compressed = await new Promise((resolve) => {
+      let objectUrl = "";
+      try {
+        objectUrl = URL.createObjectURL(file);
+      } catch (_) {
+        return resolve(file);
+      }
+
       const img = new Image();
-      img.onload = () => {
-        const canvas = document.createElement("canvas");
-        let width = img.width, height = img.height;
-        const max = 1500;
-        if (width > height && width > max) { height *= max / width; width = max; }
-        else if (height > max) { width *= max / height; height = max; }
-        
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext("2d");
-        ctx.drawImage(img, 0, 0, width, height);
-        
-        canvas.toBlob(blob => {
-          if (!blob) return reject(new Error("Canvas to Blob failed"));
-          resolve(new File([blob], file.name, { type: "image/jpeg" }));
-        }, "image/jpeg", 0.8);
+      let done = false;
+
+      const finish = (result) => {
+        if (done) return;
+        done = true;
+        try { URL.revokeObjectURL(objectUrl); } catch (_) {}
+        resolve(result);
       };
-      img.onerror = reject;
-      img.src = URL.createObjectURL(file);
+
+      const timer = setTimeout(() => finish(file), 3500);
+
+      img.onload = () => {
+        clearTimeout(timer);
+        try {
+          const canvas = document.createElement("canvas");
+          let width = img.width;
+          let height = img.height;
+          const maxDim = 1600;
+          if (width > maxDim || height > maxDim) {
+            if (width > height) {
+              height = Math.round((height * maxDim) / width);
+              width = maxDim;
+            } else {
+              width = Math.round((width * maxDim) / height);
+              height = maxDim;
+            }
+          }
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext("2d");
+          ctx.drawImage(img, 0, 0, width, height);
+          canvas.toBlob(blob => {
+            if (blob && blob.size > 0) {
+              const cleanName = (file.name || "stack_photo").replace(/\.[^.]+$/, "") + ".jpg";
+              finish(new File([blob], cleanName, { type: "image/jpeg" }));
+            } else {
+              finish(file);
+            }
+          }, "image/jpeg", 0.82);
+        } catch (_) {
+          finish(file);
+        }
+      };
+
+      img.onerror = () => {
+        clearTimeout(timer);
+        finish(file); // NEVER throw or reject; fall back to raw file
+      };
+
+      img.src = objectUrl;
     });
 
-    $("camera-status").textContent = `Uploading ${compressedFile.name}...`;
+    return compressed || file;
+  } catch (_) {
+    return file;
+  }
+}
+
+$("camera-file").onchange = async event => {
+  const file = event.target.files && event.target.files[0];
+  if (!file) return;
+
+  const statusEl = $("camera-status");
+  const button = $("camera-upload").querySelector("label");
+
+  statusEl.textContent = `Preparing image (${(file.size / 1024).toFixed(0)} KB)...`;
+  if (button) {
+    button.style.opacity = "0.5";
+    button.style.pointerEvents = "none";
+  }
+
+  try {
+    let fileToUpload = file;
+    try {
+      fileToUpload = await prepareImageFile(file);
+    } catch (prepErr) {
+      console.warn("Client preparation failed, using raw file:", prepErr);
+      fileToUpload = file;
+    }
+
+    if (fileToUpload.size > 4.2 * 1024 * 1024) {
+      throw new Error(`Image is too large (${(fileToUpload.size / (1024 * 1024)).toFixed(1)} MB). Vercel payload limit is 4.5 MB. Please choose a photo under 4 MB.`);
+    }
+
+    statusEl.textContent = `Analyzing book stack with Gemini Vision...`;
+
     const formData = new FormData();
-    formData.append("file", compressedFile);
-    
+    formData.append("file", fileToUpload);
+
     const epoch = generation;
     const response = await fetch("/intake/camera", {
       method: "POST",
       headers: { "Authorization": `Bearer ${token}` },
       body: formData
     });
-    
+
     if (epoch !== generation) return;
+
     const text = await response.text();
     let body;
-    try { body = JSON.parse(text); } catch(_) { body = { detail: text || `Upload failed (${response.status})` }; }
-    if (!response.ok) throw new Error(formatError(body.detail) || "Upload failed");
-    
-    if (body.processed === 0) {
-      $("camera-status").textContent = "No book spines identified.";
-      message("No book spines were detected in this image. Ensure book spines and titles are clearly facing the camera, or try 'Load Sample Book Stack'.");
+    try {
+      body = JSON.parse(text);
+    } catch (_) {
+      body = { detail: text || `Upload failed (${response.status})` };
+    }
+
+    if (!response.ok) {
+      const errDetail = formatError(body.detail) || `Upload failed (${response.status})`;
+      throw new Error(errDetail);
+    }
+
+    if (!body.processed || body.processed === 0) {
+      statusEl.textContent = "No book spines identified.";
+      message("No book spines were detected in this image. Ensure book spines and titles are clearly visible and facing the camera, or try 'Load Sample Book Stack'.");
     } else {
-      $("camera-status").textContent = `Extracted ${body.processed} books (${human(body.orientation)}).`;
+      statusEl.textContent = `Extracted ${body.processed} books (${human(body.orientation)}).`;
       message(`Vision AI extracted ${body.processed} books from the stack and queued them for review.`);
       refresh();
     }
   } catch (error) {
-    $("camera-status").textContent = "Upload failed.";
-    message(error.message);
+    const msg = error && error.message ? error.message : String(error || "Upload failed");
+    statusEl.textContent = `Upload failed: ${msg}`;
+    message(`Upload failed: ${msg}`);
   } finally {
     $("camera-file").value = "";
-    button.style.opacity = "1";
-    button.style.pointerEvents = "auto";
+    if (button) {
+      button.style.opacity = "1";
+      button.style.pointerEvents = "auto";
+    }
   }
 };
 
