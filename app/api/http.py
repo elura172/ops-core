@@ -524,6 +524,27 @@ def create_app(
         )
         return JSONResponse(result, status_code=result.get("status", 200))
 
+    @app.post("/webhooks/abebooks")
+    async def abebooks_webhook_endpoint(
+        request: Request,
+        tenant_id: int = 1,
+    ) -> JSONResponse:
+        import json
+        body = await request.body()
+        try:
+            payload = json.loads(body.decode("utf-8")) if body else {}
+        except Exception:
+            return JSONResponse({"error": "invalid json"}, status_code=400)
+
+        from app.api.abebooks_service import AbeBooksService
+        result = await run_in_threadpool(
+            AbeBooksService.process_order,
+            payload,
+            operator,
+            tenant_id,
+        )
+        return JSONResponse(result, status_code=200)
+
 
     @app.post("/intake/camera")
     async def process_camera_upload(
@@ -1009,6 +1030,68 @@ def create_app(
     ) -> dict[str, Any]:
         # Triggers manual check for newly placed eBay orders
         return {"status": "synced", "marketplace": "ebay", "orders_checked": 0, "sales_delisted": 0}
+
+    def _get_tenant_abebooks_creds(tenant_id: int) -> tuple[str, str]:
+        import os
+        token = ""
+        try:
+            enc_integrations = user_store.get_tenant_integrations(tenant_id)
+            if "abebooks" in enc_integrations:
+                from app.auth import decrypt_credential
+                token = decrypt_credential(enc_integrations["abebooks"])
+        except Exception:
+            pass
+        if not token:
+            token = getattr(settings, "abebooks_api_key", "") or os.getenv("ABEBOOKS_API_KEY", "")
+        client_id = getattr(settings, "abebooks_client_id", "") or os.getenv("ABEBOOKS_CLIENT_ID", "ops_core_client")
+        return token, client_id
+
+    @app.get("/inventory/export/uiee")
+    def export_catalog_uiee(
+        status: str = "active",
+        section: str = "ALL",
+        principal: Principal = Depends(require_read),
+    ) -> PlainTextResponse:
+        from app.domain.uiee import UIEEExporter
+        items = inventory_store.list_all(tenant_id=principal.tenant_id)
+        uiee_text = UIEEExporter.export_catalog(
+            items=items,
+            status_filter=status,
+            section_filter=section,
+        )
+        filename = f"catalog_{section.lower()}_{status.lower()}.uiee" if section != "ALL" else f"catalog_{status.lower()}.uiee"
+        return PlainTextResponse(
+            content=uiee_text,
+            media_type="text/plain; charset=utf-8",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
+    @app.post("/inventory/abebooks/sync-orders")
+    def sync_abebooks_orders(
+        principal: Principal = Depends(require_decide)
+    ) -> dict[str, Any]:
+        from app.api.abebooks_service import AbeBooksService
+        api_key, client_id = _get_tenant_abebooks_creds(principal.tenant_id)
+        orders = AbeBooksService.fetch_orders(
+            api_key=api_key,
+            client_id=client_id,
+            dry_run=settings.dry_run,
+        )
+        processed = []
+        for order in orders:
+            res = AbeBooksService.process_order(
+                order,
+                operator=operator,
+                tenant_id=principal.tenant_id,
+            )
+            processed.append(res)
+        return {
+            "status": "synced",
+            "marketplace": "abebooks",
+            "orders_checked": len(orders),
+            "orders_processed": len(processed),
+            "details": processed,
+        }
 
 
     

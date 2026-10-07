@@ -94,6 +94,10 @@ class SQLiteUserStore:
                     "INSERT OR IGNORE INTO tenant_integrations (tenant_id, provider, encrypted_credentials) VALUES (1, 'ebay', ?)",
                     (encrypt_credential("v^1.1#mock-ebay-oauth-token"),)
                 )
+                self.connection.execute(
+                    "INSERT OR IGNORE INTO tenant_integrations (tenant_id, provider, encrypted_credentials) VALUES (1, 'abebooks', ?)",
+                    (encrypt_credential("abe_mock_api_key_123"),)
+                )
         except Exception as exc:
             import logging
             logging.getLogger("ops_core.users").warning("seed.users.failed: %s", exc)
@@ -223,6 +227,10 @@ class PostgresUserStore:
                 conn.execute(
                     "INSERT INTO tenant_integrations (tenant_id, provider, encrypted_credentials) VALUES (1, 'ebay', %s) ON CONFLICT DO NOTHING",
                     (encrypt_credential("v^1.1#mock-ebay-oauth-token"),),
+                )
+                conn.execute(
+                    "INSERT INTO tenant_integrations (tenant_id, provider, encrypted_credentials) VALUES (1, 'abebooks', %s) ON CONFLICT DO NOTHING",
+                    (encrypt_credential("abe_mock_api_key_123"),),
                 )
         except Exception as exc:
             import logging

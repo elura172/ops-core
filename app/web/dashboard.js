@@ -1609,6 +1609,46 @@ if ($("btn-sync-ebay-all")) {
     }
   };
 }
+if ($("btn-sync-abebooks")) {
+  $("btn-sync-abebooks").onclick = async () => {
+    const btn = $("btn-sync-abebooks");
+    btn.disabled = true;
+    btn.textContent = "Checking AbeBooks...";
+    try {
+      const res = await api("/inventory/abebooks/sync-orders", { method: "POST" });
+      message(`AbeBooks sync complete: checked ${res.orders_checked} order(s), processed ${res.orders_processed} sale(s).`);
+      btn.textContent = `✓ Checked (${res.orders_processed})`;
+    } catch(err) {
+      alert(`AbeBooks sync error: ${err.message}`);
+      btn.textContent = "📖 Sync AbeBooks";
+    } finally {
+      setTimeout(() => { btn.disabled = false; btn.textContent = "📖 Sync AbeBooks"; }, 3500);
+    }
+  };
+}
+if ($("btn-export-uiee")) {
+  $("btn-export-uiee").onclick = () => {
+    const sec = $("bookshelf-filter-section") ? $("bookshelf-filter-section").value : "ALL";
+    const token = session ? session.token : "";
+    const url = `/inventory/export/uiee?status=active&section=${encodeURIComponent(sec)}`;
+    fetch(url, { headers: { "Authorization": `Bearer ${token}` } })
+      .then(res => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.blob();
+      })
+      .then(blob => {
+        const u = window.URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = u;
+        link.download = `catalog_${sec.toLowerCase()}_active.uiee`;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        message(`UIEE catalog exported successfully for ${sec} section.`);
+      })
+      .catch(err => alert(`Export error: ${err.message}`));
+  };
+}
 if ($("btn-audit-shelf")) $("btn-audit-shelf").onclick = () => showShelfAuditModal();
 if ($("btn-audit-history")) $("btn-audit-history").onclick = () => showShelfAuditHistoryModal();
 if ($("bookshelf-filter-section")) $("bookshelf-filter-section").onchange = () => renderBookshelf();

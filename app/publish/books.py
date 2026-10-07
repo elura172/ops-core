@@ -104,13 +104,14 @@ class AbeBooksListingAdapter(BookListingAdapter):
         return None
 
     def delist_book(self, sku: str) -> bool:
-        if self.dry_run:
-            logger.info("abebooks.delist_book.dry_run", sku=sku)
-            return True
-        
-        # Stub logic for FTPS / REST API inventory removal
-        logger.info("abebooks.delist_book.success", sku=sku)
-        return True
+        from app.api.abebooks_service import AbeBooksService
+
+        return AbeBooksService.delist_book(
+            sku=sku,
+            api_key=self.api_key,
+            client_id=self.client_id,
+            dry_run=self.dry_run,
+        )
 
     def cancel_order(self, order_id: str, reason: str = "OUT_OF_STOCK") -> bool:
         if self.dry_run:

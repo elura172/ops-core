@@ -104,7 +104,7 @@ class ApprovedActionExecutor:
         from app.publish.books import SquareCatalogAdapter
         credentials = getattr(self, "current_credentials", {})
         adapters = (
-            AbeBooksListingAdapter(dry_run=True),
+            AbeBooksListingAdapter(dry_run=True, api_key=credentials.get("abebooks", "mock_key")),
             AmazonSPAPIAdapter(dry_run=True),
             BiblioListingAdapter(dry_run=True),
             AlibrisListingAdapter(dry_run=True),
@@ -147,7 +147,7 @@ class ApprovedActionExecutor:
         credentials = getattr(self, "current_credentials", {})
         
         adapters = (
-            AbeBooksListingAdapter(dry_run=True),
+            AbeBooksListingAdapter(dry_run=True, api_key=credentials.get("abebooks", "mock_key")),
             AmazonSPAPIAdapter(dry_run=True, refresh_token=credentials.get("amazon", "mock_token")),
             BiblioListingAdapter(dry_run=True),
             AlibrisListingAdapter(dry_run=True),
