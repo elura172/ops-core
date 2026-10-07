@@ -181,7 +181,7 @@ class GeminiBookVisionProvider(BookVisionProvider):
     """High-reliability client for Google Gemini Vision with structured schema output."""
 
     api_key: str
-    model: str = "gemini-2.5-flash"
+    model: str = "gemini-3.8-flash"
     base_url: str = "https://generativelanguage.googleapis.com/v1beta"
     timeout: float = 45.0
     retries: RetryPolicy = field(default_factory=RetryPolicy)
