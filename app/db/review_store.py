@@ -18,6 +18,7 @@ logger = get_logger("review_store")
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS reviews (
   review_id TEXT PRIMARY KEY,
+  tenant_id INTEGER NOT NULL DEFAULT 1,
   operation TEXT NOT NULL,
   payload TEXT NOT NULL,
   status TEXT NOT NULL,
@@ -32,6 +33,7 @@ CREATE TABLE IF NOT EXISTS reviews (
 );
 CREATE TABLE IF NOT EXISTS audit_events (
   sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+  tenant_id INTEGER NOT NULL DEFAULT 1,
   action TEXT NOT NULL,
   actor TEXT NOT NULL,
   outcome TEXT NOT NULL,
@@ -86,6 +88,16 @@ class SQLiteReviewStore:
             self.connection.execute("PRAGMA journal_mode = WAL")
         self.connection.execute("PRAGMA synchronous = FULL")
         self.connection.executescript(SCHEMA)
+        self.connection.execute("BEGIN IMMEDIATE")
+        try:
+            columns = {row["name"] for row in self.connection.execute("PRAGMA table_info(reviews)")}
+            if "tenant_id" not in columns:
+                self.connection.execute("ALTER TABLE reviews ADD COLUMN tenant_id INTEGER NOT NULL DEFAULT 1")
+                self.connection.execute("ALTER TABLE audit_events ADD COLUMN tenant_id INTEGER NOT NULL DEFAULT 1")
+            self.connection.execute("COMMIT")
+        except BaseException:
+            self.connection.execute("ROLLBACK")
+            raise
 
     @contextmanager
     def _transaction(self) -> Iterator[sqlite3.Connection]:
@@ -98,9 +110,9 @@ class SQLiteReviewStore:
                 raise
             self.connection.execute("COMMIT")
 
-    def _fetch(self, connection: sqlite3.Connection, review_id: str) -> ReviewItem:
+    def _fetch(self, connection: sqlite3.Connection, review_id: str, tenant_id: int = 1) -> ReviewItem:
         row = connection.execute(
-            "SELECT * FROM reviews WHERE review_id = ?", (review_id,)
+            "SELECT * FROM reviews WHERE review_id = ? AND tenant_id = ?", (review_id, tenant_id)
         ).fetchone()
         if row is None:
             raise KeyError(review_id)
@@ -128,37 +140,37 @@ class SQLiteReviewStore:
             )
         return item
 
-    def get(self, review_id: str) -> ReviewItem | None:
+    def get(self, review_id: str, tenant_id: int = 1) -> ReviewItem | None:
         # Reads share the connection with in-flight transactions, so they take the
         # same lock; sqlite3 connections are not safe for concurrent use.
         with self._lock:
             row = self.connection.execute(
-                "SELECT * FROM reviews WHERE review_id = ?", (review_id,)
+                "SELECT * FROM reviews WHERE review_id = ? AND tenant_id = ?", (review_id, tenant_id)
             ).fetchone()
         return _row_to_item(row) if row else None
 
-    def list_items(self, pending_only: bool = False) -> list[ReviewItem]:
-        query = "SELECT * FROM reviews"
-        params: tuple[str, ...] = ()
+    def list_items(self, pending_only: bool = False, tenant_id: int = 1) -> list[ReviewItem]:
+        query = "SELECT * FROM reviews WHERE tenant_id = ?"
+        params: tuple[int | str, ...] = (tenant_id,)
         if pending_only:
-            query += " WHERE status = ?"
-            params = (ReviewStatus.PENDING.value,)
+            query += " AND status = ?"
+            params = (tenant_id, ReviewStatus.PENDING.value)
         with self._lock:
             rows = self.connection.execute(query + " ORDER BY created_at", params).fetchall()
         return [_row_to_item(row) for row in rows]
 
-    def pending(self) -> list[ReviewItem]:
-        return self.list_items(pending_only=True)
+    def pending(self, tenant_id: int = 1) -> list[ReviewItem]:
+        return self.list_items(pending_only=True, tenant_id=tenant_id)
 
     def decide(
-        self, review_id: str, *, approve: bool, reviewer: str, reason: str = "", payload_update: dict[str, Any] | None = None
+        self, review_id: str, *, approve: bool, reviewer: str, reason: str = "", payload_update: dict[str, Any] | None = None, tenant_id: int = 1
     ) -> ReviewItem:
         if not reviewer.strip():
             raise ValueError("reviewer is required")
         status = ReviewStatus.APPROVED if approve else ReviewStatus.REJECTED
         decided_at = datetime.now(UTC)
         with self._transaction() as connection:
-            item = self._fetch(connection, review_id)
+            item = self._fetch(connection, review_id, tenant_id)
             if item.status != ReviewStatus.PENDING:
                 raise ValueError("review item has already been decided")
             if payload_update:
@@ -201,10 +213,10 @@ class SQLiteReviewStore:
             )
             return self._fetch(connection, review_id)
 
-    def claim_for_execution(self, review_id: str, actor: str) -> ReviewItem:
+    def claim_for_execution(self, review_id: str, actor: str, tenant_id: int = 1) -> ReviewItem:
         claimed_at = datetime.now(UTC)
         with self._transaction() as connection:
-            item = self._fetch(connection, review_id)
+            item = self._fetch(connection, review_id, tenant_id)
             _validate_claim(item)
             cursor = connection.execute(
                 "UPDATE reviews SET status = ?, executed_by = ?, executed_at = ? "
@@ -222,9 +234,9 @@ class SQLiteReviewStore:
                 raise AlreadyExecuted(self._fetch(connection, review_id))
             return self._fetch(connection, review_id)
 
-    def complete_execution(self, review_id: str, result: dict[str, Any]) -> ReviewItem:
+    def complete_execution(self, review_id: str, result: dict[str, Any], tenant_id: int = 1) -> ReviewItem:
         with self._transaction() as connection:
-            item = self._fetch(connection, review_id)
+            item = self._fetch(connection, review_id, tenant_id)
             connection.execute(
                 "UPDATE reviews SET status = ?, result = ?, executed_at = ? WHERE review_id = ?",
                 (
@@ -246,9 +258,9 @@ class SQLiteReviewStore:
             )
             return self._fetch(connection, review_id)
 
-    def fail_execution(self, review_id: str, error: str) -> ReviewItem:
+    def fail_execution(self, review_id: str, error: str, tenant_id: int = 1) -> ReviewItem:
         with self._transaction() as connection:
-            item = self._fetch(connection, review_id)
+            item = self._fetch(connection, review_id, tenant_id)
             connection.execute(
                 "UPDATE reviews SET status = ?, failure = ?, executed_at = ? WHERE review_id = ?",
                 (
@@ -319,7 +331,7 @@ class SQLiteReviewStore:
 
     def audit_trail(self, resource_id: str | None = None) -> list[dict[str, Any]]:
         query = "SELECT * FROM audit_events"
-        params: tuple[str, ...] = ()
+        params: tuple[int | str, ...] = (tenant_id,)
         if resource_id:
             query += " WHERE resource_id = ?"
             params = (resource_id,)

@@ -16,12 +16,14 @@ logger = get_logger("sqlite")
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS orders (
   order_id TEXT PRIMARY KEY,
+  tenant_id INTEGER NOT NULL DEFAULT 1,
   created_at TEXT NOT NULL,
   status TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS processed_events (
   event_id TEXT PRIMARY KEY,
+  tenant_id INTEGER NOT NULL DEFAULT 1,
   order_id TEXT NOT NULL,
   status TEXT NOT NULL,
   occurred_at TEXT NOT NULL,
@@ -29,6 +31,7 @@ CREATE TABLE IF NOT EXISTS processed_events (
 );
 CREATE TABLE IF NOT EXISTS quarantined_events (
   event_id TEXT PRIMARY KEY,
+  tenant_id INTEGER NOT NULL DEFAULT 1,
   order_id TEXT NOT NULL,
   observed_status TEXT NOT NULL,
   local_status TEXT NOT NULL,
@@ -61,10 +64,13 @@ class SQLiteOrderRepository:
             self.connection.execute("PRAGMA journal_mode = WAL")
         self.connection.execute("PRAGMA synchronous = FULL")
         self.connection.executescript(SCHEMA)
-        # Serialize discovery and ALTER across concurrently booting processes.
         self.connection.execute("BEGIN IMMEDIATE")
         try:
             columns = {row["name"] for row in self.connection.execute("PRAGMA table_info(orders)")}
+            if "tenant_id" not in columns:
+                self.connection.execute("ALTER TABLE orders ADD COLUMN tenant_id INTEGER NOT NULL DEFAULT 1")
+                self.connection.execute("ALTER TABLE processed_events ADD COLUMN tenant_id INTEGER NOT NULL DEFAULT 1")
+                self.connection.execute("ALTER TABLE quarantined_events ADD COLUMN tenant_id INTEGER NOT NULL DEFAULT 1")
             if "created_at_estimated" not in columns:
                 # Legacy timestamps have no provenance; conservatively exclude them.
                 self.connection.execute(
@@ -75,29 +81,29 @@ class SQLiteOrderRepository:
             self.connection.execute("ROLLBACK")
             raise
 
-    def apply(self, event: OrderEvent) -> ApplyOutcome:
+    def apply(self, event: OrderEvent, tenant_id: int = 1) -> ApplyOutcome:
         if not event.event_id or not event.order_id:
             raise ValueError("event_id and order_id are required")
         occurred_at = event.occurred_at.astimezone(UTC).isoformat()
         with self._lock:
             self.connection.execute("BEGIN IMMEDIATE")
             try:
-                outcome = self._apply_locked(event, occurred_at)
+                outcome = self._apply_locked(event, occurred_at, tenant_id)
             except BaseException:
                 self.connection.execute("ROLLBACK")
                 raise
             self.connection.execute("COMMIT")
         return outcome
 
-    def _apply_locked(self, event: OrderEvent, occurred_at: str) -> ApplyOutcome:
+    def _apply_locked(self, event: OrderEvent, occurred_at: str, tenant_id: int = 1) -> ApplyOutcome:
         seen = self.connection.execute(
-            "SELECT 1 FROM processed_events WHERE event_id = ?", (event.event_id,)
+            "SELECT 1 FROM processed_events WHERE event_id = ? AND tenant_id = ?", (event.event_id, tenant_id)
         ).fetchone()
         if seen:
             return ApplyOutcome(Outcome.DUPLICATE, event.order_id)
 
         row = self.connection.execute(
-            "SELECT status FROM orders WHERE order_id = ?", (event.order_id,)
+            "SELECT status FROM orders WHERE order_id = ? AND tenant_id = ?", (event.order_id, tenant_id)
         ).fetchone()
         if row is None:
             current = OrderStatus.RECEIVED
@@ -158,7 +164,7 @@ class SQLiteOrderRepository:
             return ApplyOutcome(outcome, event.order_id, current)
 
         self.connection.execute(
-            "UPDATE orders SET status = ?, updated_at = ? WHERE order_id = ?",
+            "UPDATE orders SET status = ?, updated_at = ? WHERE order_id = ? AND tenant_id = ?",
             (event.status.value, occurred_at, event.order_id),
         )
         if decision.skipped:
@@ -170,12 +176,12 @@ class SQLiteOrderRepository:
             )
         return ApplyOutcome(Outcome.APPLIED, event.order_id, event.status, decision.skipped)
 
-    def active(self) -> list[Order]:
+    def active(self, tenant_id: int = 1) -> list[Order]:
         with self._lock:
             rows = self.connection.execute(
-                "SELECT * FROM orders WHERE status NOT IN ('DELIVERED', 'CANCELLED') "
+                "SELECT * FROM orders WHERE status NOT IN ('DELIVERED', 'CANCELLED') AND tenant_id = ? "
                 "ORDER BY created_at, order_id"
-            ).fetchall()
+            , (tenant_id,)).fetchall()
         return [
             Order(
                 order_id=row["order_id"],
@@ -192,7 +198,7 @@ class SQLiteOrderRepository:
         if not include_resolved:
             query += " WHERE resolved = 0"
         with self._lock:
-            rows = self.connection.execute(query + " ORDER BY occurred_at").fetchall()
+            rows = self.connection.execute(query + " ORDER BY occurred_at", (tenant_id,)).fetchall()
         return [dict(row) for row in rows]
 
     def resolve_quarantined(self, event_id: str) -> bool:
@@ -202,7 +208,7 @@ class SQLiteOrderRepository:
             try:
                 cursor = self.connection.execute(
                     "UPDATE quarantined_events SET resolved = 1 "
-                    "WHERE event_id = ? AND resolved = 0",
+                    "WHERE event_id = ? AND tenant_id = ? AND resolved = 0",
                     (event_id,),
                 )
             except BaseException:

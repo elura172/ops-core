@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pydantic import BaseModel
 from collections.abc import Awaitable, Callable
 from datetime import timedelta
 from importlib.resources import files
@@ -7,7 +8,7 @@ from typing import Any
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, UploadFile, File
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
-from pydantic import BaseModel
+
 from starlette.concurrency import run_in_threadpool
 
 from app.api.operator import OperatorService
@@ -396,6 +397,95 @@ def create_app(
         inventory_store.delist(sku)
         operator.propose("update_inventory", {"sku": sku, "stock": 0})
         return {"status": "ok"}
+
+
+    
+    from app.auth import get_password_hash, verify_password, create_access_token
+    from app.db.users import UserStore
+
+    user_store = UserStore("users.db")
+
+    class SignupRequest(BaseModel):
+        store_name: str
+        email: str
+        password: str
+
+    class LoginRequest(BaseModel):
+        email: str
+        password: str
+
+    @app.post("/auth/signup")
+    def signup(req: SignupRequest):
+        if user_store.get_user_by_email(req.email):
+            raise HTTPException(400, "Email already registered")
+        
+        tenant_id = user_store.create_tenant(req.store_name)
+        pw_hash = get_password_hash(req.password)
+        user_id = user_store.create_user(tenant_id, req.email, pw_hash, "admin")
+        
+        token = create_access_token({"sub": req.email, "tenant_id": tenant_id, "role": "admin"})
+        return {"access_token": token, "token_type": "bearer"}
+
+    @app.post("/auth/login")
+    def login(req: LoginRequest):
+        user = user_store.get_user_by_email(req.email)
+        if not user or not verify_password(req.password, user.password_hash):
+            raise HTTPException(401, "Invalid credentials")
+            
+        token = create_access_token({"sub": user.email, "tenant_id": user.tenant_id, "role": user.role})
+        return {"access_token": token, "token_type": "bearer"}
+
+    @app.get("/auth/me")
+    def auth_me(token: str = Depends(bearer_token)):
+        from app.auth import decode_access_token
+        try:
+            payload = decode_access_token(token)
+            return payload
+        except Exception:
+            raise HTTPException(401, "Invalid token")
+
+
+    from app.vault import encrypt_credential, decrypt_credential
+
+    class IntegrationRequest(BaseModel):
+        provider: str
+        api_key: str
+
+    @app.post("/integrations")
+    def add_integration(req: IntegrationRequest, token: str = Depends(bearer_token)):
+        from app.auth import decode_access_token
+        try:
+            payload = decode_access_token(token)
+            tenant_id = payload["tenant_id"]
+        except Exception:
+            raise HTTPException(401, "Invalid token")
+            
+        encrypted = encrypt_credential(req.api_key)
+        
+        with user_store._lock:
+            user_store.connection.execute(
+                "INSERT OR REPLACE INTO tenant_integrations(tenant_id, provider, encrypted_credentials) VALUES (?, ?, ?)",
+                (tenant_id, req.provider, encrypted)
+            )
+            
+        return {"status": "ok", "provider": req.provider}
+
+    @app.get("/integrations")
+    def list_integrations(token: str = Depends(bearer_token)):
+        from app.auth import decode_access_token
+        try:
+            payload = decode_access_token(token)
+            tenant_id = payload["tenant_id"]
+        except Exception:
+            raise HTTPException(401, "Invalid token")
+            
+        with user_store._lock:
+            rows = user_store.connection.execute(
+                "SELECT provider FROM tenant_integrations WHERE tenant_id = ?",
+                (tenant_id,)
+            ).fetchall()
+            
+        return {"connected_providers": [row["provider"] for row in rows]}
 
     return app
 
