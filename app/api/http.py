@@ -50,6 +50,27 @@ class Decision(BaseModel):
     payload_update: dict[str, Any] | None = None
 
 
+class Proposal(BaseModel):
+    operation: str
+    payload: dict[str, Any]
+
+
+class SignupRequest(BaseModel):
+    store_name: str
+    email: str
+    password: str
+
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+
+class IntegrationRequest(BaseModel):
+    provider: str
+    api_key: str
+
+
 def _authorize(tokens: TokenRegistry, permission: str) -> Callable[[str], Principal]:
     def dependency(authorization: str = Header(default="")) -> Principal:
         token = bearer_token(authorization)
@@ -71,6 +92,13 @@ def _authorize(tokens: TokenRegistry, permission: str) -> Callable[[str], Princi
         return principal
 
     return dependency
+
+
+def get_bearer_token(authorization: str = Header(default="")) -> str:
+    token = bearer_token(authorization)
+    if not token:
+        raise HTTPException(401, "bearer token required", {"WWW-Authenticate": "Bearer"})
+    return token
 
 
 def create_app(
@@ -194,10 +222,6 @@ def create_app(
         pending_only: bool = False, _: Principal = Depends(require_read)
     ) -> list[dict[str, Any]]:
         return operator.list_reviews(pending_only)
-
-    class Proposal(BaseModel):
-        operation: str
-        payload: dict[str, Any]
 
     @app.post("/reviews")
     def propose_review(
@@ -411,15 +435,6 @@ def create_app(
 
     user_store = UserStore("users.db")
 
-    class SignupRequest(BaseModel):
-        store_name: str
-        email: str
-        password: str
-
-    class LoginRequest(BaseModel):
-        email: str
-        password: str
-
     @app.post("/auth/signup")
     def signup(req: SignupRequest):
         if user_store.get_user_by_email(req.email):
@@ -442,7 +457,7 @@ def create_app(
         return {"access_token": token, "token_type": "bearer"}
 
     @app.get("/auth/me")
-    def auth_me(token: str = Depends(bearer_token)):
+    def auth_me(token: str = Depends(get_bearer_token)):
         from app.auth import decode_access_token
         try:
             payload = decode_access_token(token)
@@ -456,12 +471,8 @@ def create_app(
 
     from app.vault import encrypt_credential, decrypt_credential
 
-    class IntegrationRequest(BaseModel):
-        provider: str
-        api_key: str
-
     @app.post("/integrations")
-    def add_integration(req: IntegrationRequest, token: str = Depends(bearer_token)):
+    def add_integration(req: IntegrationRequest, token: str = Depends(get_bearer_token)):
         from app.auth import decode_access_token
         try:
             payload = decode_access_token(token)
@@ -480,7 +491,7 @@ def create_app(
         return {"status": "ok", "provider": req.provider}
 
     @app.get("/integrations")
-    def list_integrations(token: str = Depends(bearer_token)):
+    def list_integrations(token: str = Depends(get_bearer_token)):
         from app.auth import decode_access_token
         try:
             payload = decode_access_token(token)
@@ -497,7 +508,7 @@ def create_app(
         return {"connected_providers": [row["provider"] for row in rows]}
 
     @app.get("/analytics")
-    def get_analytics(token: str = Depends(bearer_token)):
+    def get_analytics(token: str = Depends(get_bearer_token)):
         from app.auth import decode_access_token
         try:
             payload = decode_access_token(token)
@@ -505,7 +516,7 @@ def create_app(
         except Exception:
             raise HTTPException(401, "Invalid token")
             
-        return operator.review_store.get_tenant_analytics(tenant_id)
+        return operator.reviews.get_tenant_analytics(tenant_id)
 
     from app.api.billing import get_billing_router
     app.include_router(get_billing_router(settings, user_store), prefix="/billing")
