@@ -12,10 +12,14 @@ certifi==2026.7.22
     # via
     #   requests
     #   shippo
+cffi==2.1.1
+    # via cryptography
 charset-normalizer==3.5.2
     # via
     #   requests
     #   shippo
+cryptography==50.0.2
+    # via ops-core (pyproject.toml)
 dataclasses-json==0.6.7
     # via shippo
 defusedxml==0.7.1
@@ -59,6 +63,8 @@ psycopg-binary==3.3.6
     # via psycopg
 psycopg-pool==3.3.3
     # via psycopg
+pycparser==3.0
+    # via cffi
 pydantic==2.13.5
     # via
     #   ops-core (pyproject.toml)
