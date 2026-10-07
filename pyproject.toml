@@ -8,11 +8,14 @@ version = "0.1.0"
 description = "Dry-run-first commerce operations core: TikTok Shop and Amazon private label"
 requires-python = ">=3.11"
 dependencies = [
+    "bcrypt>=5.0.0",
     "fastapi>=0.110",
     "fpdf2>=2.8.9",
+    "passlib>=1.7.4",
     "pillow>=12.3.0",
     "psycopg[binary,pool]>=3.3.6",
     "pydantic>=2.6",
+    "pyjwt>=2.15.1",
     "python-multipart>=0.0.32",
     "shippo>=3.9.0",
     "stripe>=16.0.0",
