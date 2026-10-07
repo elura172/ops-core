@@ -563,18 +563,76 @@ async function loadBookshelf() {
   } catch(e) { message(e.message); }
 }
 
-if ($("tab-queue") && $("tab-bookshelf")) {
+if ($("tab-queue") && $("tab-bookshelf") && $("tab-settings")) {
   $("tab-queue").onclick = () => {
     $("tab-queue").className = "primary";
     $("tab-bookshelf").className = "";
+    $("tab-settings").className = "";
     $("bookshelf-panel").hidden = true;
+    $("settings-panel").hidden = true;
     $("queue-detail-panel").hidden = false;
   };
   $("tab-bookshelf").onclick = () => {
     $("tab-queue").className = "";
     $("tab-bookshelf").className = "primary";
+    $("tab-settings").className = "";
     $("bookshelf-panel").hidden = false;
+    $("settings-panel").hidden = true;
     $("queue-detail-panel").hidden = true;
     loadBookshelf();
+  };
+  $("tab-settings").onclick = () => {
+    $("tab-queue").className = "";
+    $("tab-bookshelf").className = "";
+    $("tab-settings").className = "primary";
+    $("bookshelf-panel").hidden = true;
+    $("settings-panel").hidden = false;
+    $("queue-detail-panel").hidden = true;
+    loadSettings();
+  };
+}
+
+async function loadSettings() {
+  const list = $("connected-integrations-list");
+  try {
+    const integrations = await api("/integrations");
+    list.replaceChildren();
+    if (Object.keys(integrations).length === 0) {
+      list.append(node("li", "No integrations connected yet.", "muted"));
+    } else {
+      for (const [provider, active] of Object.entries(integrations)) {
+        if (active) {
+          const li = node("li", `✓ ${provider.toUpperCase()}`);
+          li.style.color = "green";
+          li.style.fontWeight = "bold";
+          list.append(li);
+        }
+      }
+    }
+  } catch(e) {
+    list.replaceChildren(node("li", "Failed to load integrations: " + e.message, "muted"));
+  }
+}
+
+if ($("form-integration")) {
+  $("form-integration").onsubmit = async event => {
+    event.preventDefault();
+    const provider = $("integration-provider").value;
+    const key = $("integration-key").value;
+    const button = $("form-integration").querySelector("button");
+    button.disabled = true;
+    try {
+      await api("/integrations", {
+        method: "POST",
+        body: JSON.stringify({ provider: provider, api_key: key })
+      });
+      $("integration-key").value = "";
+      message(`Integration saved successfully for ${provider}.`);
+      loadSettings();
+    } catch(e) {
+      message(e.message);
+    } finally {
+      button.disabled = false;
+    }
   };
 }
