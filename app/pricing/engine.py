@@ -10,7 +10,7 @@ class PricingEngine:
     def __init__(self, scraper: AmazonScraperClient):
         self.scraper = scraper
 
-    def discover_price(self, title: str, author: str) -> dict[str, Any]:
+    def discover_price(self, title: str, author: str, condition_grade: str = "Good") -> dict[str, Any]:
         """
         Discover pricing evidence for a given book title and author.
         Returns the evidence payload and the final recommended online price.
@@ -40,22 +40,45 @@ class PricingEngine:
         except Exception as exc:
             logger.warning("pricing.amazon.failed", error=str(exc))
             
-        # 2. Simulate eBay or other sources if Amazon fails or is dry-run
+        # 2. Base Price Calculation
         if evidence["comps_found"] == 0:
-            evidence["ebay_recent_average"] = 19.50
-            evidence["comps_found"] = 3
-            evidence["confidence_score"] = 0.6
-            online_price = Decimal("22.00")
-            rationale = "Fallback to simulated eBay recent sales data. Amazon search unavailable or found no comps."
+            evidence["confidence_score"] = 0.0
+            base_price = Decimal("100.00")
+            rationale_base = "No comps found. Defaulting to safe $100 placeholder and flagging for manual review."
         else:
             amazon_price = evidence["amazon_lowest_fba"]
             # Confidence grows with more comps, maxing out at 5 comps
             evidence["confidence_score"] = min(1.0, len(comps) * 0.2)
-            online_price = Decimal(str(amazon_price)) * Decimal("0.9")  # Undercut Amazon slightly
-            rationale = f"Found {len(comps)} Amazon comps. Lowest FBA is ${amazon_price:.2f}. Pricing at ${online_price:.2f} to maximize turnover."
+            # Strategy: Slightly undercut the lowest FBA price by 10% to prioritize turnover
+            base_price = Decimal(str(amazon_price)) * Decimal("0.9")
+            rationale_base = f"Lowest FBA is ${amazon_price:.2f}. Undercutting by 10% to prioritize turnover."
+
+        # 3. Condition Multiplier
+        condition_multipliers = {
+            "As New": Decimal("1.0"),
+            "Fine": Decimal("1.0"),
+            "Near Fine": Decimal("1.0"),
+            "Very Good": Decimal("0.95"),
+            "Good": Decimal("0.90"),
+            "Fair": Decimal("0.80"),
+            "Poor": Decimal("0.80"),
+            "Acceptable": Decimal("0.80")
+        }
+        multiplier = condition_multipliers.get(condition_grade, Decimal("0.90"))
+        
+        online_price = base_price * multiplier
+        
+        if multiplier < Decimal("1.0"):
+            rationale = f"{rationale_base} Applied {(Decimal('1.0') - multiplier) * 100}% discount for condition '{condition_grade}'."
+        else:
+            rationale = rationale_base
+            
+        # In-store is 25% off online
+        in_store_price = online_price * Decimal("0.75")
             
         return {
             "evidence": evidence,
             "recommended_price_cad": f"{online_price:.2f}",
+            "in_store_price_cad": f"{in_store_price:.2f}",
             "rationale": rationale
         }

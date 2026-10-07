@@ -328,8 +328,9 @@ def create_app(
 
         proposals = []
         for idx, book in enumerate(extraction.books):
+            condition = "Good" if "clean_as_new" in book.visible_condition_cues else "Acceptable"
             # Run pricing
-            price_data = await run_in_threadpool(pricing.discover_price, book.title, ", ".join(book.authors))
+            price_data = await run_in_threadpool(pricing.discover_price, book.title, ", ".join(book.authors), condition)
 
             payload = {
                 "extraction": {
@@ -348,9 +349,9 @@ def create_app(
                     "triage_reason": f"Auto-extracted from stack image (Position {book.stack_order}).",
                 },
                 "valuation": {
-                    "condition_grade": "Good" if "clean_as_new" in book.visible_condition_cues else "Acceptable",
+                    "condition_grade": condition,
                     "channel_strategy": "multi_channel_antiquarian",
-                    "in_store_price_cad": f"{float(price_data['recommended_price_cad']) * 0.75:.2f}",
+                    "in_store_price_cad": price_data["in_store_price_cad"],
                     "online_price_cad": price_data["recommended_price_cad"],
                     "pricing_rationale": price_data["rationale"],
                 },
