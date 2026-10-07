@@ -29,6 +29,10 @@
   --copper-soft: oklch(0.94 0.04 60);
   --accent: var(--copper);
 
+  --danger: oklch(0.52 0.18 28);
+  --danger-hover: oklch(0.44 0.18 28);
+  --danger-soft: oklch(0.94 0.05 30);
+
   --status-pending-bg: oklch(0.94 0.04 60);
   --status-pending-fg: oklch(0.45 0.12 55);
   --status-approved-bg: oklch(0.93 0.04 150);
@@ -301,6 +305,19 @@ button.ghost-sm {
 
 button.ghost-sm:hover:not(:disabled) {
   background: var(--surface-hover);
+}
+
+button.danger-sm {
+  background: transparent;
+  color: var(--danger);
+  border: 1px solid var(--line);
+  padding: 5px 10px;
+  font-size: 12px;
+}
+
+button.danger-sm:hover:not(:disabled) {
+  background: var(--danger-soft);
+  border-color: var(--danger);
 }
 
 button.full-width {

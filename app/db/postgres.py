@@ -275,6 +275,33 @@ class PostgresReviewStore:
                 )
             return [_row_to_item(row) for row in rows]
 
+    def delete(self, review_id: str, tenant_id: int = 1) -> bool:
+        with self.pool.connection() as connection:
+            res = connection.execute(
+                "DELETE FROM reviews WHERE review_id = %s AND tenant_id = %s",
+                (review_id, tenant_id),
+            )
+            return bool(res.rowcount and res.rowcount > 0)
+
+    def clear(self, tenant_id: int = 1, status: str | None = None) -> int:
+        with self.pool.connection() as connection:
+            if status is None:
+                res = connection.execute(
+                    "DELETE FROM reviews WHERE tenant_id = %s",
+                    (tenant_id,),
+                )
+            elif status.upper() in ("INACTIVE", "TERMINAL"):
+                res = connection.execute(
+                    "DELETE FROM reviews WHERE tenant_id = %s AND status IN ('REJECTED', 'EXECUTED', 'FAILED')",
+                    (tenant_id,),
+                )
+            else:
+                res = connection.execute(
+                    "DELETE FROM reviews WHERE tenant_id = %s AND status = %s",
+                    (tenant_id, status.upper()),
+                )
+            return int(res.rowcount or 0)
+
     def _record(self, connection: psycopg.Connection[DictRow], event: AuditEvent, tenant_id: int = 1) -> None:
         connection.execute(
             "INSERT INTO audit_events (tenant_id, action, actor, outcome, resource_id, detail, occurred_at) "

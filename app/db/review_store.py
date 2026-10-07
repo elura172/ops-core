@@ -316,6 +316,33 @@ class SQLiteReviewStore:
                 )
             return [_row_to_item(row) for row in rows]
 
+    def delete(self, review_id: str, tenant_id: int = 1) -> bool:
+        with self._transaction() as connection:
+            res = connection.execute(
+                "DELETE FROM reviews WHERE review_id = ? AND tenant_id = ?",
+                (review_id, tenant_id),
+            )
+            return bool(res.rowcount and res.rowcount > 0)
+
+    def clear(self, tenant_id: int = 1, status: str | None = None) -> int:
+        with self._transaction() as connection:
+            if status is None:
+                res = connection.execute(
+                    "DELETE FROM reviews WHERE tenant_id = ?",
+                    (tenant_id,),
+                )
+            elif status.upper() in ("INACTIVE", "TERMINAL"):
+                res = connection.execute(
+                    "DELETE FROM reviews WHERE tenant_id = ? AND status IN ('REJECTED', 'EXECUTED', 'FAILED')",
+                    (tenant_id,),
+                )
+            else:
+                res = connection.execute(
+                    "DELETE FROM reviews WHERE tenant_id = ? AND status = ?",
+                    (tenant_id, status.upper()),
+                )
+            return int(res.rowcount or 0)
+
     def _record(self, connection: sqlite3.Connection, event: AuditEvent) -> None:
         connection.execute(
             "INSERT INTO audit_events(action, actor, outcome, resource_id, detail, occurred_at) "

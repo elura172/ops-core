@@ -156,6 +156,9 @@ def create_app(
                 inventory_store=inventory_store,
             ),
         )
+    else:
+        review_store = operator.reviews
+        inventory_store = getattr(operator.executor, "inventory_store", None) or open_inventory_store(settings.inventory_db)
 
     # Seed demo items for tenant 1 if empty
     try:
@@ -372,6 +375,22 @@ def create_app(
             # Evaluated on the request that moved the counter, so a failure pages
             # even if nobody is watching /alerts.
             alert_manager.evaluate()
+
+    @app.delete("/reviews/{review_id}")
+    def delete_review(
+        review_id: str, principal: Principal = Depends(require_decide)
+    ) -> dict[str, Any]:
+        deleted = operator.delete(review_id, tenant_id=principal.tenant_id)
+        if not deleted:
+            raise HTTPException(404, "review not found")
+        return {"status": "deleted", "review_id": review_id}
+
+    @app.delete("/reviews")
+    def clear_reviews(
+        status: str | None = None, principal: Principal = Depends(require_decide)
+    ) -> dict[str, Any]:
+        count = operator.clear(tenant_id=principal.tenant_id, status=status)
+        return {"status": "cleared", "count": count}
 
     @app.get("/metrics")
     def metrics_endpoint(_: Principal = Depends(require_read)) -> PlainTextResponse:
@@ -620,7 +639,14 @@ def create_app(
         return {"status": "ok"}
 
     @app.delete("/inventory/{sku}")
-    def delist_inventory_item(sku: str, principal: Principal = Depends(require_decide)) -> dict[str, Any]:
+    def delist_or_delete_inventory_item(
+        sku: str, hard: bool = False, principal: Principal = Depends(require_decide)
+    ) -> dict[str, Any]:
+        if hard:
+            deleted = inventory_store.delete(sku, tenant_id=principal.tenant_id)
+            if not deleted:
+                raise HTTPException(404, "item not found")
+            return {"status": "deleted", "sku": sku}
         inventory_store.delist(sku, tenant_id=principal.tenant_id)
         operator.propose("update_inventory", {"sku": sku, "stock": 0}, tenant_id=principal.tenant_id)
         return {"status": "ok"}

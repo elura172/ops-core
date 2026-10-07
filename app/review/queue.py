@@ -32,6 +32,7 @@ class ReviewItem:
     executed_at: datetime | None = None
     result: dict[str, Any] | None = None
     failure: str | None = None
+    tenant_id: int = 1
 
 
 class AlreadyExecuted(Exception):
@@ -55,6 +56,8 @@ class ReviewStore(Protocol):
     def complete_execution(self, review_id: str, result: dict[str, Any], tenant_id: int = 1) -> ReviewItem: ...
     def fail_execution(self, review_id: str, error: str, tenant_id: int = 1) -> ReviewItem: ...
     def recover_stale_executions(self, older_than: timedelta) -> list[ReviewItem]: ...
+    def delete(self, review_id: str, tenant_id: int = 1) -> bool: ...
+    def clear(self, tenant_id: int = 1, status: str | None = None) -> int: ...
 
 
 def _validate_claim(item: ReviewItem) -> None:
@@ -92,21 +95,25 @@ class ReviewQueue:
             raise ValueError("review_id already exists")
         if item.status != ReviewStatus.PENDING:
             raise ValueError("new review items must be pending")
+        item.tenant_id = tenant_id
         self.items[item.review_id] = item
         return item
 
     def get(self, review_id: str, tenant_id: int = 1) -> ReviewItem | None:
-        return self.items.get(review_id)
+        item = self.items.get(review_id)
+        if item and item.tenant_id == tenant_id:
+            return item
+        return None
 
     def list_items(self, pending_only: bool = False, tenant_id: int = 1) -> list[ReviewItem]:
-        items = list(self.items.values())
+        items = [i for i in self.items.values() if i.tenant_id == tenant_id]
         return [i for i in items if i.status is ReviewStatus.PENDING] if pending_only else items
 
     def pending(self, tenant_id: int = 1) -> list[ReviewItem]:
         return self.list_items(pending_only=True, tenant_id=tenant_id)
 
     def _require(self, review_id: str, tenant_id: int = 1) -> ReviewItem:
-        item = self.items.get(review_id)
+        item = self.get(review_id, tenant_id=tenant_id)
         if item is None:
             raise KeyError(review_id)
         return item
@@ -160,3 +167,26 @@ class ReviewQueue:
                 item.failure = "execution did not complete; outcome unknown"
                 recovered.append(item)
         return recovered
+
+    def delete(self, review_id: str, tenant_id: int = 1) -> bool:
+        item = self.items.get(review_id)
+        if item and item.tenant_id == tenant_id:
+            del self.items[review_id]
+            return True
+        return False
+
+    def clear(self, tenant_id: int = 1, status: str | None = None) -> int:
+        to_delete = []
+        for rid, item in self.items.items():
+            if item.tenant_id != tenant_id:
+                continue
+            if status is None:
+                to_delete.append(rid)
+            elif status.upper() in ("INACTIVE", "TERMINAL"):
+                if item.status in TERMINAL_STATUSES:
+                    to_delete.append(rid)
+            elif item.status.value == status.upper() or item.status == status:
+                to_delete.append(rid)
+        for rid in to_delete:
+            del self.items[rid]
+        return len(to_delete)

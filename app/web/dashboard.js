@@ -104,6 +104,30 @@ function renderBatchDetail() {
     execBox.append(execBtn);
     detail.append(execBox);
   }
+
+  const delBox = node("div", undefined, "actions");
+  delBox.style.marginTop = "16px";
+  delBox.style.paddingTop = "12px";
+  delBox.style.borderTop = "1px solid var(--line-subtle)";
+  const delBatchBtn = node("button", `🗑️ Delete ${selectedItems.length} Selected Proposals`, "danger-sm");
+  delBatchBtn.onclick = async () => {
+    if (!confirm(`Permanently delete all ${selectedItems.length} selected proposals from the database? This cannot be undone.`)) return;
+    busy = true; $("refresh").disabled = true;
+    let success = 0, fail = 0;
+    detail.replaceChildren(node("p", "Deleting proposals..."));
+    for (const item of selectedItems) {
+      try {
+        await api(`/reviews/${encodeURIComponent(item.review_id)}`, { method: "DELETE" });
+        checkedItems.delete(item.review_id);
+        success++;
+      } catch (e) { fail++; }
+    }
+    busy = false; message(`Batch delete completed: ${success} removed, ${fail} failed.`);
+    selected = null;
+    refresh();
+  };
+  delBox.append(delBatchBtn);
+  detail.append(delBox);
 }
 
 function renderQueue() {
@@ -117,9 +141,13 @@ function renderQueue() {
   const shown = items.filter(i => $("filter").value === "ALL" || i.status === $("filter").value);
   
   if (shown.length) {
+    const queueHeader = node("div", undefined, "queue-header-actions");
+    queueHeader.style.display = "flex";
+    queueHeader.style.gap = "8px";
+    queueHeader.style.marginBottom = "8px";
+
     const selAll = node("button", "Toggle Select All", "ghost-sm");
-    selAll.style.marginBottom = "8px";
-    selAll.style.width = "100%";
+    selAll.style.flex = "1";
     selAll.onclick = () => {
       const allChecked = shown.every(i => checkedItems.has(i.review_id));
       if (allChecked) checkedItems.clear();
@@ -127,7 +155,31 @@ function renderQueue() {
       renderQueue();
       renderBatchDetail();
     };
-    list.append(selAll);
+
+    const clearInactive = node("button", "Clear Inactive 🗑️", "danger-sm");
+    clearInactive.title = "Permanently delete rejected, executed, and failed proposals";
+    clearInactive.onclick = async () => {
+      const inactiveCount = items.filter(i => ["REJECTED", "EXECUTED", "FAILED"].includes(i.status)).length;
+      if (inactiveCount === 0) {
+        message("No inactive proposals to clear.");
+        return;
+      }
+      if (!confirm(`Permanently delete ${inactiveCount} inactive (completed / rejected) proposals from database?`)) return;
+      clearInactive.disabled = true;
+      try {
+        const res = await api("/reviews?status=INACTIVE", { method: "DELETE" });
+        message(`Database purged: ${res.count} inactive proposals removed.`);
+        checkedItems.clear();
+        selected = null;
+        refresh();
+      } catch(e) {
+        message(e.message);
+        clearInactive.disabled = false;
+      }
+    };
+
+    queueHeader.append(selAll, clearInactive);
+    list.append(queueHeader);
   }
   
   if (!shown.length) {
@@ -367,6 +419,26 @@ function renderDetail(item) {
     actions.append(button);
   } else if (item.status === "APPROVED") detail.append(node("p", "Ready for an operator to execute.", "muted"));
   if (item.status === "FAILED") detail.append(node("p", "Reconcile the outcome before submitting a fresh proposal. This action cannot be retried.", "muted"));
+
+  if (session && session.permissions.includes("review:decide")) {
+    const delProposalBtn = node("button", "🗑️ Delete Proposal", "danger-sm");
+    delProposalBtn.style.marginLeft = "auto";
+    delProposalBtn.onclick = async () => {
+      if (!confirm(`Are you sure you want to permanently delete proposal "${item.review_id}" from the database? This cannot be undone.`)) return;
+      delProposalBtn.disabled = true;
+      try {
+        await api(`/reviews/${encodeURIComponent(item.review_id)}`, { method: "DELETE" });
+        message(`Proposal ${item.review_id} permanently deleted.`);
+        selected = null;
+        refresh();
+      } catch(e) {
+        message(e.message);
+        delProposalBtn.disabled = false;
+      }
+    };
+    actions.append(delProposalBtn);
+  }
+
   detail.append(actions);
 }
 async function select(id) {
@@ -811,8 +883,27 @@ async function renderBookshelf() {
       };
       
       actions.append(priceLabel, priceInput, saveBtn, delistBtn);
-      card.append(actions);
+    } else {
+      actions.append(node("span", `Status: ${human(item.status)}`, "muted"));
     }
+
+    const deleteBookBtn = node("button", "🗑️ Delete Book", "danger-sm");
+    deleteBookBtn.style.marginLeft = "auto";
+    deleteBookBtn.title = "Permanently delete book from database";
+    deleteBookBtn.onclick = async () => {
+      if (!confirm(`Are you sure you want to permanently delete "${item.title}" (${item.sku}) from the database? This cannot be undone.`)) return;
+      deleteBookBtn.disabled = true;
+      try {
+        await api(`/inventory/${encodeURIComponent(item.sku)}?hard=true`, { method: "DELETE" });
+        message(`Book "${item.title}" (${item.sku}) permanently deleted from database.`);
+        loadBookshelf();
+      } catch(e) {
+        message(e.message);
+        deleteBookBtn.disabled = false;
+      }
+    };
+    actions.append(deleteBookBtn);
+    card.append(actions);
     
     list.append(card);
   }

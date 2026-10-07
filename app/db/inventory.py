@@ -28,6 +28,7 @@ class InventoryStore(Protocol):
     def list_all(self, tenant_id: int = 1) -> list[InventoryItem]: ...
     def update_prices(self, sku: str, in_store: Decimal, online: Decimal, tenant_id: int = 1) -> None: ...
     def delist(self, sku: str, tenant_id: int = 1) -> None: ...
+    def delete(self, sku: str, tenant_id: int = 1) -> bool: ...
 
 
 def _parse_dt(val: Any) -> datetime:
@@ -121,6 +122,14 @@ class PostgresInventoryStore:
                 "UPDATE inventory SET status = 'delisted', updated_at = %s WHERE sku = %s AND tenant_id = %s",
                 (datetime.now(UTC), sku, tenant_id),
             )
+
+    def delete(self, sku: str, tenant_id: int = 1) -> bool:
+        with self.pool.connection() as conn, conn.transaction():
+            res = conn.execute(
+                "DELETE FROM inventory WHERE sku = %s AND tenant_id = %s",
+                (sku, tenant_id),
+            )
+            return bool(res.rowcount and res.rowcount > 0)
 
     def close(self) -> None:
         self.pool.close()
@@ -232,3 +241,12 @@ class SQLiteInventoryStore:
                 "UPDATE inventory SET status = 'delisted', updated_at = ? WHERE sku = ? AND tenant_id = ?",
                 (datetime.now(UTC).isoformat(), sku, tenant_id),
             )
+
+    def delete(self, sku: str, tenant_id: int = 1) -> bool:
+        with self._transaction() as conn:
+            res = conn.execute(
+                "DELETE FROM inventory WHERE sku = ? AND tenant_id = ?",
+                (sku, tenant_id),
+            )
+            return bool(res.rowcount and res.rowcount > 0)
+

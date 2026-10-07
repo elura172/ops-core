@@ -160,3 +160,27 @@ def test_abandoned_execution_is_recovered_as_failed(store):
     # Recovery means a human re-approves; it never retries on its own.
     with pytest.raises(PermissionError):
         store.claim_for_execution("r-1", "grace")
+
+
+def test_delete_and_clear_proposals(store):
+    store.submit(ReviewItem("del-1", "update_inventory", {"sku": "A"}))
+    store.submit(ReviewItem("del-2", "update_inventory", {"sku": "B"}))
+    store.submit(ReviewItem("del-3", "update_inventory", {"sku": "C"}))
+    
+    # del-2 rejected
+    store.decide("del-2", approve=False, reviewer="ada")
+    # del-3 approved, claimed, executed
+    store.decide("del-3", approve=True, reviewer="ada")
+    store.claim_for_execution("del-3", "grace")
+    store.complete_execution("del-3", {"ok": True})
+
+    assert store.get("del-1") is not None
+    assert store.delete("del-1") is True
+    assert store.get("del-1") is None
+    assert store.delete("del-1") is False
+
+    # Clear inactive (REJECTED, EXECUTED, FAILED)
+    cleared = store.clear(status="INACTIVE")
+    assert cleared == 2
+    assert store.get("del-2") is None
+    assert store.get("del-3") is None

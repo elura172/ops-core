@@ -87,3 +87,14 @@ class OperatorService:
             "replayed": outcome["replayed"],
             "result": outcome["result"],
         }
+
+    def delete(self, review_id: str, tenant_id: int = 1) -> bool:
+        deleted = self.reviews.delete(review_id, tenant_id=tenant_id)
+        if deleted:
+            logger.info("review.deleted", review_id=review_id, tenant_id=tenant_id)
+        return deleted
+
+    def clear(self, tenant_id: int = 1, status: str | None = None) -> int:
+        count = self.reviews.clear(tenant_id=tenant_id, status=status)
+        logger.info("reviews.cleared", count=count, status=status, tenant_id=tenant_id)
+        return count
