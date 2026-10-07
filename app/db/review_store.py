@@ -339,5 +339,44 @@ class SQLiteReviewStore:
             rows = self.connection.execute(query + " ORDER BY sequence", params).fetchall()
         return [dict(row) for row in rows]
 
+    def get_tenant_analytics(self, tenant_id: int) -> dict[str, Any]:
+        with self._lock:
+            rows = self.connection.execute(
+                "SELECT operation, payload, status FROM reviews WHERE tenant_id = ?",
+                (tenant_id,)
+            ).fetchall()
+            
+        total_actions = 0
+        syncs = 0
+        contentions_prevented = 0
+        revenue_protected_cad = 0.0
+        
+        for row in rows:
+            if row["status"] in ("APPROVED", "EXECUTING", "EXECUTED"):
+                total_actions += 1
+                op = row["operation"]
+                if op == "sync_inventory":
+                    syncs += 1
+                elif op == "resolve_order_contention":
+                    contentions_prevented += 1
+                    try:
+                        payload = json.loads(row["payload"])
+                        loser = payload.get("loser_claim", {})
+                        winner = payload.get("winner_claim", {})
+                        # Consider the protected revenue as the value of the winner that wasn't oversold, 
+                        # plus the loser if an alternate was found. Let's just sum the winner's value as a baseline 
+                        # for "revenue protected from collision refund".
+                        val = float(winner.get("price_cad", loser.get("price_cad", 0)))
+                        revenue_protected_cad += val
+                    except Exception:
+                        pass
+                        
+        return {
+            "total_automated_actions": total_actions,
+            "inventory_syncs": syncs,
+            "collisions_prevented": contentions_prevented,
+            "revenue_protected_cad": round(revenue_protected_cad, 2)
+        }
+
     def close(self) -> None:
         self.connection.close()

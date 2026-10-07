@@ -17,6 +17,7 @@ function disconnect() {
   $("identity").textContent = ""; $("workspace").hidden = true; $("logout").hidden = true;
   $("login-section").hidden = false; 
   if ($("billing-section")) $("billing-section").hidden = true;
+  if ($("analytics-panel")) $("analytics-panel").hidden = true;
   $("refresh").disabled = false;
 }
 async function api(path, options = {}) {
@@ -593,33 +594,62 @@ async function loadBookshelf() {
   } catch(e) { message(e.message); }
 }
 
-if ($("tab-queue") && $("tab-bookshelf") && $("tab-settings")) {
+if ($("tab-queue") && $("tab-bookshelf") && $("tab-settings") && $("tab-analytics")) {
   $("tab-queue").onclick = () => {
     $("tab-queue").className = "primary";
     $("tab-bookshelf").className = "";
+    $("tab-analytics").className = "";
     $("tab-settings").className = "";
     $("bookshelf-panel").hidden = true;
     $("settings-panel").hidden = true;
+    $("analytics-panel").hidden = true;
     $("queue-detail-panel").hidden = false;
   };
   $("tab-bookshelf").onclick = () => {
     $("tab-queue").className = "";
     $("tab-bookshelf").className = "primary";
+    $("tab-analytics").className = "";
     $("tab-settings").className = "";
     $("bookshelf-panel").hidden = false;
     $("settings-panel").hidden = true;
+    $("analytics-panel").hidden = true;
     $("queue-detail-panel").hidden = true;
     loadBookshelf();
+  };
+  $("tab-analytics").onclick = () => {
+    $("tab-queue").className = "";
+    $("tab-bookshelf").className = "";
+    $("tab-analytics").className = "primary";
+    $("tab-settings").className = "";
+    $("bookshelf-panel").hidden = true;
+    $("settings-panel").hidden = true;
+    $("analytics-panel").hidden = false;
+    $("queue-detail-panel").hidden = true;
+    loadAnalytics();
   };
   $("tab-settings").onclick = () => {
     $("tab-queue").className = "";
     $("tab-bookshelf").className = "";
+    $("tab-analytics").className = "";
     $("tab-settings").className = "primary";
     $("bookshelf-panel").hidden = true;
     $("settings-panel").hidden = false;
+    $("analytics-panel").hidden = true;
     $("queue-detail-panel").hidden = true;
     loadSettings();
   };
+}
+
+async function loadAnalytics() {
+  try {
+    const data = await api("/analytics");
+    $("stat-total").textContent = data.total_automated_actions;
+    $("stat-syncs").textContent = data.inventory_syncs;
+    $("stat-collisions").textContent = data.collisions_prevented;
+    $("stat-revenue").textContent = "$" + data.revenue_protected_cad.toFixed(2);
+  } catch(e) {
+    message("Failed to load analytics: " + e.message);
+  }
 }
 
 async function loadSettings() {

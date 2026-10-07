@@ -490,6 +490,17 @@ def create_app(
             
         return {"connected_providers": [row["provider"] for row in rows]}
 
+    @app.get("/analytics")
+    def get_analytics(token: str = Depends(bearer_token)):
+        from app.auth import decode_access_token
+        try:
+            payload = decode_access_token(token)
+            tenant_id = payload["tenant_id"]
+        except Exception:
+            raise HTTPException(401, "Invalid token")
+            
+        return operator.review_store.get_tenant_analytics(tenant_id)
+
     from app.api.billing import get_billing_router
     app.include_router(get_billing_router(settings, user_store), prefix="/billing")
 
