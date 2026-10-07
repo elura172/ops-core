@@ -19,3 +19,6 @@ graphify-out/.graphify_*
 
 # Local scraper snapshot history (rebuildable, machine-specific)
 snapshots.db
+.vercel
+*.db-shm
+*.db-wal
