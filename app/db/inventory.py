@@ -30,6 +30,17 @@ class InventoryStore(Protocol):
     def delist(self, sku: str, tenant_id: int = 1) -> None: ...
 
 
+def _parse_dt(val: Any) -> datetime:
+    if isinstance(val, datetime):
+        return val
+    if isinstance(val, str):
+        try:
+            return datetime.fromisoformat(val)
+        except Exception:
+            pass
+    return datetime.now(UTC)
+
+
 def _row_to_item(row: dict[str, Any]) -> InventoryItem:
     return InventoryItem(
         sku=row["sku"],
@@ -40,8 +51,8 @@ def _row_to_item(row: dict[str, Any]) -> InventoryItem:
         in_store_price_cad=Decimal(str(row["in_store_price_cad"])),
         online_price_cad=Decimal(str(row["online_price_cad"])),
         status=row["status"],
-        created_at=row["created_at"],
-        updated_at=row["updated_at"],
+        created_at=_parse_dt(row["created_at"]),
+        updated_at=_parse_dt(row["updated_at"]),
     )
 
 

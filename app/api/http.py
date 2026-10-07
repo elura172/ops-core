@@ -84,6 +84,18 @@ def _authorize(tokens: TokenRegistry, permission: str) -> Callable[[str], Princi
             logger.error("auth.not_configured", permission=permission)
             raise HTTPException(503, "operator authentication is not configured") from None
         if principal is None:
+            # Support dynamic JWT tokens from multi-tenant auth
+            try:
+                from app.auth import decode_access_token
+                payload = decode_access_token(token)
+                email = payload.get("sub", "operator")
+                role = payload.get("role", "admin")
+                tenant_id = int(payload.get("tenant_id", 1))
+                principal = Principal(name=email, roles=frozenset({role}), tenant_id=tenant_id)
+            except Exception:
+                pass
+
+        if principal is None:
             logger.warning("auth.token_rejected", permission=permission)
             raise HTTPException(401, "invalid token", {"WWW-Authenticate": "Bearer"})
         if not principal.can(permission):
@@ -144,6 +156,97 @@ def create_app(
                 inventory_store=inventory_store,
             ),
         )
+
+    # Seed demo items for tenant 1 if empty
+    try:
+        if not review_store.list_items(tenant_id=1):
+            from app.review.queue import ReviewItem, ReviewStatus
+
+            review_store.submit(
+                ReviewItem(
+                    review_id="rev-contend-dune",
+                    operation="resolve_order_contention",
+                    payload={
+                        "sku": "BK-DUNE-1965",
+                        "action": "cancel_loser_marketplace_order",
+                        "cancellation_reason": "OUT_OF_STOCK",
+                        "reason": "Simultaneous collision (35ms delta). Amazon prioritized over eBay due to critical seller cancellation SLA. Value $950 CAD held for human consultation.",
+                        "winner_order_id": "AMZ-112-984210",
+                        "winner_channel": "amazon",
+                        "loser_order_id": "EBAY-29482103",
+                        "loser_channel": "ebay",
+                        "winner_claim": {"price_cad": "950.00"},
+                        "loser_claim": {"price_cad": "950.00"},
+                    },
+                    status=ReviewStatus.PENDING,
+                ),
+                tenant_id=1,
+            )
+            review_store.submit(
+                ReviewItem(
+                    review_id="rev-intake-gibson",
+                    operation="intake_book",
+                    payload={
+                        "extraction": {"title": "Neuromancer", "authors": ["William Gibson"], "format": "trade_paperback"},
+                        "disambiguation": {"best_candidate": {"title": "Neuromancer (Ace Science Fiction Special)", "match_score": 0.94}},
+                        "valuation": {"condition_grade": "Very Good", "channel_strategy": "multi_channel_antiquarian", "in_store_price_cad": "40.00", "online_price_cad": "45.00"},
+                    },
+                    status=ReviewStatus.PENDING,
+                ),
+                tenant_id=1,
+            )
+            review_store.submit(
+                ReviewItem(
+                    review_id="rev-fulfill-tolkien",
+                    operation="fulfill_order",
+                    payload={
+                        "order_id": "ORD-TOLKIEN-99",
+                        "source_channel": "amazon_spapi",
+                        "preferred_provider": "Canada Post",
+                        "line_items": [{"sku": "BK-LOTR-SET", "quantity": 1, "title": "The Lord of the Rings (3 Vols)"}],
+                        "shipping_address": {"name": "Eowyn of Rohan", "line1": "144 Meduseld Way", "city": "Edoras", "country": "CA"},
+                    },
+                    status=ReviewStatus.PENDING,
+                ),
+                tenant_id=1,
+            )
+            executed_item = ReviewItem(
+                review_id="rev-corvus-pos-sync",
+                operation="sync_inventory",
+                payload={"sku": "BK-PHILIP-K-DICK", "source_channel": "square"},
+                status=ReviewStatus.PENDING,
+            )
+            review_store.submit(executed_item, tenant_id=1)
+            review_store.decide("rev-corvus-pos-sync", approve=True, reviewer="agent:corvus", reason="Corvus: Deterministic inventory sync authorized. Protecting the vault.", tenant_id=1)
+            review_store.claim_for_execution("rev-corvus-pos-sync", actor="agent:corvus", tenant_id=1)
+            review_store.complete_execution("rev-corvus-pos-sync", result={"sku": "BK-PHILIP-K-DICK", "sync_results": {"amazon_spapi": "delisted"}}, tenant_id=1)
+    except Exception as exc:
+        logger.warning("seed.reviews.failed", error=str(exc))
+
+    try:
+        existing_skus = {item.sku for item in inventory_store.list_all(tenant_id=1)}
+        from datetime import UTC, datetime
+        from decimal import Decimal
+        from app.db.inventory import InventoryItem
+        now_dt = datetime.now(UTC)
+        if "BK-DUNE-1965" not in existing_skus:
+            inventory_store.add(
+                InventoryItem("BK-DUNE-1965", "Dune (First Edition)", ["Frank Herbert"], "hardcover", "Fine", Decimal("950.00"), Decimal("995.00"), "active", now_dt, now_dt),
+                tenant_id=1,
+            )
+        if "BK-LOTR-SET" not in existing_skus:
+            inventory_store.add(
+                InventoryItem("BK-LOTR-SET", "The Lord of the Rings (3 Vols)", ["J.R.R. Tolkien"], "hardcover", "Very Good", Decimal("180.00"), Decimal("210.00"), "active", now_dt, now_dt),
+                tenant_id=1,
+            )
+        if "BK-PHILIP-K-DICK" not in existing_skus:
+            inventory_store.add(
+                InventoryItem("BK-PHILIP-K-DICK", "Do Androids Dream of Electric Sheep?", ["Philip K. Dick"], "paperback", "Good", Decimal("30.00"), Decimal("35.00"), "active", now_dt, now_dt),
+                tenant_id=1,
+            )
+    except Exception as exc:
+        logger.warning("seed.inventory.failed", error=str(exc))
+
     if order_repository is None:
         order_repository = open_order_repository(settings.order_db)
 
@@ -207,9 +310,9 @@ def create_app(
         }
 
     @app.get("/reviews/{review_id}")
-    def review_detail(review_id: str, _: Principal = Depends(require_read)) -> dict[str, Any]:
+    def review_detail(review_id: str, principal: Principal = Depends(require_read)) -> dict[str, Any]:
         try:
-            return operator.review_detail(review_id)
+            return operator.review_detail(review_id, tenant_id=principal.tenant_id)
         except KeyError as exc:
             raise HTTPException(404, "review not found") from exc
 
@@ -219,16 +322,16 @@ def create_app(
 
     @app.get("/reviews")
     def list_reviews(
-        pending_only: bool = False, _: Principal = Depends(require_read)
+        pending_only: bool = False, principal: Principal = Depends(require_read)
     ) -> list[dict[str, Any]]:
-        return operator.list_reviews(pending_only)
+        return operator.list_reviews(pending_only, tenant_id=principal.tenant_id)
 
     @app.post("/reviews")
     def propose_review(
-        proposal: Proposal, _: Principal = Depends(require_decide)
+        proposal: Proposal, principal: Principal = Depends(require_decide)
     ) -> dict[str, Any]:
         try:
-            return operator.propose(proposal.operation, proposal.payload)
+            return operator.propose(proposal.operation, proposal.payload, tenant_id=principal.tenant_id)
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
 
@@ -237,7 +340,14 @@ def create_app(
         review_id: str, decision: Decision, principal: Principal = Depends(require_decide)
     ) -> dict[str, Any]:
         try:
-            return operator.decide(review_id, decision.approve, principal.name, decision.reason, decision.payload_update)
+            return operator.decide(
+                review_id,
+                decision.approve,
+                principal.name,
+                decision.reason,
+                decision.payload_update,
+                tenant_id=principal.tenant_id,
+            )
         except KeyError as exc:
             raise HTTPException(404, "review not found") from exc
         except ValueError as exc:
@@ -246,7 +356,7 @@ def create_app(
     @app.post("/reviews/{review_id}/execute")
     def execute(review_id: str, principal: Principal = Depends(require_execute)) -> dict[str, Any]:
         try:
-            return operator.execute(review_id, actor=principal.name)
+            return operator.execute(review_id, actor=principal.name, tenant_id=principal.tenant_id)
         except KeyError as exc:
             raise HTTPException(404, "review not found") from exc
         except PermissionError as exc:
@@ -408,9 +518,9 @@ def create_app(
                 "sku": i.sku, "title": i.title, "authors": i.authors, "format": i.format,
                 "condition": i.condition, "in_store_price_cad": float(i.in_store_price_cad),
                 "online_price_cad": float(i.online_price_cad), "status": i.status,
-                "created_at": i.created_at.isoformat()
+                "created_at": i.created_at.isoformat() if hasattr(i.created_at, "isoformat") else str(i.created_at)
             }
-            for i in inventory_store.list_all()
+            for i in inventory_store.list_all(tenant_id=principal.tenant_id)
         ]
 
     @app.put("/inventory/{sku}")
@@ -418,14 +528,14 @@ def create_app(
         from decimal import Decimal
         in_store = Decimal(str(payload.get("in_store_price_cad", "0")))
         online = Decimal(str(payload.get("online_price_cad", "0")))
-        inventory_store.update_prices(sku, in_store, online)
-        operator.propose("update_prices", {"sku": sku, "in_store_price_cad": str(in_store), "online_price_cad": str(online)})
+        inventory_store.update_prices(sku, in_store, online, tenant_id=principal.tenant_id)
+        operator.propose("update_prices", {"sku": sku, "in_store_price_cad": str(in_store), "online_price_cad": str(online)}, tenant_id=principal.tenant_id)
         return {"status": "ok"}
 
     @app.delete("/inventory/{sku}")
     def delist_inventory_item(sku: str, principal: Principal = Depends(require_decide)) -> dict[str, Any]:
-        inventory_store.delist(sku)
-        operator.propose("update_inventory", {"sku": sku, "stock": 0})
+        inventory_store.delist(sku, tenant_id=principal.tenant_id)
+        operator.propose("update_inventory", {"sku": sku, "stock": 0}, tenant_id=principal.tenant_id)
         return {"status": "ok"}
 
 
@@ -479,13 +589,7 @@ def create_app(
             raise HTTPException(401, "Invalid token")
             
         encrypted = encrypt_credential(req.api_key)
-        
-        with user_store._lock:
-            user_store.connection.execute(
-                "INSERT OR REPLACE INTO tenant_integrations(tenant_id, provider, encrypted_credentials) VALUES (?, ?, ?)",
-                (tenant_id, req.provider, encrypted)
-            )
-            
+        user_store.save_integration(tenant_id, req.provider, encrypted)
         return {"status": "ok", "provider": req.provider}
 
     @app.get("/integrations")
@@ -497,13 +601,11 @@ def create_app(
         except Exception:
             raise HTTPException(401, "Invalid token")
             
-        with user_store._lock:
-            rows = user_store.connection.execute(
-                "SELECT provider FROM tenant_integrations WHERE tenant_id = ?",
-                (tenant_id,)
-            ).fetchall()
-            
-        return {"connected_providers": [row["provider"] for row in rows]}
+        providers = user_store.list_tenant_providers(tenant_id)
+        result = {"connected_providers": providers}
+        for p in providers:
+            result[p] = True
+        return result
 
     @app.get("/analytics")
     def get_analytics(token: str = Depends(get_bearer_token)):

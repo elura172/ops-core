@@ -27,6 +27,7 @@ class AuthenticationNotConfigured(RuntimeError):
 class Principal:
     name: str
     roles: frozenset[str]
+    tenant_id: int = 1
 
     @property
     def permissions(self) -> frozenset[str]:

@@ -118,24 +118,25 @@ class SQLiteReviewStore:
             raise KeyError(review_id)
         return _row_to_item(row)
 
-    def submit(self, item: ReviewItem) -> ReviewItem:
+    def submit(self, item: ReviewItem, tenant_id: int = 1) -> ReviewItem:
         if item.status != ReviewStatus.PENDING:
             raise ValueError("new review items must be pending")
         with self._transaction() as connection:
             existing = connection.execute(
-                "SELECT 1 FROM reviews WHERE review_id = ?", (item.review_id,)
+                "SELECT 1 FROM reviews WHERE review_id = ? AND tenant_id = ?", (item.review_id, tenant_id)
             ).fetchone()
             if existing:
                 raise ValueError("review_id already exists")
             connection.execute(
-                "INSERT INTO reviews(review_id, operation, payload, status, created_at) "
-                "VALUES (?, ?, ?, ?, ?)",
+                "INSERT INTO reviews(review_id, operation, payload, status, created_at, tenant_id) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
                 (
                     item.review_id,
                     item.operation,
                     json.dumps(item.payload, sort_keys=True),
                     item.status.value,
                     item.created_at.astimezone(UTC).isoformat(),
+                    tenant_id,
                 ),
             )
         return item
@@ -211,7 +212,7 @@ class SQLiteReviewStore:
                     {"operation": item.operation},
                 ),
             )
-            return self._fetch(connection, review_id)
+            return self._fetch(connection, review_id, tenant_id)
 
     def claim_for_execution(self, review_id: str, actor: str, tenant_id: int = 1) -> ReviewItem:
         claimed_at = datetime.now(UTC)
@@ -231,8 +232,8 @@ class SQLiteReviewStore:
             )
             if cursor.rowcount != 1:
                 # Another worker claimed it between the read and the write.
-                raise AlreadyExecuted(self._fetch(connection, review_id))
-            return self._fetch(connection, review_id)
+                raise AlreadyExecuted(self._fetch(connection, review_id, tenant_id))
+            return self._fetch(connection, review_id, tenant_id)
 
     def complete_execution(self, review_id: str, result: dict[str, Any], tenant_id: int = 1) -> ReviewItem:
         with self._transaction() as connection:
@@ -256,7 +257,7 @@ class SQLiteReviewStore:
                     {"operation": item.operation, "approved_by": item.reviewer or "unknown"},
                 ),
             )
-            return self._fetch(connection, review_id)
+            return self._fetch(connection, review_id, tenant_id)
 
     def fail_execution(self, review_id: str, error: str, tenant_id: int = 1) -> ReviewItem:
         with self._transaction() as connection:
@@ -280,7 +281,7 @@ class SQLiteReviewStore:
                     {"operation": item.operation},
                 ),
             )
-            return self._fetch(connection, review_id)
+            return self._fetch(connection, review_id, tenant_id)
 
     def recover_stale_executions(self, older_than: timedelta) -> list[ReviewItem]:
         """Move abandoned EXECUTING items to FAILED so they are not stuck forever.

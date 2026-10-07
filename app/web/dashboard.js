@@ -379,6 +379,12 @@ async function mutate(item, action, body) {
 
 $("show-signup").onclick = (e) => { e.preventDefault(); $("login-panel").hidden = true; $("signup-panel").hidden = false; };
 $("show-login").onclick = (e) => { e.preventDefault(); $("signup-panel").hidden = true; $("login-panel").hidden = false; };
+if ($("btn-fill-demo")) {
+  $("btn-fill-demo").onclick = () => {
+    $("login-email").value = "operator@opscore.io";
+    $("login-password").value = "demo1234";
+  };
+}
 
 async function handleAuth(path, body, button) {
   const epoch = ++generation;

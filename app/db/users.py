@@ -60,6 +60,40 @@ class SQLiteUserStore:
         except sqlite3.OperationalError:
             pass
 
+        # Seed default demo account if absent
+        try:
+            with self._lock:
+                self.connection.execute(
+                    "INSERT OR IGNORE INTO tenants (tenant_id, name, created_at, subscription_status) "
+                    "VALUES (1, 'Elura Antiquarian Vault', ?, 'active')",
+                    (datetime.now(timezone.utc).isoformat(),)
+                )
+                self.connection.execute(
+                    "UPDATE tenants SET subscription_status = 'active' WHERE tenant_id = 1"
+                )
+                demo_user = self.connection.execute(
+                    "SELECT user_id FROM users WHERE email = 'operator@opscore.io'"
+                ).fetchone()
+                if not demo_user:
+                    from app.auth import get_password_hash
+                    pw = get_password_hash("demo1234")
+                    self.connection.execute(
+                        "INSERT INTO users (tenant_id, email, password_hash, role) VALUES (1, 'operator@opscore.io', ?, 'admin')",
+                        (pw,)
+                    )
+                from app.vault import encrypt_credential
+                self.connection.execute(
+                    "INSERT OR IGNORE INTO tenant_integrations (tenant_id, provider, encrypted_credentials) VALUES (1, 'square', ?)",
+                    (encrypt_credential("sq0atp-mock-square-token"),)
+                )
+                self.connection.execute(
+                    "INSERT OR IGNORE INTO tenant_integrations (tenant_id, provider, encrypted_credentials) VALUES (1, 'shopify', ?)",
+                    (encrypt_credential("shpat_mock-shopify-token"),)
+                )
+        except Exception as exc:
+            import logging
+            logging.getLogger("ops_core.users").warning("seed.users.failed: %s", exc)
+
     def create_tenant(self, name: str) -> int:
         with self._lock:
             cursor = self.connection.execute(
@@ -97,6 +131,21 @@ class SQLiteUserStore:
                 (tenant_id,)
             ).fetchall()
             return {row["provider"]: row["encrypted_credentials"] for row in rows}
+
+    def save_integration(self, tenant_id: int, provider: str, encrypted_credentials: str) -> None:
+        with self._lock:
+            self.connection.execute(
+                "INSERT OR REPLACE INTO tenant_integrations(tenant_id, provider, encrypted_credentials) VALUES (?, ?, ?)",
+                (tenant_id, provider, encrypted_credentials),
+            )
+
+    def list_tenant_providers(self, tenant_id: int) -> list[str]:
+        with self._lock:
+            rows = self.connection.execute(
+                "SELECT provider FROM tenant_integrations WHERE tenant_id = ?",
+                (tenant_id,),
+            ).fetchall()
+            return [row["provider"] for row in rows]
 
     def get_tenant_billing_status(self, tenant_id: int) -> dict:
         with self._lock:
@@ -140,6 +189,37 @@ class PostgresUserStore:
             kwargs={"autocommit": True, "row_factory": dict_row},
         )
 
+        try:
+            with self.pool.connection() as conn:
+                conn.execute(
+                    "INSERT INTO tenants (tenant_id, name, created_at, subscription_status) "
+                    "VALUES (1, 'Elura Antiquarian Vault', %s, 'active') "
+                    "ON CONFLICT (tenant_id) DO UPDATE SET subscription_status = 'active'",
+                    (datetime.now(timezone.utc),),
+                )
+                demo_user = conn.execute(
+                    "SELECT user_id FROM users WHERE email = 'operator@opscore.io'"
+                ).fetchone()
+                if not demo_user:
+                    from app.auth import get_password_hash
+                    pw = get_password_hash("demo1234")
+                    conn.execute(
+                        "INSERT INTO users (tenant_id, email, password_hash, role) VALUES (1, 'operator@opscore.io', %s, 'admin')",
+                        (pw,),
+                    )
+                from app.vault import encrypt_credential
+                conn.execute(
+                    "INSERT INTO tenant_integrations (tenant_id, provider, encrypted_credentials) VALUES (1, 'square', %s) ON CONFLICT DO NOTHING",
+                    (encrypt_credential("sq0atp-mock-square-token"),),
+                )
+                conn.execute(
+                    "INSERT INTO tenant_integrations (tenant_id, provider, encrypted_credentials) VALUES (1, 'shopify', %s) ON CONFLICT DO NOTHING",
+                    (encrypt_credential("shpat_mock-shopify-token"),),
+                )
+        except Exception as exc:
+            import logging
+            logging.getLogger("ops_core.users").warning("seed.pg_users.failed: %s", exc)
+
     def create_tenant(self, name: str) -> int:
         with self.pool.connection() as conn:
             row = conn.execute(
@@ -178,6 +258,22 @@ class PostgresUserStore:
                 (tenant_id,),
             ).fetchall()
             return {row["provider"]: row["encrypted_credentials"] for row in rows}
+
+    def save_integration(self, tenant_id: int, provider: str, encrypted_credentials: str) -> None:
+        with self.pool.connection() as conn:
+            conn.execute(
+                "INSERT INTO tenant_integrations(tenant_id, provider, encrypted_credentials) VALUES (%s, %s, %s) "
+                "ON CONFLICT (tenant_id, provider) DO UPDATE SET encrypted_credentials = EXCLUDED.encrypted_credentials",
+                (tenant_id, provider, encrypted_credentials),
+            )
+
+    def list_tenant_providers(self, tenant_id: int) -> list[str]:
+        with self.pool.connection() as conn:
+            rows = conn.execute(
+                "SELECT provider FROM tenant_integrations WHERE tenant_id = %s",
+                (tenant_id,),
+            ).fetchall()
+            return [row["provider"] for row in rows]
 
     def get_tenant_billing_status(self, tenant_id: int) -> dict:
         with self.pool.connection() as conn:
