@@ -1374,9 +1374,8 @@ async function renderBookshelf() {
     const authorsStr = Array.isArray(item.authors) ? item.authors.join(", ") : (item.authors || "Unknown");
     meta.innerHTML = `<strong>${authorsStr}</strong><br>SKU: <code>${item.sku}</code> · Format: ${human(item.format)} · Grade: ${item.condition} · In-Store: $${Number(item.in_store_price_cad).toFixed(2)} CAD`;
     
-    // Physical location badge
-    const locRow = node("div");
-    locRow.style.margin = "6px 0";
+    // Physical location & audit badges
+    const locRow = node("div", undefined, "bookshelf-badge-row");
     const locBadge = node("span", undefined, "bookshelf-location-badge");
     locBadge.innerHTML = `📍 <strong>${item.section || "General"}</strong> · ${item.shelf || "Unassigned"} <small style="opacity:0.6; margin-left:4px;">✏️</small>`;
     locBadge.title = "Click to update physical section or shelf";
@@ -1398,7 +1397,6 @@ async function renderBookshelf() {
     };
     locRow.append(locBadge);
 
-    // Audit freshness badge
     const auditBadge = node("span", undefined, "bookshelf-audit-badge");
     if (item.last_audited_at) {
       const auditDate = new Date(item.last_audited_at).toLocaleDateString();
@@ -1414,6 +1412,7 @@ async function renderBookshelf() {
     
     const actions = node("div", undefined, "bookshelf-actions");
     if (item.status === "active") {
+      const priceRow = node("div", undefined, "bookshelf-price-row");
       const priceLabel = node("label", "Online: $");
       const priceInput = node("input");
       priceInput.type = "number";
@@ -1447,6 +1446,9 @@ async function renderBookshelf() {
         } catch(e) { message(e.message); }
       };
 
+      priceRow.append(priceLabel, priceInput, saveBtn, delistBtn);
+
+      const channelsRow = node("div", undefined, "bookshelf-channels-row");
       const checkoutBtn = node("button", "💳 Checkout", "ghost-sm");
       checkoutBtn.style.color = "var(--green)";
       checkoutBtn.title = "Generate Square in-store payment checkout link";
@@ -1479,28 +1481,47 @@ async function renderBookshelf() {
           pushEbayBtn.disabled = false;
         }
       };
-      
-      actions.append(priceLabel, priceInput, saveBtn, delistBtn, checkoutBtn, pushSquareBtn, pushEbayBtn);
+
+      const deleteBookBtn = node("button", "🗑️ Delete", "danger-sm delete-btn");
+      deleteBookBtn.title = "Permanently delete book from database";
+      deleteBookBtn.onclick = async () => {
+        if (!confirm(`Are you sure you want to delete 1 item ("${item.title}")? This action cannot be reversed.`)) return;
+        deleteBookBtn.disabled = true;
+        try {
+          await api(`/inventory/${encodeURIComponent(item.sku)}?hard=true`, { method: "DELETE" });
+          message(`Book "${item.title}" (${item.sku}) permanently deleted from database.`);
+          loadBookshelf();
+        } catch(e) {
+          message(e.message);
+          deleteBookBtn.disabled = false;
+        }
+      };
+
+      channelsRow.append(checkoutBtn, pushSquareBtn, pushEbayBtn, deleteBookBtn);
+      actions.append(priceRow, channelsRow);
     } else {
-      actions.append(node("span", `Status: ${human(item.status)}`, "muted"));
+      const inactiveRow = node("div", undefined, "bookshelf-channels-row");
+      inactiveRow.append(node("span", `Status: ${human(item.status)}`, "muted"));
+
+      const deleteBookBtn = node("button", "🗑️ Delete", "danger-sm delete-btn");
+      deleteBookBtn.style.marginLeft = "auto";
+      deleteBookBtn.title = "Permanently delete book from database";
+      deleteBookBtn.onclick = async () => {
+        if (!confirm(`Are you sure you want to delete 1 item ("${item.title}")? This action cannot be reversed.`)) return;
+        deleteBookBtn.disabled = true;
+        try {
+          await api(`/inventory/${encodeURIComponent(item.sku)}?hard=true`, { method: "DELETE" });
+          message(`Book "${item.title}" (${item.sku}) permanently deleted from database.`);
+          loadBookshelf();
+        } catch(e) {
+          message(e.message);
+          deleteBookBtn.disabled = false;
+        }
+      };
+      inactiveRow.append(deleteBookBtn);
+      actions.append(inactiveRow);
     }
 
-    const deleteBookBtn = node("button", "🗑️ Delete Book", "danger-sm");
-    deleteBookBtn.style.marginLeft = "auto";
-    deleteBookBtn.title = "Permanently delete book from database";
-    deleteBookBtn.onclick = async () => {
-      if (!confirm(`Are you sure you want to delete 1 item ("${item.title}")? This action cannot be reversed.`)) return;
-      deleteBookBtn.disabled = true;
-      try {
-        await api(`/inventory/${encodeURIComponent(item.sku)}?hard=true`, { method: "DELETE" });
-        message(`Book "${item.title}" (${item.sku}) permanently deleted from database.`);
-        loadBookshelf();
-      } catch(e) {
-        message(e.message);
-        deleteBookBtn.disabled = false;
-      }
-    };
-    actions.append(deleteBookBtn);
     card.append(actions);
     
     list.append(card);
