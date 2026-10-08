@@ -16,9 +16,38 @@ from pathlib import Path
 
 import psycopg
 
+import time
+
 from app.observability.logging import get_logger
 
 logger = get_logger("migrate")
+
+
+def connect_with_retry(
+    dsn: str,
+    max_retries: int = 3,
+    initial_delay: float = 0.5,
+    timeout: int = 10,
+) -> psycopg.Connection:
+    """Connect to Postgres with retries to handle serverless cold-start delays."""
+    last_exc: Exception | None = None
+    for attempt in range(max_retries):
+        try:
+            return psycopg.connect(dsn, autocommit=True, connect_timeout=timeout)
+        except Exception as exc:
+            last_exc = exc
+            if attempt < max_retries - 1:
+                delay = initial_delay * (2 ** attempt)
+                logger.warning(
+                    "db.connect_retry",
+                    attempt=attempt + 1,
+                    delay=delay,
+                    error=str(exc),
+                )
+                time.sleep(delay)
+    if last_exc:
+        raise last_exc
+    raise RuntimeError("failed to connect to database")
 
 
 def _default_migrations_dir() -> Path:
@@ -69,7 +98,7 @@ def migrate(dsn: str, directory: Path = MIGRATIONS_DIR) -> list[Migration]:
     """Apply every unapplied migration. Returns the migrations applied by this call."""
     migrations = discover(directory)
     applied: list[Migration] = []
-    with psycopg.connect(dsn, autocommit=True) as connection:
+    with connect_with_retry(dsn) as connection:
         connection.execute("SELECT pg_advisory_lock(%s)", (_ADVISORY_LOCK_KEY,))
         try:
             connection.execute(

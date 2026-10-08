@@ -287,6 +287,22 @@ def create_app(
         response.headers["Referrer-Policy"] = "no-referrer"
         return response
 
+    @app.exception_handler(Exception)
+    async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+        logger.error(
+            "http.unhandled_exception",
+            path=request.url.path,
+            method=request.method,
+            error=str(exc),
+            error_type=type(exc).__name__,
+        )
+        return JSONResponse(
+            status_code=500,
+            content={
+                "detail": f"{type(exc).__name__}: {str(exc)}" if str(exc) else type(exc).__name__,
+                "type": type(exc).__name__,
+            },
+        )
 
     @app.get("/", response_class=HTMLResponse, include_in_schema=False)
     def landing_page() -> HTMLResponse:
@@ -310,10 +326,18 @@ def create_app(
 
     @app.get("/dashboard/assets/{asset}", include_in_schema=False)
     def dashboard_asset(asset: str) -> Response:
-        types = {"dashboard.css": "text/css", "dashboard.js": "text/javascript"}
+        types = {
+            "dashboard.css": "text/css",
+            "dashboard.js": "text/javascript",
+            "login.png": "image/png",
+            "favicon.ico": "image/x-icon",
+        }
         if asset not in types:
             raise HTTPException(404, "asset not found")
-        return Response(files("app.web").joinpath(asset).read_text(), media_type=types[asset])
+        path = files("app.web").joinpath(asset)
+        if not path.is_file():
+            raise HTTPException(404, "asset not found")
+        return Response(path.read_bytes(), media_type=types[asset])
 
     @app.get("/operator/session")
     def session(principal: Principal = Depends(require_read)) -> dict[str, Any]:
@@ -631,7 +655,7 @@ def create_app(
         try:
             api_key = resolve_gemini_api_key(settings.gemini_api_key if hasattr(settings, "gemini_api_key") else None)
         except ValueError as exc:
-            raise HTTPException(500, "Vision AI not configured") from exc
+            raise HTTPException(503, "Vision AI not configured: GEMINI_API_KEY required") from exc
 
         # Consolidate upload files from files list or single file argument
         upload_files: list[UploadFile] = []
@@ -1089,7 +1113,7 @@ def create_app(
             try:
                 api_key = resolve_gemini_api_key(settings.gemini_api_key if hasattr(settings, "gemini_api_key") else None)
             except ValueError as exc:
-                raise HTTPException(500, "Vision AI not configured") from exc
+                raise HTTPException(503, "Vision AI not configured: GEMINI_API_KEY required") from exc
 
             provider = GeminiBookVisionProvider(api_key=api_key)
             raw_bytes = await file.read()

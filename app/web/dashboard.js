@@ -41,7 +41,7 @@ async function api(path, options = {}) {
   try { body = JSON.parse(text); } catch(_) { body = { detail: text || `Request failed (${response.status}).` }; }
   if (epoch !== generation) throw new Error("Session changed.");
   if (!response.ok) {
-    if (response.status === 401 || response.status === 503) disconnect();
+    if (response.status === 401) disconnect();
     throw new Error(formatError(body.detail) || `Request failed (${response.status}).`);
   }
   return body;

@@ -14,6 +14,17 @@ from typing import Any
 from app.review.queue import ReviewStore
 
 _POSTGRES_PREFIXES = ("postgres://", "postgresql://")
+_MIGRATED_DSNS: set[str] = set()
+
+
+def migrate_once(dsn: str) -> None:
+    """Run migrations once per process for a given DSN to prevent cold-start thrashing."""
+    if dsn in _MIGRATED_DSNS:
+        return
+    from app.db.migrate import migrate
+
+    migrate(dsn)
+    _MIGRATED_DSNS.add(dsn)
 
 
 def is_postgres_dsn(value: str | Path) -> bool:
@@ -23,10 +34,9 @@ def is_postgres_dsn(value: str | Path) -> bool:
 def open_review_store(review_db: str) -> ReviewStore:
     if is_postgres_dsn(review_db):
         # Imported lazily so SQLite deployments do not need psycopg installed.
-        from app.db.migrate import migrate
         from app.db.postgres import PostgresReviewStore
 
-        migrate(review_db)
+        migrate_once(review_db)
         return PostgresReviewStore(review_db)
 
     from app.db.review_store import SQLiteReviewStore
@@ -36,10 +46,9 @@ def open_review_store(review_db: str) -> ReviewStore:
 
 def open_order_repository(order_db: str) -> Any:
     if is_postgres_dsn(order_db):
-        from app.db.migrate import migrate
         from app.db.postgres_orders import PostgresOrderRepository
 
-        migrate(order_db)
+        migrate_once(order_db)
         return PostgresOrderRepository(order_db)
 
     from app.db.sqlite import SQLiteOrderRepository
@@ -48,9 +57,8 @@ def open_order_repository(order_db: str) -> Any:
 
 def open_inventory_store(db_url: str) -> Any:
     if is_postgres_dsn(db_url):
-        from app.db.migrate import migrate
         from app.db.inventory import PostgresInventoryStore
-        migrate(db_url)
+        migrate_once(db_url)
         return PostgresInventoryStore(db_url)
     
     from app.db.inventory import SQLiteInventoryStore
@@ -59,10 +67,9 @@ def open_inventory_store(db_url: str) -> Any:
 
 def open_user_store(user_db: str) -> Any:
     if is_postgres_dsn(user_db):
-        from app.db.migrate import migrate
         from app.db.users import PostgresUserStore
 
-        migrate(user_db)
+        migrate_once(user_db)
         return PostgresUserStore(user_db)
 
     from app.db.users import SQLiteUserStore
@@ -72,10 +79,9 @@ def open_user_store(user_db: str) -> Any:
 
 def open_want_list_store(want_db: str) -> Any:
     if is_postgres_dsn(want_db):
-        from app.db.migrate import migrate
         from app.db.want_list import PostgresWantListStore
 
-        migrate(want_db)
+        migrate_once(want_db)
         return PostgresWantListStore(want_db)
 
     from app.db.want_list import SQLiteWantListStore
