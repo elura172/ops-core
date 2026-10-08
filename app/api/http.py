@@ -553,7 +553,10 @@ def create_app(
 
     @app.post("/intake/camera")
     async def process_camera_upload(
-        file: UploadFile = File(...),
+        request: Request,
+        file: UploadFile | None = File(None),
+        files: list[UploadFile] = File(default_factory=list),
+        intake_mode: str = Form("multi_stack"),
         section: str = Form("General"),
         shelf: str = Form(""),
         principal: Principal = Depends(require_decide)
@@ -563,31 +566,125 @@ def create_app(
             prepare_vision_image,
             resolve_gemini_api_key,
         )
+        from app.domain.intake_batch import (
+            BatchExtractionItem,
+            BatchSpineDeduplicator,
+            FailedImageRecord,
+            MultiAngleBookMerger,
+        )
         from app.pricing import PricingEngine
         from app.amazon.scraper import AmazonScraperClient, SnapshotStore
+        from app.discovery.books import OpenLibraryMetadataResolver
 
         try:
             api_key = resolve_gemini_api_key(settings.gemini_api_key if hasattr(settings, "gemini_api_key") else None)
         except ValueError as exc:
             raise HTTPException(500, "Vision AI not configured") from exc
 
-        provider = GeminiBookVisionProvider(api_key=api_key)
-        raw_bytes = await file.read()
-        if not raw_bytes:
+        # Consolidate upload files from files list or single file argument
+        upload_files: list[UploadFile] = []
+        if files:
+            upload_files.extend([f for f in files if f and f.filename])
+        if file and file.filename and file not in upload_files:
+            upload_files.append(file)
+        if not upload_files:
+            # Fallback inspection of form fields
+            form = await request.form()
+            for val in form.values():
+                if isinstance(val, UploadFile) and val.filename and val not in upload_files:
+                    upload_files.append(val)
+
+        if not upload_files:
             raise HTTPException(400, "Uploaded image file is empty")
 
-        image_bytes, mime_type = prepare_vision_image(raw_bytes, file.content_type)
-        
-        try:
-            extraction = await run_in_threadpool(provider.extract_stack, image_bytes, mime_type)
-        except Exception as exc:
-            logger.error("Vision extraction failed", error=str(exc))
-            raise HTTPException(502, f"Vision extraction failed: {exc}") from exc
+        provider = GeminiBookVisionProvider(api_key=api_key)
+
+        prepared_images: list[tuple[int, str, bytes, str]] = []
+        failed_images: list[FailedImageRecord] = []
+
+        for idx, u_file in enumerate(upload_files):
+            fname = u_file.filename or f"photo_{idx + 1}.jpg"
+            try:
+                raw_bytes = await u_file.read()
+                if not raw_bytes:
+                    failed_images.append(FailedImageRecord(idx, fname, "Uploaded image file is empty"))
+                    continue
+                img_bytes, mime_type = prepare_vision_image(raw_bytes, u_file.content_type)
+                prepared_images.append((idx, fname, img_bytes, mime_type))
+            except Exception as prep_exc:
+                logger.warning("Image preparation failed", filename=fname, error=str(prep_exc))
+                failed_images.append(FailedImageRecord(idx, fname, f"Preparation failed: {prep_exc}"))
+
+        if not prepared_images:
+            first_err = failed_images[0].error if failed_images else "Uploaded image file is empty"
+            raise HTTPException(400, f"No valid images could be processed: {first_err}")
+
+        extracted_items: list[BatchExtractionItem] = []
+        suppressed_duplicates = []
+        dominant_orientation = "horizontal_stack"
+
+        if intake_mode == "multi_angle_single_book":
+            # Multi-angle single volume mode
+            raw_pairs = [(b, m) for (_, _, b, m) in prepared_images]
+            try:
+                if hasattr(provider, "extract_multi_angle"):
+                    extraction = await run_in_threadpool(provider.extract_multi_angle, raw_pairs)
+                else:
+                    extraction = await run_in_threadpool(provider.extract_stack, raw_pairs[0][0], raw_pairs[0][1])
+            except Exception as exc:
+                logger.error("Multi-angle vision extraction failed", error=str(exc))
+                raise HTTPException(502, f"Vision extraction failed: {exc}") from exc
+
+            dominant_orientation = extraction.orientation
+            if extraction.books:
+                if len(extraction.books) == 1:
+                    primary_book = extraction.books[0]
+                else:
+                    primary_book = MultiAngleBookMerger.merge_angles(list(extraction.books)) or extraction.books[0]
+
+                primary_filename = f"multi_angle_{len(prepared_images)}_shots"
+                extracted_items.append(
+                    BatchExtractionItem(
+                        book=primary_book,
+                        source_image_index=0,
+                        source_filename=primary_filename,
+                    )
+                )
+        else:
+            # Multi-stack batch mode: extract each photo with per-image failure isolation
+            raw_extracted_items: list[BatchExtractionItem] = []
+            orientations: list[str] = []
+
+            for img_idx, fname, img_bytes, mime_type in prepared_images:
+                try:
+                    extraction = await run_in_threadpool(provider.extract_stack, img_bytes, mime_type)
+                    orientations.append(extraction.orientation)
+                    for book in extraction.books:
+                        raw_extracted_items.append(
+                            BatchExtractionItem(
+                                book=book,
+                                source_image_index=img_idx,
+                                source_filename=fname,
+                            )
+                        )
+                except Exception as exc:
+                    logger.warning("Stack extraction failed for image", filename=fname, error=str(exc))
+                    failed_images.append(FailedImageRecord(img_idx, fname, f"Vision extraction failed: {exc}"))
+
+            if not raw_extracted_items and failed_images:
+                first_err = failed_images[0].error
+                raise HTTPException(502, f"Vision extraction failed: {first_err}")
+
+            if orientations:
+                dominant_orientation = orientations[0]
+
+            # Cross-image deduplication
+            kept_items, suppressed = BatchSpineDeduplicator.deduplicate(raw_extracted_items)
+            extracted_items = kept_items
+            suppressed_duplicates = suppressed
 
         # Initialize Pricing Engine & Catalog Resolver
-        from app.discovery.books import OpenLibraryMetadataResolver
         resolver = OpenLibraryMetadataResolver()
-
         scraper = AmazonScraperClient(
             api_key=getattr(settings, "shippo_api_key", "mock"),
             store=SnapshotStore(),
@@ -596,7 +693,8 @@ def create_app(
         pricing = PricingEngine(scraper)
 
         proposals = []
-        for idx, book in enumerate(extraction.books):
+        for batch_item in extracted_items:
+            book = batch_item.book
             condition = "Good" if "clean_as_new" in book.visible_condition_cues else "Acceptable"
             fmt_str = book.format.value if hasattr(book.format, "value") else str(book.format)
 
@@ -605,7 +703,11 @@ def create_app(
             cand_title = book.title
             cand_match_score = 0.85 if book.confidence == "high" else 0.5
             cand_isbn = "UNKNOWN"
-            triage_reason = f"Auto-extracted from stack image (Position {book.stack_order})."
+
+            if intake_mode == "multi_angle_single_book":
+                triage_reason = f"Synthesized from {len(prepared_images)} multi-angle photographs (verified collector record)."
+            else:
+                triage_reason = f"Auto-extracted from {batch_item.source_filename} (Stack Pos {book.stack_order})."
 
             if not resolved_authors and book.title and book.title.strip().lower() != "unknown":
                 try:
@@ -631,6 +733,8 @@ def create_app(
                     "format": fmt_str,
                     "raw_spine_text": book.raw_spine_text,
                     "visible_condition_cues": book.visible_condition_cues,
+                    "source_filename": batch_item.source_filename,
+                    "source_image_index": batch_item.source_image_index,
                 },
                 "disambiguation": {
                     "best_candidate": {
@@ -687,10 +791,16 @@ def create_app(
             except Exception as exc:
                 logger.error("Failed to propose book", error=str(exc))
 
+        successful_count = len(upload_files) - len(failed_images)
         return {
-            "processed": len(extraction.books),
-            "orientation": extraction.orientation,
-            "proposals": proposals
+            "processed": len(extracted_items),
+            "total_images": len(upload_files),
+            "successful_images": max(0, successful_count),
+            "failed_images": [f.to_dict() for f in failed_images],
+            "orientation": dominant_orientation,
+            "intake_mode": intake_mode,
+            "duplicates_suppressed": [s.to_dict() for s in suppressed_duplicates],
+            "proposals": proposals,
         }
 
     @app.post("/intake/sample")

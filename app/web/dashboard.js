@@ -912,38 +912,174 @@ async function prepareImageFile(file) {
   }
 }
 
-$("camera-file").onchange = async event => {
-  const file = event.target.files && event.target.files[0];
-  if (!file) return;
+let currentIntakeMode = "multi_stack";
+const modePillStack = $("mode-pill-stack");
+const modePillAngle = $("mode-pill-angle");
+
+function setIntakeMode(mode) {
+  currentIntakeMode = mode;
+  if (modePillStack) {
+    modePillStack.classList.toggle("active", mode === "multi_stack");
+    const radio = modePillStack.querySelector("input");
+    if (radio) radio.checked = mode === "multi_stack";
+  }
+  if (modePillAngle) {
+    modePillAngle.classList.toggle("active", mode === "multi_angle_single_book");
+    const radio = modePillAngle.querySelector("input");
+    if (radio) radio.checked = mode === "multi_angle_single_book";
+  }
+}
+
+if (modePillStack) modePillStack.onclick = () => setIntakeMode("multi_stack");
+if (modePillAngle) modePillAngle.onclick = () => setIntakeMode("multi_angle_single_book");
+
+let stagedPhotos = [];
+
+function renderStagedTray() {
+  const tray = $("staged-photos-tray");
+  const grid = $("staged-thumbnails-grid");
+  const countLabel = $("staged-tray-count");
+  if (!tray || !grid) return;
+
+  grid.replaceChildren();
+
+  if (stagedPhotos.length === 0) {
+    tray.hidden = true;
+    return;
+  }
+
+  tray.hidden = false;
+  if (countLabel) {
+    countLabel.textContent = `${stagedPhotos.length} photo${stagedPhotos.length > 1 ? "s" : ""} staged for cataloging`;
+  }
+
+  stagedPhotos.forEach((file, idx) => {
+    const item = node("div", undefined, "staged-thumb-item");
+    const img = node("img", undefined, "staged-thumb-img");
+    try {
+      img.src = URL.createObjectURL(file);
+    } catch (_) {}
+    img.alt = file.name || `Photo ${idx + 1}`;
+
+    const delBtn = node("button", "✕", "staged-thumb-del");
+    delBtn.title = "Remove photo";
+    delBtn.onclick = (e) => {
+      e.stopPropagation();
+      try { URL.revokeObjectURL(img.src); } catch (_) {}
+      stagedPhotos.splice(idx, 1);
+      renderStagedTray();
+      if (stagedPhotos.length === 0) {
+        $("camera-status").textContent = "Staging cleared. Ready for photo upload.";
+      } else {
+        $("camera-status").textContent = `${stagedPhotos.length} photo${stagedPhotos.length > 1 ? "s" : ""} staged.`;
+      }
+    };
+
+    item.append(img, delBtn);
+    grid.append(item);
+  });
+}
+
+if ($("btn-clear-staged")) {
+  $("btn-clear-staged").onclick = () => {
+    stagedPhotos = [];
+    renderStagedTray();
+    $("camera-status").textContent = "Staging cleared. Ready for photo upload.";
+  };
+}
+
+$("camera-file").onchange = event => {
+  const files = event.target.files ? Array.from(event.target.files) : [];
+  if (!files.length) return;
+
+  stagedPhotos.push(...files);
+  renderStagedTray();
+  $("camera-status").textContent = `${stagedPhotos.length} photo${stagedPhotos.length > 1 ? "s" : ""} staged. Click 'Catalog Staged Photos' to begin.`;
+  $("camera-file").value = "";
+};
+
+// Drag and drop onto intake dropzone
+const intakeDropzone = $("intake-panel") ? $("intake-panel").querySelector(".intake-dropzone") : null;
+if (intakeDropzone) {
+  ["dragenter", "dragover"].forEach(evtName => {
+    intakeDropzone.addEventListener(evtName, e => {
+      e.preventDefault();
+      e.stopPropagation();
+      intakeDropzone.style.borderColor = "var(--copper)";
+      intakeDropzone.style.background = "var(--surface-subtle)";
+    });
+  });
+  ["dragleave", "drop"].forEach(evtName => {
+    intakeDropzone.addEventListener(evtName, e => {
+      e.preventDefault();
+      e.stopPropagation();
+      intakeDropzone.style.borderColor = "";
+      intakeDropzone.style.background = "";
+    });
+  });
+  intakeDropzone.addEventListener("drop", e => {
+    if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length) {
+      const droppedFiles = Array.from(e.dataTransfer.files).filter(f =>
+        f.type.startsWith("image/") || /\.(heic|heif|jpe?g|png|webp)$/i.test(f.name)
+      );
+      if (droppedFiles.length) {
+        stagedPhotos.push(...droppedFiles);
+        renderStagedTray();
+        $("camera-status").textContent = `${stagedPhotos.length} photo${stagedPhotos.length > 1 ? "s" : ""} staged. Click 'Catalog Staged Photos' to begin.`;
+      }
+    }
+  });
+}
+
+async function executeBatchIntake() {
+  if (!stagedPhotos.length) {
+    message("Please select or snap at least one photo first.");
+    return;
+  }
 
   const statusEl = $("camera-status");
-  const button = $("camera-upload").querySelector("label");
+  const snapBtn = $("camera-upload") ? $("camera-upload").querySelector("label.camera-snap-cta") : null;
+  const processBtn = $("btn-process-staged");
+  const summaryBox = $("batch-intake-summary");
 
-  statusEl.textContent = `Preparing image (${(file.size / 1024).toFixed(0)} KB)...`;
-  if (button) {
-    button.style.opacity = "0.5";
-    button.style.pointerEvents = "none";
+  if (summaryBox) {
+    summaryBox.hidden = true;
+    summaryBox.replaceChildren();
+  }
+
+  if (snapBtn) {
+    snapBtn.style.opacity = "0.5";
+    snapBtn.style.pointerEvents = "none";
+  }
+  if (processBtn) {
+    processBtn.disabled = true;
+    processBtn.textContent = "Processing batch...";
   }
 
   try {
-    let fileToUpload = file;
-    try {
-      fileToUpload = await prepareImageFile(file);
-    } catch (prepErr) {
-      console.warn("Client preparation failed, using raw file:", prepErr);
-      fileToUpload = file;
-    }
+    statusEl.textContent = `Optimizing ${stagedPhotos.length} photo${stagedPhotos.length > 1 ? "s" : ""} for Gemini Vision...`;
 
-    if (fileToUpload.size > 4.2 * 1024 * 1024) {
-      throw new Error(`Image is too large (${(fileToUpload.size / (1024 * 1024)).toFixed(1)} MB). Vercel payload limit is 4.5 MB. Please choose a photo under 4 MB.`);
+    const preparedFiles = [];
+    for (let i = 0; i < stagedPhotos.length; i++) {
+      statusEl.textContent = `Optimizing photo ${i + 1} of ${stagedPhotos.length}...`;
+      try {
+        const prep = await prepareImageFile(stagedPhotos[i]);
+        preparedFiles.push(prep);
+      } catch (err) {
+        console.warn("Client preparation failed, using raw file:", err);
+        preparedFiles.push(stagedPhotos[i]);
+      }
     }
-
-    statusEl.textContent = `Analyzing book stack with Gemini Vision...`;
 
     const formData = new FormData();
-    formData.append("file", fileToUpload);
+    preparedFiles.forEach(f => formData.append("files", f));
+    formData.append("intake_mode", currentIntakeMode);
     if ($("intake-section")) formData.append("section", $("intake-section").value.trim() || "General");
     if ($("intake-shelf")) formData.append("shelf", $("intake-shelf").value.trim() || "");
+
+    statusEl.textContent = currentIntakeMode === "multi_angle_single_book"
+      ? `Synthesizing multi-angle views with Gemini Vision...`
+      : `Analyzing ${preparedFiles.length} stack photos & deduplicating cross-image spines...`;
 
     const epoch = generation;
     const response = await fetch("/intake/camera", {
@@ -967,26 +1103,87 @@ $("camera-file").onchange = async event => {
       throw new Error(errDetail);
     }
 
-    if (!body.processed || body.processed === 0) {
-      statusEl.textContent = "No book spines identified.";
-      message("No book spines were detected in this image. Ensure book spines and titles are clearly visible and facing the camera, or try 'Load Sample Book Stack'.");
-    } else {
-      statusEl.textContent = `Extracted ${body.processed} books (${human(body.orientation)}).`;
-      message(`Vision AI extracted ${body.processed} books from the stack and queued them for review.`);
-      refresh();
+    // Reset staged photos
+    stagedPhotos = [];
+    renderStagedTray();
+
+    const processedCount = body.processed || 0;
+    const dupCount = (body.duplicates_suppressed && body.duplicates_suppressed.length) || 0;
+    const failCount = (body.failed_images && body.failed_images.length) || 0;
+    const successImgCount = body.successful_images != null ? body.successful_images : body.total_images;
+
+    statusEl.textContent = `Batch complete: ${processedCount} books cataloged from ${successImgCount} photo${successImgCount === 1 ? "" : "s"}.`;
+
+    if (summaryBox) {
+      summaryBox.hidden = false;
+      const header = node("div", undefined, "batch-summary-header");
+      header.append(node("h4", currentIntakeMode === "multi_angle_single_book" ? "🔍 Multi-Angle Synthesized Volume" : "📚 Batch Intake Summary"));
+      
+      const stats = node("div", undefined, "batch-summary-stats");
+      const stat1 = node("span", `✅ ${processedCount} Unique Books Cataloged`, "batch-stat-badge batch-stat-success");
+      const stat2 = node("span", `📷 ${successImgCount}/${body.total_images} Photos Processed`, "batch-stat-badge batch-stat-success");
+      stats.append(stat1, stat2);
+
+      if (dupCount > 0) {
+        const statDup = node("span", `✂️ ${dupCount} Overlapping Duplicate${dupCount > 1 ? "s" : ""} Suppressed`, "batch-stat-badge batch-stat-dup");
+        stats.append(statDup);
+      }
+      if (failCount > 0) {
+        const statFail = node("span", `⚠️ ${failCount} Photo${failCount > 1 ? "s" : ""} Failed`, "batch-stat-badge batch-stat-fail");
+        stats.append(statFail);
+      }
+      summaryBox.append(header, stats);
+
+      if (dupCount > 0) {
+        const dupList = node("div", undefined, "batch-dup-list");
+        dupList.append(node("strong", "Suppressed Cross-Image Duplicates:"));
+        body.duplicates_suppressed.forEach(d => {
+          const item = node("div", undefined, "batch-dup-item");
+          item.textContent = `• "${d.title}" (${d.author || 'Unknown'}) — ${d.reason}`;
+          dupList.append(item);
+        });
+        summaryBox.append(dupList);
+      }
+
+      if (failCount > 0) {
+        const failList = node("div", undefined, "batch-dup-list");
+        failList.append(node("strong", "Failed Photo Warnings:"));
+        body.failed_images.forEach(f => {
+          const item = node("div", undefined, "batch-dup-item");
+          item.style.color = "#d32f2f";
+          item.textContent = `• Photo ${f.image_index + 1} (${f.filename}): ${f.error}`;
+          failList.append(item);
+        });
+        summaryBox.append(failList);
+      }
     }
+
+    message(currentIntakeMode === "multi_angle_single_book"
+      ? `Multi-angle volume successfully synthesized and queued for review!`
+      : `Batch cataloged ${processedCount} volumes (${dupCount} overlapping duplicates suppressed).`
+    );
+    refresh();
+
   } catch (error) {
     const msg = error && error.message ? error.message : String(error || "Upload failed");
-    statusEl.textContent = `Upload failed: ${msg}`;
+    statusEl.textContent = `Batch upload failed: ${msg}`;
     message(`Upload failed: ${msg}`);
   } finally {
-    $("camera-file").value = "";
-    if (button) {
-      button.style.opacity = "1";
-      button.style.pointerEvents = "auto";
+    if (snapBtn) {
+      snapBtn.style.opacity = "1";
+      snapBtn.style.pointerEvents = "auto";
+    }
+    if (processBtn) {
+      processBtn.disabled = false;
+      processBtn.textContent = "⚡ Catalog Staged Photos";
     }
   }
-};
+}
+
+if ($("btn-process-staged")) {
+  $("btn-process-staged").onclick = executeBatchIntake;
+}
+
 
 if ($("btn-sample-stack")) {
   $("btn-sample-stack").onclick = async () => {

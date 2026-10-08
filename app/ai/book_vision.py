@@ -70,6 +70,28 @@ GUIDELINES:
    - Populate `authors` with the inferred canonical author(s) whenever the title and publisher imprint clearly identify the canonical work, rather than leaving `authors` empty or defaulting to ["Unknown"].
 """
 
+MULTI_ANGLE_BOOK_SYSTEM_PROMPT = """\
+You are an expert antiquarian and commercial book cataloger.
+You are provided multiple photographs of the SAME SINGLE BOOK taken from multiple angles (e.g. spine, front cover, title page, copyright/colophon page, back cover).
+Analyze all provided images TOGETHER and synthesize a single authoritative bibliographic record for this volume in the `books` array (with exactly 1 book entry in the array).
+
+SYNTHESIS GUIDELINES:
+1. TITLE & SUBTITLE:
+   - Extract the complete canonical title and subtitle, reconciling what is visible on the spine, front cover, and title page.
+2. AUTHORS:
+   - Identify all primary authors, editors, translators, or illustrators stated on the title page or cover.
+3. PUBLISHER & IMPRINT:
+   - Extract the exact publishing house and imprint (e.g. "Arkham House", "Gnome Press", "Doubleday", "Faber & Faber", "Penguin").
+4. BINDING & FORMAT:
+   - Determine whether it is hardcover_with_jacket, hardcover_no_jacket, trade_paperback, or mass_market_paperback by inspecting all angles.
+5. EDITION & PRINTING IDENTIFICATION:
+   - Inspect the title page and copyright page for edition points: "First Edition", "First Printing", publisher numberline (e.g. "1 2 3 4 5 6 7 8 9 10"), printing date, or original copyright year. Record these in `edition_or_series_markers`.
+6. PHYSICAL CONDITION:
+   - Aggregate all visible condition flaws across every angle: sunned_faded_spine, creased_reading_spine, bumped_headcap_or_tail, torn_or_chipped_jacket, ex_library_stickers_or_tape, remainder_mark_visible, cocked_spine, or clean_as_new.
+7. TRANSCRIPTION:
+   - Record key transcribed text from the spine and title page in `raw_spine_text`. Set confidence to "high".
+"""
+
 BOOK_STACK_GEMINI_SCHEMA = {
     "type": "object",
     "properties": {
@@ -234,6 +256,10 @@ class BookVisionProvider(Protocol):
         self, image_bytes: bytes, mime_type: str = "image/jpeg"
     ) -> BookStackExtraction: ...
 
+    def extract_multi_angle(
+        self, images: list[tuple[bytes, str]]
+    ) -> BookStackExtraction: ...
+
 
 @dataclass
 class GeminiBookVisionProvider(BookVisionProvider):
@@ -349,6 +375,68 @@ class GeminiBookVisionProvider(BookVisionProvider):
         if last_error:
             raise last_error
         raise TransientProviderError("All Gemini vision models failed")
+
+    def extract_multi_angle(
+        self, images: list[tuple[bytes, str]]
+    ) -> BookStackExtraction:
+        """Synthesizes multiple photos of a single book (spine, cover, title/copyright page)."""
+        if not images:
+            raise ValueError("images list cannot be empty")
+        if len(images) == 1:
+            return self.extract_stack(images[0][0], images[0][1])
+
+        valid_mimes = {"image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"}
+        parts: list[dict[str, Any]] = []
+        for img_bytes, raw_mime in images:
+            if not img_bytes:
+                continue
+            clean_mime = (raw_mime or "image/jpeg").split(";")[0].strip().lower()
+            if clean_mime in ("image/jpg", "image/pjpeg"):
+                clean_mime = "image/jpeg"
+            if clean_mime not in valid_mimes:
+                clean_mime = "image/jpeg"
+            b64_img = base64.b64encode(img_bytes).decode("ascii")
+            parts.append({
+                "inline_data": {
+                    "mime_type": clean_mime,
+                    "data": b64_img,
+                }
+            })
+
+        if not parts:
+            raise ValueError("No valid image data provided for multi-angle extraction")
+
+        parts.append({"text": MULTI_ANGLE_BOOK_SYSTEM_PROMPT})
+
+        body: dict[str, Any] = {
+            "contents": [{"parts": parts}],
+            "generationConfig": {
+                "response_mime_type": "application/json",
+                "response_schema": BOOK_STACK_GEMINI_SCHEMA,
+                "temperature": 0.1,
+                "maxOutputTokens": 8192,
+            },
+        }
+
+        models_to_try = [self.model] if self.model not in self.fallback_models else []
+        models_to_try.extend(self.fallback_models)
+        seen: set[str] = set()
+        unique_models = [m for m in models_to_try if not (m in seen or seen.add(m))]
+
+        last_error: Exception | None = None
+        for model in unique_models:
+            url = f"{self.base_url.rstrip('/')}/models/{model}:generateContent?key={self.api_key}"
+            try:
+                raw_response = self._post_with_retry(url, body)
+                return self._parse_gemini_response(raw_response)
+            except (TransientProviderError, TerminalProviderError, HTTPError) as exc:
+                last_error = exc
+                logger.warning(f"Gemini model {model} failed in multi-angle: {exc}, trying next in cascade...")
+                continue
+
+        if last_error:
+            raise last_error
+        raise TransientProviderError("All Gemini vision models failed for multi-angle extraction")
 
     def _post_with_retry(self, url: str, body: dict[str, Any]) -> dict[str, Any]:
         data = json.dumps(body).encode("utf-8")

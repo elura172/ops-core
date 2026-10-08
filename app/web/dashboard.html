@@ -332,12 +332,38 @@
               </div>
             </div>
 
+            <!-- INTAKE MODE CHOOSER -->
+            <div class="intake-mode-bar">
+              <label class="mode-pill active" id="mode-pill-stack">
+                <input type="radio" name="intake-mode-choice" value="multi_stack" checked>
+                <span class="mode-pill-title">📚 Multi-Stack / Shelves</span>
+                <span class="mode-pill-desc">Multiple photos of stacks/shelves. Auto-deduplicates overlapping spines.</span>
+              </label>
+              <label class="mode-pill" id="mode-pill-angle">
+                <input type="radio" name="intake-mode-choice" value="multi_angle_single_book">
+                <span class="mode-pill-title">🔍 Single Volume Multi-Angle</span>
+                <span class="mode-pill-desc">Spine + Cover + Copyright page merged into 1 enriched collectible record.</span>
+              </label>
+            </div>
+
             <label class="camera-snap-cta">
-              <input type="file" id="camera-file" accept="image/*,.heic,.heif,.jpg,.jpeg,.png,.webp" hidden>
+              <input type="file" id="camera-file" accept="image/*,.heic,.heif,.jpg,.jpeg,.png,.webp" multiple hidden>
               <span class="snap-icon">📷</span>
-              <span class="snap-title">Snap / Upload Stack Photo</span>
-              <span class="snap-sub">Choose a photo or use your camera</span>
+              <span class="snap-title">Snap / Select Photos</span>
+              <span class="snap-sub">Choose 1 or more photos or use camera (supports multi-selection)</span>
             </label>
+
+            <!-- STAGED PHOTOS TRAY -->
+            <div id="staged-photos-tray" class="staged-photos-tray" hidden>
+              <div class="staged-tray-header">
+                <span id="staged-tray-count" class="staged-count-label">0 photos selected</span>
+                <button type="button" id="btn-clear-staged" class="ghost-sm">Clear All</button>
+              </div>
+              <div id="staged-thumbnails-grid" class="staged-thumbnails-grid"></div>
+              <button type="button" id="btn-process-staged" class="primary process-staged-btn">
+                <span>⚡ Catalog Staged Photos</span>
+              </button>
+            </div>
 
             <div class="intake-actions-divider">
               <span>OR TEST INSTANTLY</span>
@@ -352,6 +378,9 @@
             <span class="status-dot"></span>
             <span id="camera-status" class="muted">Ready for photo upload</span>
           </div>
+
+          <!-- BATCH INTAKE REPORT SUMMARY -->
+          <div id="batch-intake-summary" class="batch-summary-card" hidden></div>
         </div>
 
         <div class="intake-guide-cards">

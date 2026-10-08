@@ -1789,3 +1789,216 @@ footer {
   border-radius: 8px;
 }
 
+/* ==========================================================================
+   MULTI-IMAGE BATCH & MULTI-ANGLE INTAKE STYLING
+   ========================================================================== */
+.intake-mode-bar {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+@media (max-width: 640px) {
+  .intake-mode-bar {
+    grid-template-columns: 1fr;
+  }
+}
+
+.mode-pill {
+  display: flex;
+  flex-direction: column;
+  padding: 12px 16px;
+  border-radius: 8px;
+  border: 1.5px solid var(--line);
+  background: var(--surface-card);
+  cursor: pointer;
+  transition: all 0.18s ease;
+  user-select: none;
+  position: relative;
+}
+
+.mode-pill input[type="radio"] {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.mode-pill:hover {
+  border-color: var(--copper);
+  background: var(--surface-subtle);
+}
+
+.mode-pill.active {
+  border-color: var(--copper);
+  background: oklch(0.98 0.015 75);
+  box-shadow: 0 0 0 1px var(--copper), 0 2px 8px rgba(0, 0, 0, 0.04);
+}
+
+.mode-pill-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--ink);
+  display: block;
+}
+
+.mode-pill-desc {
+  font-size: 11.5px;
+  color: var(--muted);
+  margin-top: 3px;
+  line-height: 1.35;
+  display: block;
+}
+
+/* STAGED PHOTOS TRAY */
+.staged-photos-tray {
+  background: var(--surface-card);
+  border: 1.5px dashed var(--copper);
+  border-radius: 10px;
+  padding: 16px;
+  margin-top: 14px;
+  animation: fadeIn 0.2s ease-out;
+}
+
+.staged-tray-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.staged-count-label {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.staged-thumbnails-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(84px, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.staged-thumb-item {
+  position: relative;
+  aspect-ratio: 1;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.06);
+  background: #000;
+}
+
+.staged-thumb-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.staged-thumb-del {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.72);
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  transition: background 0.15s ease, transform 0.15s ease;
+}
+
+.staged-thumb-del:hover {
+  background: #d32f2f;
+  transform: scale(1.1);
+}
+
+.process-staged-btn {
+  width: 100%;
+  padding: 10px 16px;
+  font-size: 13.5px;
+  font-weight: 700;
+  border-radius: 6px;
+}
+
+/* BATCH INTAKE REPORT SUMMARY */
+.batch-summary-card {
+  background: var(--surface-card);
+  border: 1.5px solid var(--copper);
+  border-radius: 10px;
+  padding: 16px 20px;
+  margin-top: 16px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.04);
+}
+
+.batch-summary-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.batch-summary-header h4 {
+  margin: 0;
+  font-size: 15px;
+  font-family: var(--font-serif);
+  color: var(--ink);
+}
+
+.batch-summary-stats {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.batch-stat-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 16px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.batch-stat-success {
+  background: oklch(0.94 0.08 145);
+  color: oklch(0.35 0.12 145);
+  border: 1px solid oklch(0.85 0.08 145);
+}
+
+.batch-stat-dup {
+  background: oklch(0.94 0.08 75);
+  color: oklch(0.42 0.12 60);
+  border: 1px solid oklch(0.85 0.08 75);
+}
+
+.batch-stat-fail {
+  background: oklch(0.94 0.08 25);
+  color: oklch(0.42 0.15 25);
+  border: 1px solid oklch(0.85 0.08 25);
+}
+
+.batch-dup-list {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line-subtle);
+  font-size: 12px;
+}
+
+.batch-dup-item {
+  padding: 4px 0;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
