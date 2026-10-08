@@ -32,3 +32,29 @@ def test_operator_decide_then_execute():
 def test_operator_rejects_unknown_review():
     with pytest.raises(KeyError):
         service().execute("missing", actor="grace")
+
+
+def test_operator_execute_delist_inventory_payload():
+    queue = ReviewQueue()
+    queue.submit(ReviewItem("r-delist", "update_inventory", {"sku": "BK-TEST-001", "stock": 0}))
+    client = TikTokClient("token", "shop", dry_run=True)
+    operator = OperatorService(queue, ApprovedActionExecutor(client, AuditLog()))
+
+    operator.decide("r-delist", True, "owner", "delisting approved")
+    result = operator.execute("r-delist", actor="grace")
+    assert result["status"] == "EXECUTED"
+    assert result["result"]["dry_run"] is True
+    assert result["result"]["changes"] == {"BK-TEST-001": 0}
+
+
+def test_operator_execute_update_prices_payload():
+    queue = ReviewQueue()
+    queue.submit(ReviewItem("r-price", "update_prices", {"sku": "BK-TEST-002", "online_price_cad": 24.50}))
+    client = TikTokClient("token", "shop", dry_run=True)
+    operator = OperatorService(queue, ApprovedActionExecutor(client, AuditLog()))
+
+    operator.decide("r-price", True, "owner", "price change approved")
+    result = operator.execute("r-price", actor="grace")
+    assert result["status"] == "EXECUTED"
+    assert result["result"]["dry_run"] is True
+    assert result["result"]["changes"] == {"BK-TEST-002": "24.5"}

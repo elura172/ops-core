@@ -1440,10 +1440,10 @@ async function renderBookshelf() {
         if (!confirm(`Are you sure you want to delist ${item.sku}? This will set stock to 0 across external channels.`)) return;
         delistBtn.disabled = true;
         try {
-          await api(`/inventory/${item.sku}`, { method: "DELETE" });
+          await api(`/inventory/${encodeURIComponent(item.sku)}`, { method: "DELETE" });
           message(`Book delisted and "Update stock" action queued for ${item.sku}.`);
           loadBookshelf();
-        } catch(e) { message(e.message); }
+        } catch(e) { message(e.message); delistBtn.disabled = false; }
       };
 
       priceRow.append(priceLabel, priceInput, saveBtn, delistBtn);
@@ -1502,6 +1502,20 @@ async function renderBookshelf() {
     } else {
       const inactiveRow = node("div", undefined, "bookshelf-channels-row");
       inactiveRow.append(node("span", `Status: ${human(item.status)}`, "muted"));
+
+      if (item.status === "delisted") {
+        const relistBtn = node("button", "🔄 Relist", "ghost-sm");
+        relistBtn.title = "Restore book to active status on floor and channels";
+        relistBtn.onclick = async () => {
+          relistBtn.disabled = true;
+          try {
+            await api(`/inventory/${encodeURIComponent(item.sku)}/relist`, { method: "POST" });
+            message(`Book "${item.title}" (${item.sku}) re-activated on floor.`);
+            loadBookshelf();
+          } catch(e) { message(e.message); relistBtn.disabled = false; }
+        };
+        inactiveRow.append(relistBtn);
+      }
 
       const deleteBookBtn = node("button", "🗑️ Delete", "danger-sm delete-btn");
       deleteBookBtn.style.marginLeft = "auto";

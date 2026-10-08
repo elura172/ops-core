@@ -50,6 +50,7 @@ class InventoryStore(Protocol):
     def update_location(self, sku: str, section: str, shelf: str, tenant_id: int = 1) -> None: ...
     def mark_audited(self, sku: str, audited_at: datetime | None = None, tenant_id: int = 1) -> None: ...
     def delist(self, sku: str, tenant_id: int = 1) -> None: ...
+    def relist(self, sku: str, tenant_id: int = 1) -> None: ...
     def delete(self, sku: str, tenant_id: int = 1) -> bool: ...
     def record_shelf_audit(self, audit: ShelfAuditRecord) -> None: ...
     def list_shelf_audits(self, tenant_id: int = 1, limit: int = 50) -> list[ShelfAuditRecord]: ...
@@ -180,6 +181,13 @@ class PostgresInventoryStore:
         with self.pool.connection() as conn, conn.transaction():
             conn.execute(
                 "UPDATE inventory SET status = 'delisted', updated_at = %s WHERE sku = %s AND tenant_id = %s",
+                (datetime.now(UTC), sku, tenant_id),
+            )
+
+    def relist(self, sku: str, tenant_id: int = 1) -> None:
+        with self.pool.connection() as conn, conn.transaction():
+            conn.execute(
+                "UPDATE inventory SET status = 'active', updated_at = %s WHERE sku = %s AND tenant_id = %s",
                 (datetime.now(UTC), sku, tenant_id),
             )
 
@@ -404,6 +412,13 @@ class SQLiteInventoryStore:
         with self._transaction() as conn:
             conn.execute(
                 "UPDATE inventory SET status = 'delisted', updated_at = ? WHERE sku = ? AND tenant_id = ?",
+                (datetime.now(UTC).isoformat(), sku, tenant_id),
+            )
+
+    def relist(self, sku: str, tenant_id: int = 1) -> None:
+        with self._transaction() as conn:
+            conn.execute(
+                "UPDATE inventory SET status = 'active', updated_at = ? WHERE sku = ? AND tenant_id = ?",
                 (datetime.now(UTC).isoformat(), sku, tenant_id),
             )
 

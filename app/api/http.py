@@ -1077,7 +1077,25 @@ def create_app(
             sec = str(payload.get("section", "General"))
             sh = str(payload.get("shelf", ""))
             inventory_store.update_location(sku, sec, sh, tenant_id=principal.tenant_id)
+        if "status" in payload:
+            new_st = str(payload["status"])
+            if new_st == "active" and hasattr(inventory_store, "relist"):
+                inventory_store.relist(sku, tenant_id=principal.tenant_id)
+            elif new_st == "delisted" and hasattr(inventory_store, "delist"):
+                inventory_store.delist(sku, tenant_id=principal.tenant_id)
         return {"status": "ok"}
+
+    @app.post("/inventory/{sku}/relist")
+    def relist_inventory_item(
+        sku: str, principal: Principal = Depends(require_decide)
+    ) -> dict[str, Any]:
+        item = inventory_store.get(sku, tenant_id=principal.tenant_id)
+        if not item:
+            raise HTTPException(404, "item not found")
+        if hasattr(inventory_store, "relist"):
+            inventory_store.relist(sku, tenant_id=principal.tenant_id)
+        operator.propose("update_inventory", {"sku": sku, "stock": 1}, tenant_id=principal.tenant_id)
+        return {"status": "ok", "sku": sku}
 
     @app.delete("/inventory/{sku}")
     def delist_or_delete_inventory_item(

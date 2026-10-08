@@ -184,6 +184,14 @@ def test_inventory_soft_delist_and_hard_delete_endpoints(dashboard_client):
     dune = next(i for i in inv if i["sku"] == "BK-DUNE-1965")
     assert dune["status"] == "delisted"
 
+    # Relist restores active status
+    relist_resp = dashboard_client.post("/inventory/BK-DUNE-1965/relist", headers=reviewer)
+    assert relist_resp.status_code == 200
+    assert relist_resp.json() == {"status": "ok", "sku": "BK-DUNE-1965"}
+    inv = dashboard_client.get("/inventory", headers=reviewer).json()
+    dune = next(i for i in inv if i["sku"] == "BK-DUNE-1965")
+    assert dune["status"] == "active"
+
     # Hard delete (hard=True)
     hard_resp = dashboard_client.delete("/inventory/BK-DUNE-1965?hard=true", headers=reviewer)
     assert hard_resp.status_code == 200

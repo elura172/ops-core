@@ -68,8 +68,8 @@ class ApprovedActionExecutor:
         # actually asked to run.
         self.handlers: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
             "create_product_draft": lambda p: self.client.create_product_draft(p),
-            "update_inventory": lambda p: self.client.update_inventory(p["changes"]),
-            "update_prices": lambda p: self.client.update_prices(p["changes"]),
+            "update_inventory": self._update_inventory,
+            "update_prices": self._update_prices,
             "publish": self._publish,
             "send_customer_response": self._send_customer_response,
             "intake_book": self._intake_book,
@@ -95,6 +95,64 @@ class ApprovedActionExecutor:
         if self.inventory_store:
             self.inventory_store.update_location(sku, section, shelf, tenant_id=tenant_id)
         return {"status": "ok", "sku": sku, "section": section, "shelf": shelf}
+
+    def _update_inventory(self, payload: dict[str, Any]) -> dict[str, Any]:
+        sku = payload.get("sku")
+        stock = payload.get("stock")
+        changes = payload.get("changes")
+        if changes is None and sku is not None:
+            changes = {sku: int(stock if stock is not None else 0)}
+        if changes is None:
+            changes = {}
+
+        tenant_id = payload.get("tenant_id") or getattr(self, "current_tenant_id", 1)
+
+        # If delisting or setting stock to 0, mark delisted in store and sync across sales channels
+        if sku and (stock == 0 or (changes and changes.get(sku) == 0)):
+            if self.inventory_store:
+                try:
+                    self.inventory_store.delist(sku, tenant_id=tenant_id)
+                except Exception as exc:
+                    logger.warning("inventory_store.delist_failed", sku=sku, error=str(exc))
+            try:
+                self._sync_inventory({"sku": sku, "source_channel": "delist", "tenant_id": tenant_id})
+            except Exception as exc:
+                logger.warning("channels.delist_sync_failed", sku=sku, error=str(exc))
+        elif sku and stock and stock > 0:
+            if self.inventory_store and hasattr(self.inventory_store, "relist"):
+                try:
+                    self.inventory_store.relist(sku, tenant_id=tenant_id)
+                except Exception as exc:
+                    logger.warning("inventory_store.relist_failed", sku=sku, error=str(exc))
+
+        if hasattr(self.client, "update_inventory"):
+            return self.client.update_inventory(changes)
+
+        return {"operation": "update_inventory", "changes": changes, "dry_run": True}
+
+    def _update_prices(self, payload: dict[str, Any]) -> dict[str, Any]:
+        sku = payload.get("sku")
+        changes = payload.get("changes")
+        if changes is None and sku:
+            price = str(payload.get("online_price_cad") or payload.get("price") or "0.00")
+            changes = {sku: price}
+        if changes is None:
+            changes = {}
+
+        tenant_id = payload.get("tenant_id") or getattr(self, "current_tenant_id", 1)
+        if sku and self.inventory_store and ("in_store_price_cad" in payload or "online_price_cad" in payload):
+            from decimal import Decimal
+            try:
+                in_store = Decimal(str(payload.get("in_store_price_cad", "0.00")))
+                online = Decimal(str(payload.get("online_price_cad", "0.00")))
+                self.inventory_store.update_prices(sku, in_store, online, tenant_id=tenant_id)
+            except Exception as exc:
+                logger.warning("inventory_store.update_prices_failed", sku=sku, error=str(exc))
+
+        if hasattr(self.client, "update_prices"):
+            return self.client.update_prices(changes)
+
+        return {"operation": "update_prices", "changes": changes, "dry_run": True}
 
     def _publish(self, payload: dict[str, Any]) -> dict[str, Any]:
         request = PublishRequest(
