@@ -1371,7 +1371,8 @@ async function renderBookshelf() {
     
     card.append(node("h3", item.title));
     const meta = node("div", undefined, "bookshelf-meta");
-    meta.innerHTML = `<strong>${item.authors.join(", ")}</strong><br>SKU: <code>${item.sku}</code> · Format: ${human(item.format)} · Grade: ${item.condition} · In-Store: $${Number(item.in_store_price_cad).toFixed(2)} CAD`;
+    const authorsStr = Array.isArray(item.authors) ? item.authors.join(", ") : (item.authors || "Unknown");
+    meta.innerHTML = `<strong>${authorsStr}</strong><br>SKU: <code>${item.sku}</code> · Format: ${human(item.format)} · Grade: ${item.condition} · In-Store: $${Number(item.in_store_price_cad).toFixed(2)} CAD`;
     
     // Physical location badge
     const locRow = node("div");
@@ -1411,8 +1412,8 @@ async function renderBookshelf() {
     meta.append(locRow);
     card.append(meta);
     
+    const actions = node("div", undefined, "bookshelf-actions");
     if (item.status === "active") {
-      const actions = node("div", undefined, "bookshelf-actions");
       const priceLabel = node("label", "Online: $");
       const priceInput = node("input");
       priceInput.type = "number";
