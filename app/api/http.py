@@ -165,6 +165,8 @@ def create_app(
     else:
         review_store = operator.reviews
         inventory_store = getattr(operator.executor, "inventory_store", None) or open_inventory_store(settings.inventory_db)
+        if hasattr(operator.executor, "inventory_store") and not operator.executor.inventory_store:
+            operator.executor.inventory_store = inventory_store
         want_list_store = getattr(operator.executor, "want_list_store", None) or open_want_list_store(settings.want_list_db)
         if hasattr(operator.executor, "want_list_store") and not operator.executor.want_list_store:
             operator.executor.want_list_store = want_list_store

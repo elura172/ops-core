@@ -505,33 +505,52 @@ class BookListingOrchestrator:
     def list_inventory(self, payload: dict[str, Any]) -> dict[str, Any]:
         val = payload.get("valuation", {})
         strategy = val.get("channel_strategy", "")
-        if not strategy or strategy == "bargain_bin_cart":
-            return {"status": "skipped", "message": "Book routed to physical floor only."}
-
         ext = payload.get("extraction", {})
         dis = payload.get("disambiguation", {})
         cand = dis.get("best_candidate", {})
 
         title = cand.get("title") or ext.get("title", "Unknown Title")
+        raw_authors = cand.get("authors") or ext.get("authors") or ["Unknown"]
+        authors = [raw_authors] if isinstance(raw_authors, str) else list(raw_authors)
+        condition = val.get("condition_grade", "Good")
+        fmt = ext.get("format", "unknown")
+        in_store_price = Decimal(str(val.get("in_store_price_cad", "0.00")))
         price_cad = Decimal(str(val.get("online_price_cad", "0.00")))
-
-        if price_cad <= 0:
-            return {"status": "failed", "error": "Invalid online price."}
-
-        sku = f"BK-{uuid.uuid4().hex[:8].upper()}"
-        authors = cand.get("authors") or ext.get("authors") or ["Unknown"]
+        sku = payload.get("sku") or f"BK-{uuid.uuid4().hex[:8].upper()}"
 
         details = {
-            "author": authors[0],
-            "format": ext.get("format", "unknown"),
+            "sku": sku,
+            "title": title,
+            "authors": authors,
+            "author": authors[0] if authors else "Unknown",
+            "format": fmt,
+            "condition": condition,
             "isbn": cand.get("primary_isbn") or dis.get("detected_isbn"),
             "rationale": val.get("pricing_rationale", ""),
+            "in_store_price_cad": in_store_price if in_store_price > 0 else price_cad,
+            "online_price_cad": price_cad,
         }
-        
+
         if "spine_image_base64" in ext:
             details["spine_image_base64"] = ext["spine_image_base64"]
 
-        condition = val.get("condition_grade", "Good")
+        if not strategy or strategy == "bargain_bin_cart":
+            return {
+                "sku": sku,
+                "status": "skipped",
+                "message": "Book routed to physical floor only.",
+                "marketplace_results": {ad.channel_name: {"status": "skipped", "reason": "Physical floor only"} for ad in self.adapters},
+                "details": details,
+            }
+
+        if price_cad <= 0 and in_store_price <= 0:
+            return {
+                "sku": sku,
+                "status": "failed",
+                "error": "Invalid price (both online and in-store are zero).",
+                "details": details,
+            }
+
         results = {}
 
         for adapter in self.adapters:

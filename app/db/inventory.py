@@ -105,7 +105,13 @@ class PostgresInventoryStore:
         with self.pool.connection() as conn, conn.transaction():
             conn.execute(
                 "INSERT INTO inventory (sku, tenant_id, title, authors, format, condition, in_store_price_cad, online_price_cad, status, created_at, updated_at, section, shelf, last_audited_at) "
-                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+                "ON CONFLICT (sku) DO UPDATE SET "
+                "tenant_id = EXCLUDED.tenant_id, title = EXCLUDED.title, authors = EXCLUDED.authors, "
+                "format = EXCLUDED.format, condition = EXCLUDED.condition, "
+                "in_store_price_cad = EXCLUDED.in_store_price_cad, online_price_cad = EXCLUDED.online_price_cad, "
+                "status = EXCLUDED.status, updated_at = EXCLUDED.updated_at, "
+                "section = EXCLUDED.section, shelf = EXCLUDED.shelf, last_audited_at = EXCLUDED.last_audited_at",
                 (
                     item.sku,
                     tenant_id,
@@ -328,7 +334,7 @@ class SQLiteInventoryStore:
     def add(self, item: InventoryItem, tenant_id: int = 1) -> None:
         with self._transaction() as conn:
             conn.execute(
-                "INSERT INTO inventory (sku, tenant_id, title, authors, format, condition, in_store_price_cad, online_price_cad, status, created_at, updated_at, section, shelf, last_audited_at) "
+                "INSERT OR REPLACE INTO inventory (sku, tenant_id, title, authors, format, condition, in_store_price_cad, online_price_cad, status, created_at, updated_at, section, shelf, last_audited_at) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     item.sku,

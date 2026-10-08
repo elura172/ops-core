@@ -99,7 +99,11 @@ function renderBatchDetail() {
           success++;
         } catch (e) { fail++; }
       }
-      busy = false; message(`Batch execution completed: ${success} executed, ${fail} failed.`); refresh();
+      busy = false; message(`Batch execution completed: ${success} executed, ${fail} failed.`);
+      refresh();
+      if (typeof loadBookshelf === "function") {
+        loadBookshelf();
+      }
     };
     execBox.append(execBtn);
     detail.append(execBox);
@@ -761,7 +765,13 @@ async function mutate(item, action, body) {
   } catch(error) {
     if (epoch === generation || !session) message(`${error.message} Refresh and inspect the recorded state before attempting another action.`);
   } finally {
-    if (epoch === generation) { busy = false; await refresh(); }
+    if (epoch === generation) {
+      busy = false;
+      await refresh();
+      if (action === "execute" && typeof loadBookshelf === "function") {
+        loadBookshelf();
+      }
+    }
   }
 }
 

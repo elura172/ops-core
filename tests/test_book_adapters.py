@@ -151,3 +151,33 @@ def test_inventory_sync():
     assert sync_results["biblio"] == "delisted"
     assert sync_results["alibris"] == "delisted"
     assert sync_results["ebay"] == "delisted"
+
+
+def test_orchestrator_physical_only_bargain_bin():
+    adapters = (
+        AbeBooksListingAdapter(dry_run=True),
+        AmazonSPAPIAdapter(dry_run=True),
+        BiblioListingAdapter(dry_run=True),
+    )
+    orchestrator = BookListingOrchestrator(adapters=adapters)
+
+    payload = {
+        "valuation": {
+            "channel_strategy": "bargain_bin_cart",
+            "in_store_price_cad": "8.00",
+            "online_price_cad": "0.00",
+            "condition_grade": "Fair",
+        },
+        "extraction": {
+            "title": "Old Paperback",
+            "authors": ["Local Author"],
+            "format": "paperback",
+        },
+    }
+
+    result = orchestrator.list_inventory(payload)
+    assert result["status"] == "skipped"
+    assert "sku" in result
+    assert result["details"]["title"] == "Old Paperback"
+    assert result["details"]["in_store_price_cad"] == Decimal("8.00")
+

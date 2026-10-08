@@ -128,7 +128,7 @@ class ApprovedActionExecutor:
         fmt = ext.get("format", "Hardcover")
         in_store_price = Decimal(str(val.get("in_store_price_cad", "0.00")))
         online_price = Decimal(str(val.get("online_price_cad", "0.00")))
-        intake_tenant = payload.get("tenant_id") or getattr(self, "current_tenant_id", 1)
+        intake_tenant = getattr(self, "current_tenant_id", None) or payload.get("tenant_id") or 1
         effective_price = online_price if online_price > 0 else in_store_price
 
         # Check for Collector Want match (Priority Courtesy Hold)
@@ -243,18 +243,25 @@ class ApprovedActionExecutor:
         orchestrator = BookListingOrchestrator(adapters)
         result = orchestrator.list_inventory(payload)
         
-        if result.get("status") not in ("failed", "skipped") and self.inventory_store and "sku" in result.get("details", {}):
-            details = result["details"]
+        if self.inventory_store:
+            details = result.get("details") or {}
+            sku = result.get("sku") or details.get("sku") or payload.get("sku") or f"BK-{uuid.uuid4().hex[:8].upper()}"
+            res_title = details.get("title") or title
+            res_authors = details.get("authors") or authors
+            res_fmt = details.get("format") or fmt
+            res_condition = details.get("condition") or condition
+            res_in_store = Decimal(str(details.get("in_store_price_cad", in_store_price)))
+            res_online = Decimal(str(details.get("online_price_cad", online_price)))
             section = payload.get("section") or details.get("section") or "General"
             shelf = payload.get("shelf") or details.get("shelf") or ""
             item = InventoryItem(
-                sku=details["sku"],
-                title=details["title"],
-                authors=details["authors"],
-                format=details["format"],
-                condition=details["condition"],
-                in_store_price_cad=Decimal(str(details["in_store_price_cad"])),
-                online_price_cad=Decimal(str(details["online_price_cad"])),
+                sku=sku,
+                title=res_title,
+                authors=res_authors,
+                format=res_fmt,
+                condition=res_condition,
+                in_store_price_cad=res_in_store,
+                online_price_cad=res_online,
                 status="active",
                 created_at=datetime.now(UTC),
                 updated_at=datetime.now(UTC),
@@ -262,6 +269,11 @@ class ApprovedActionExecutor:
                 shelf=shelf,
             )
             self.inventory_store.add(item, tenant_id=intake_tenant)
+            
+            if "details" not in result or not isinstance(result["details"], dict):
+                result["details"] = {}
+            result["details"]["sku"] = sku
+            result["sku"] = sku
             
         return result
 

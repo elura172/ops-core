@@ -351,3 +351,98 @@ def test_batch_delete_multitenant_isolation(dashboard_client):
     assert dashboard_client.get(f"/reviews/{t2_id}", headers=t2_headers).status_code == 200
 
 
+def test_intake_execution_populates_bookshelf_for_physical_only(dashboard_client):
+    from app.auth import create_access_token
+
+    admin_headers = {"Authorization": f"Bearer {create_access_token({'sub': 'admin@example.com', 'tenant_id': 1, 'role': 'admin'})}"}
+
+    # Propose an intake book with physical-only bargain bin strategy
+    prop = dashboard_client.post(
+        "/reviews",
+        json={
+            "operation": "intake_book",
+            "payload": {
+                "section": "Bargain Corner",
+                "shelf": "Cart-1",
+                "extraction": {"title": "The Road Past Altamont", "authors": ["Gabrielle Roy"], "format": "paperback"},
+                "disambiguation": {"best_candidate": {"title": "The Road Past Altamont", "authors": ["Gabrielle Roy"]}},
+                "valuation": {
+                    "condition_grade": "Fair",
+                    "channel_strategy": "bargain_bin_cart",
+                    "in_store_price_cad": "5.00",
+                    "online_price_cad": "0.00",
+                },
+            },
+        },
+        headers=admin_headers,
+    ).json()
+
+    review_id = prop["review_id"]
+
+    # Approve
+    decide_resp = dashboard_client.post(
+        f"/reviews/{review_id}/decision",
+        json={"approve": True, "reason": "Approved for physical cart"},
+        headers=admin_headers,
+    )
+    assert decide_resp.status_code == 200
+
+    # Execute
+    exec_resp = dashboard_client.post(
+        f"/reviews/{review_id}/execute",
+        headers=admin_headers,
+    )
+    assert exec_resp.status_code == 200
+
+    # Verify book is on the Bookshelf!
+    inv = dashboard_client.get("/inventory", headers=admin_headers).json()
+    roy_book = next((b for b in inv if b["title"] == "The Road Past Altamont"), None)
+    assert roy_book is not None
+    assert roy_book["section"] == "Bargain Corner"
+    assert roy_book["shelf"] == "Cart-1"
+    assert roy_book["in_store_price_cad"] == 5.0
+    assert roy_book["status"] == "active"
+
+
+def test_batch_intake_execution_populates_bookshelf(dashboard_client):
+    from app.auth import create_access_token
+
+    headers = {"Authorization": f"Bearer {create_access_token({'sub': 'batch_user@example.com', 'tenant_id': 99, 'role': 'admin'})}"}
+
+    review_ids = []
+    for idx in range(5):
+        prop = dashboard_client.post(
+            "/reviews",
+            json={
+                "operation": "intake_book",
+                "payload": {
+                    "section": "Science Fiction",
+                    "shelf": f"SF-0{idx+1}",
+                    "extraction": {"title": f"Future Chronicles Vol {idx+1}", "authors": ["Arthur C. Clarke"], "format": "hardcover"},
+                    "disambiguation": {"best_candidate": {"title": f"Future Chronicles Vol {idx+1}"}},
+                    "valuation": {
+                        "condition_grade": "Very Good",
+                        "channel_strategy": "multi_channel_antiquarian",
+                        "in_store_price_cad": "25.00",
+                        "online_price_cad": "30.00",
+                    },
+                },
+            },
+            headers=headers,
+        ).json()
+        review_ids.append(prop["review_id"])
+
+    # Approve and execute all
+    for rid in review_ids:
+        dashboard_client.post(f"/reviews/{rid}/decision", json={"approve": True, "reason": "Batch approve"}, headers=headers)
+        dashboard_client.post(f"/reviews/{rid}/execute", headers=headers)
+
+    # Verify all 5 books appear in /inventory for tenant 99
+    inv = dashboard_client.get("/inventory", headers=headers).json()
+    assert len(inv) == 5
+    titles = {b["title"] for b in inv}
+    for idx in range(5):
+        assert f"Future Chronicles Vol {idx+1}" in titles
+
+
+
