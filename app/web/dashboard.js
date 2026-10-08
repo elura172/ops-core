@@ -3856,6 +3856,47 @@ function initVisionIntake() {
     const condBadge = node("span", `Condition: ${condition}`, "status-badge");
     metaTags.append(fmtBadge, condBadge);
 
+    // ABAA Dual-Grade Condition Diagnostic Data
+    const conditionDiag = bookData.condition_diagnostic || (proposal.payload && proposal.payload.condition_diagnostic) || {};
+    const dualGradeCode = bookData.dual_grade_code || (proposal.payload && proposal.payload.valuation && proposal.payload.valuation.dual_grade_code) || "";
+    const catalogBlurb = bookData.trade_catalog_blurb || (proposal.payload && proposal.payload.valuation && proposal.payload.valuation.trade_catalog_blurb) || conditionDiag.trade_catalog_blurb || "";
+    const defects = conditionDiag.defects || [];
+    const virtues = conditionDiag.virtues || [];
+
+    // Dual Grade Banner & Diagnostic Summary
+    if (dualGradeCode) {
+      const dualGradeWrap = node("div", undefined, "vresult-dualgrade-wrap");
+      dualGradeWrap.innerHTML = `
+        <div class="vresult-dualgrade-text">
+          <span>📜 ABAA Dual Grade:</span>
+          <span class="vresult-dualgrade-code">${dualGradeCode}</span>
+        </div>
+        <div class="vresult-factor-tag">${conditionDiag.diagnostic_summary || (conditionDiag.valuation_multiplier ? `${conditionDiag.valuation_multiplier}x factor` : "")}</div>
+      `;
+      metaTags.append(dualGradeWrap);
+    }
+
+    // Virtues & Defects Visual Pills
+    if (virtues.length > 0 || defects.length > 0) {
+      const condSection = node("div", undefined, "vresult-condition-section");
+      const pillsWrap = node("div", undefined, "vresult-condition-pills");
+
+      virtues.forEach(v => {
+        const pill = node("span", `✓ ${v.label}`, "vpill-virtue");
+        pill.title = v.catalog_phrase || "";
+        pillsWrap.append(pill);
+      });
+
+      defects.forEach(d => {
+        const pill = node("span", `⚠️ ${d.label}`, "vpill-defect");
+        pill.title = d.catalog_phrase || "";
+        pillsWrap.append(pill);
+      });
+
+      condSection.append(pillsWrap);
+      metaTags.append(condSection);
+    }
+
     const priceInfo = node("div");
     priceInfo.style.background = "rgba(0, 0, 0, 0.3)";
     priceInfo.style.padding = "8px 12px";
@@ -3866,7 +3907,31 @@ function initVisionIntake() {
       <div style="font-size:0.75rem; color:#9ca3af; margin-top:4px;">${rationale}</div>
     `;
 
+    // ABAA Trade Catalog Blurb Box (1-Click Copyable for AbeBooks/Biblio listings)
+    let blurbBox = null;
+    if (catalogBlurb) {
+      blurbBox = node("div", undefined, "vresult-blurb-box");
+      const blurbHeader = node("div", undefined, "vresult-blurb-header");
+      const headerLabel = node("span", "📜 ABAA Trade Catalog Description");
+      const copyBtn = node("button", "📋 Copy Blurb", "btn-copy-blurb");
+      copyBtn.title = "Copy ready-to-list ABAA catalog description to clipboard";
+      copyBtn.onclick = async () => {
+        try {
+          await navigator.clipboard.writeText(catalogBlurb);
+          copyBtn.textContent = "✓ Copied!";
+          setTimeout(() => { copyBtn.textContent = "📋 Copy Blurb"; }, 2000);
+        } catch (_) {
+          copyBtn.textContent = "Selected";
+        }
+      };
+      blurbHeader.append(headerLabel, copyBtn);
+
+      const blurbText = node("p", `"${catalogBlurb}"`, "vresult-blurb-text");
+      blurbBox.append(blurbHeader, blurbText);
+    }
+
     leftCol.append(bookTitleHeading, authorLine, metaTags, priceInfo);
+    if (blurbBox) leftCol.append(blurbBox);
 
     // Right Column: Barcode & Actions
     const rightCol = node("div", undefined, "vresult-field-group");

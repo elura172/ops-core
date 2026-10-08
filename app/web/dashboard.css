@@ -3035,4 +3035,142 @@ footer {
   border-top: 1px solid var(--line, rgba(255, 255, 255, 0.08));
 }
 
+/* ANTIQUARIAN CONDITION & ABAA BLURB STYLING */
+.vresult-dualgrade-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: linear-gradient(135deg, rgba(197, 160, 89, 0.15), rgba(0, 0, 0, 0.35));
+  border: 1px solid rgba(197, 160, 89, 0.4);
+  padding: 8px 14px;
+  border-radius: 8px;
+  margin-top: 4px;
+}
+
+.vresult-dualgrade-text {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.9rem;
+  color: #fef08a;
+  font-weight: 600;
+}
+
+.vresult-dualgrade-code {
+  background: rgba(197, 160, 89, 0.3);
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-family: monospace;
+  font-size: 1rem;
+  letter-spacing: 0.5px;
+  color: #fff;
+  border: 1px solid rgba(197, 160, 89, 0.6);
+}
+
+.vresult-factor-tag {
+  font-size: 0.75rem;
+  color: #d1d5db;
+  opacity: 0.85;
+}
+
+.vresult-condition-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.vresult-condition-label {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted, #9ca3af);
+  font-weight: 700;
+}
+
+.vresult-condition-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.vpill-virtue {
+  background: rgba(16, 185, 129, 0.15);
+  border: 1px solid rgba(16, 185, 129, 0.35);
+  color: #4ade80;
+  font-size: 0.75rem;
+  padding: 3px 8px;
+  border-radius: 20px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.vpill-defect {
+  background: rgba(245, 158, 11, 0.15);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  color: #fbbf24;
+  font-size: 0.75rem;
+  padding: 3px 8px;
+  border-radius: 20px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.vresult-blurb-box {
+  background: rgba(0, 0, 0, 0.45);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.vresult-blurb-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.vresult-blurb-header span {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: #c5a059;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.btn-copy-blurb {
+  font-size: 0.7rem;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: #fff;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btn-copy-blurb:hover {
+  background: rgba(197, 160, 89, 0.3);
+  border-color: #c5a059;
+}
+
+.vresult-blurb-text {
+  font-family: Georgia, Cambria, "Times New Roman", Times, serif;
+  font-size: 0.82rem;
+  line-height: 1.45;
+  color: #e5e7eb;
+  font-style: italic;
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+
 

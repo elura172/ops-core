@@ -81,11 +81,14 @@ class DirectIntakeRequest(BaseModel):
     authors: list[str] = []
     format: str = "Hardcover"
     condition: str = "Good"
+    dual_grade: str | None = None
     in_store_price_cad: float = 0.0
     online_price_cad: float = 0.0
     section: str = "General"
     shelf: str = ""
     issue_points: dict[str, Any] | None = None
+    condition_diagnostic: dict[str, Any] | None = None
+    trade_catalog_blurb: str = ""
     pricing_rationale: str = ""
     channel_strategy: str = "multi_channel_antiquarian"
 
@@ -830,16 +833,28 @@ def create_app(
                 except Exception as exc:
                     logger.debug("author_inference.openlibrary_failed", error=str(exc))
 
-            author_str = ", ".join(resolved_authors)
-            price_data = await run_in_threadpool(pricing.discover_price, book.title, author_str, condition, fmt_str)
-
-            # Deterministic Bibliographic Edition & Issue-Point Collation
-            from app.domain.issue_points import BibliographicIssuePointDecoder
             copy_text = getattr(book, "raw_copyright_text", "") or ""
             flap_text = getattr(book, "raw_flap_text", "") or ""
             if not copy_text and book.edition_or_series_markers:
                 copy_text = " | ".join(book.edition_or_series_markers)
 
+            # Antiquarian ABAA Dual-Grade Condition Diagnostic Inspection
+            from app.domain.condition import AntiquarianConditionInspector
+            condition_report = AntiquarianConditionInspector.inspect(
+                format_str=fmt_str,
+                visible_cues=book.visible_condition_cues,
+                raw_spine_text=book.raw_spine_text,
+                raw_copyright_text=copy_text,
+                raw_flap_text=flap_text,
+                edition_or_series_markers=book.edition_or_series_markers,
+                publisher_imprint=book.publisher_imprint or "",
+                title=book.title,
+                authors=resolved_authors,
+            )
+            condition = condition_report.book_grade.value
+
+            # Deterministic Bibliographic Edition & Issue-Point Collation
+            from app.domain.issue_points import BibliographicIssuePointDecoder
             issue_result = BibliographicIssuePointDecoder.decode(
                 publisher=book.publisher_imprint,
                 raw_copyright_text=copy_text,
@@ -848,10 +863,27 @@ def create_app(
                 format_str=fmt_str,
             )
 
+            author_str = ", ".join(resolved_authors)
+            price_data = await run_in_threadpool(pricing.discover_price, book.title, author_str, condition, fmt_str)
+
             channel_strat = "multi_channel_antiquarian"
             in_store_price = price_data["in_store_price_cad"]
             online_price = price_data["recommended_price_cad"]
             pricing_rationale = price_data["rationale"]
+
+            # Apply Antiquarian Condition Valuation Factor (ABAA standard)
+            try:
+                num_p = float(online_price)
+                if condition_report.valuation_multiplier != 1.0:
+                    adjusted_p = round(num_p * condition_report.valuation_multiplier, 2)
+                    pricing_rationale += (
+                        f" [ABAA DUAL GRADE: {condition_report.dual_grade_code}] "
+                        f"Condition factor {condition_report.valuation_multiplier:.2f}x applied "
+                        f"({len(condition_report.defects)} defect(s) noted; ${adjusted_p:.2f} CAD)."
+                    )
+                    online_price = f"{adjusted_p:.2f}"
+            except (ValueError, TypeError):
+                pass
 
             prefix = (
                 f"Synthesized from {len(prepared_images)} multi-angle photographs. "
@@ -912,8 +944,13 @@ def create_app(
                     "triage_reason": triage_reason,
                 },
                 "issue_point_analysis": issue_result.to_dict(),
+                "condition_diagnostic": condition_report.to_dict(),
                 "valuation": {
-                    "condition_grade": condition,
+                    "condition_grade": condition_report.book_grade.value,
+                    "dual_grade_code": condition_report.dual_grade_code,
+                    "book_grade": condition_report.book_grade.value,
+                    "jacket_grade": condition_report.jacket_grade.value if condition_report.jacket_grade else None,
+                    "trade_catalog_blurb": condition_report.trade_catalog_blurb,
                     "channel_strategy": channel_strat,
                     "in_store_price_cad": in_store_price,
                     "online_price_cad": online_price,
@@ -1011,6 +1048,9 @@ def create_app(
                     "authors": p.get("extraction", {}).get("authors", []),
                     "format": p.get("extraction", {}).get("format"),
                     "condition": p.get("valuation", {}).get("condition_grade"),
+                    "dual_grade_code": p.get("valuation", {}).get("dual_grade_code"),
+                    "condition_diagnostic": p.get("condition_diagnostic", {}),
+                    "trade_catalog_blurb": p.get("valuation", {}).get("trade_catalog_blurb", ""),
                     "in_store_price_cad": p.get("valuation", {}).get("in_store_price_cad"),
                     "online_price_cad": p.get("valuation", {}).get("online_price_cad"),
                     "channel_strategy": p.get("valuation", {}).get("channel_strategy"),
@@ -1143,7 +1183,20 @@ def create_app(
         principal: Principal = Depends(require_decide),
     ) -> dict[str, Any]:
         """High-fidelity fixture for 3-Angle Antiquarian Vision Intake: Dune 1st Edition."""
+        from app.domain.condition import AntiquarianConditionInspector
         from app.domain.issue_points import BibliographicIssuePointDecoder
+
+        condition_report = AntiquarianConditionInspector.inspect(
+            format_str="hardcover_with_jacket",
+            visible_cues=["clean_as_new"],
+            raw_spine_text="DUNE FRANK HERBERT CHILTON BOOKS",
+            raw_copyright_text="First Edition. Copyright 1965 by Frank Herbert. Library of Congress Catalog Card Number 65-22547.",
+            raw_flap_text="$5.95 price intact on front dust jacket flap. Chilton Books, Philadelphia.",
+            edition_or_series_markers=["First Edition stated on copyright page", "$5.95 unclipped dust jacket"],
+            publisher_imprint="Chilton Books, Philadelphia",
+            title="Dune",
+            authors=["Frank Herbert"],
+        )
 
         issue_result = BibliographicIssuePointDecoder.decode(
             publisher="Chilton Books, Philadelphia",
@@ -1156,7 +1209,7 @@ def create_app(
         in_store_price = "750.00"
         online_price = "850.00"
         pricing_rationale = (
-            "[COLLECTIBLE PREMIUM] Elevated to first edition tier ($850.00 CAD). "
+            f"[COLLECTIBLE PREMIUM - ABAA {condition_report.dual_grade_code}] Elevated to first edition tier ($850.00 CAD). "
             "True First Edition, First Impression confirmed via Chilton Books rule (Four lines of copyright, unclipped $5.95 jacket)."
         )
         channel_strat = "antiquarian_first_edition_vault"
@@ -1187,8 +1240,13 @@ def create_app(
                 ),
             },
             "issue_point_analysis": issue_result.to_dict(),
+            "condition_diagnostic": condition_report.to_dict(),
             "valuation": {
-                "condition_grade": "Near Fine",
+                "condition_grade": condition_report.book_grade.value,
+                "dual_grade_code": condition_report.dual_grade_code,
+                "book_grade": condition_report.book_grade.value,
+                "jacket_grade": condition_report.jacket_grade.value if condition_report.jacket_grade else None,
+                "trade_catalog_blurb": condition_report.trade_catalog_blurb,
                 "channel_strategy": channel_strat,
                 "in_store_price_cad": in_store_price,
                 "online_price_cad": online_price,
@@ -1213,7 +1271,7 @@ def create_app(
             w_cand = {
                 "title": "Dune",
                 "authors": ["Frank Herbert"],
-                "condition": "Near Fine",
+                "condition": condition_report.book_grade.value,
                 "format": "hardcover_with_jacket",
                 "price_cad": Decimal("850.00"),
             }
@@ -1285,7 +1343,10 @@ def create_app(
                     "title": "Dune",
                     "authors": ["Frank Herbert"],
                     "format": "hardcover_with_jacket",
-                    "condition": "Near Fine",
+                    "condition": condition_report.book_grade.value,
+                    "dual_grade_code": condition_report.dual_grade_code,
+                    "condition_diagnostic": condition_report.to_dict(),
+                    "trade_catalog_blurb": condition_report.trade_catalog_blurb,
                     "in_store_price_cad": in_store_price,
                     "online_price_cad": online_price,
                     "channel_strategy": channel_strat,
@@ -1530,8 +1591,11 @@ def create_app(
                 "triage_reason": "Direct intake confirmed via AI Vision Intake Studio.",
             },
             "issue_point_analysis": req.issue_points or {},
+            "condition_diagnostic": req.condition_diagnostic or {},
             "valuation": {
                 "condition_grade": req.condition,
+                "dual_grade_code": req.dual_grade or req.condition,
+                "trade_catalog_blurb": req.trade_catalog_blurb or "",
                 "channel_strategy": req.channel_strategy,
                 "in_store_price_cad": f"{req.in_store_price_cad:.2f}",
                 "online_price_cad": f"{req.online_price_cad:.2f}",
