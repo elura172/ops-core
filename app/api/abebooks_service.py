@@ -8,6 +8,7 @@ from urllib.request import Request, urlopen
 
 from app.api.operator import OperatorService
 from app.db.inventory import InventoryItem
+from app.db.want_list import WantListStore
 from app.domain.uiee import UIEEExporter
 from app.observability.logging import get_logger
 
@@ -76,6 +77,7 @@ class AbeBooksService:
         order: dict[str, Any],
         operator: OperatorService,
         tenant_id: int = 1,
+        want_list_store: WantListStore | None = None,
     ) -> dict[str, Any]:
         """Processes an incoming AbeBooks order, extracting SKUs and triggering multi-channel dual delisting."""
         order_id = str(order.get("orderId") or order.get("order_id") or "UNKNOWN")
@@ -88,6 +90,8 @@ class AbeBooksService:
             items = [{"sku": order["sku"]}]
 
         processed_skus: list[str] = []
+        collisions: list[dict[str, Any]] = []
+
         for it in items:
             raw_sku = it.get("bookId") or it.get("sku") or it.get("listingId") or it.get("id") or ""
             sku = str(raw_sku).strip()
@@ -98,8 +102,51 @@ class AbeBooksService:
             if sku.startswith("abe-dryrun-"):
                 sku = sku.removeprefix("abe-dryrun-")
 
+            # 1. Check for active Collector Courtesy Hold
+            active_hold = None
+            if want_list_store:
+                try:
+                    active_hold = want_list_store.get_active_hold_for_sku(sku, tenant_id=tenant_id)
+                except Exception as exc:
+                    logger.warning("abebooks.hold_lookup.failed", sku=sku, error=str(exc))
+
+            if active_hold and getattr(active_hold, "status", "") == "active":
+                # Contention detected: Active Patron Hold vs Incoming AbeBooks Order!
+                logger.warning(
+                    "abebooks.order.contention_detected",
+                    sku=sku,
+                    order_id=order_id,
+                    hold_id=active_hold.id,
+                    collector=active_hold.collector_name,
+                )
+                collision_payload = {
+                    "sku": sku,
+                    "order_id": order_id,
+                    "source_channel": "abebooks",
+                    "hold_id": active_hold.id,
+                    "collector_id": active_hold.collector_id,
+                    "collector_name": active_hold.collector_name,
+                    "book_title": active_hold.book_title,
+                    "hold_expires_at": active_hold.expires_at.isoformat() if hasattr(active_hold.expires_at, "isoformat") else str(active_hold.expires_at),
+                    "buyer_name": str(order.get("buyerName") or order.get("buyer_name") or "AbeBooks Online Buyer"),
+                    "price_cad": float(active_hold.price_cad or 0),
+                    "reason": f"Active 48h courtesy hold for '{active_hold.collector_name}' collides with incoming AbeBooks order {order_id}.",
+                }
+                proposed = operator.propose(
+                    operation="contention_hold_vs_marketplace",
+                    payload=collision_payload,
+                    tenant_id=tenant_id,
+                )
+                collisions.append({
+                    "sku": sku,
+                    "review_id": proposed["review_id"],
+                    "hold_id": active_hold.id,
+                })
+                processed_skus.append(sku)
+                continue
+
             try:
-                # 1. Propose inventory sync
+                # 2. Propose inventory sync
                 proposed = operator.propose(
                     operation="sync_inventory",
                     payload={"sku": sku, "source_channel": "abebooks", "tenant_id": tenant_id, "order_id": order_id},
@@ -111,19 +158,23 @@ class AbeBooksService:
             except Exception as exc:
                 logger.error("abebooks.sync_failed", sku=sku, order_id=order_id, error=str(exc))
 
-        # 2. Wake Corvus to triage and auto-delist everywhere
-        try:
-            from app.agents.corvus import CorvusWarden
-            warden = CorvusWarden(operator)
-            triage_results = warden.wake_and_triage()
-            logger.info("corvus.abebooks_triage.complete", **triage_results)
-        except Exception as exc:
-            logger.error("corvus.abebooks_triage.failed", error=str(exc))
+        triage_results = None
+        # 3. Wake Corvus to triage and auto-delist everywhere
+        if processed_skus and not collisions:
+            try:
+                from app.agents.corvus import CorvusWarden
+                warden = CorvusWarden(operator)
+                triage_results = warden.wake_and_triage()
+                logger.info("corvus.abebooks_triage.complete", **triage_results)
+            except Exception as exc:
+                logger.error("corvus.abebooks_triage.failed", error=str(exc))
 
         return {
             "status": "processed",
             "order_id": order_id,
             "processed_skus": processed_skus,
+            "collisions": collisions,
+            "corvus_triage": triage_results,
         }
 
     @classmethod

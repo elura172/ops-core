@@ -168,6 +168,7 @@ class BiblioService:
             except Exception as exc:
                 logger.error("biblio.sync_failed", sku=sku, order_id=order_id, error=str(exc))
 
+        triage_results = None
         # 3. Wake Corvus to triage normal syncs
         if processed_skus and not collisions:
             try:
@@ -183,6 +184,7 @@ class BiblioService:
             "order_id": order_id,
             "processed_skus": processed_skus,
             "collisions": collisions,
+            "corvus_triage": triage_results,
         }
 
     @classmethod

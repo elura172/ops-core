@@ -2588,9 +2588,52 @@ if ($("btn-sync-biblio")) {
       alert(`Biblio sync error: ${err.message}`);
       btn.textContent = "📚 Sync Biblio";
     } finally {
-      setTimeout(() => { btn.disabled = false; btn.textContent = "📚 Sync Biblio"; }, 3500);
     }
   };
+}
+
+async function triggerReconciliationPulse(demo = false) {
+  const logEl = $("pulse-result-log");
+  const triggerBtn = $("btn-trigger-pulse");
+  const demoBtn = $("btn-trigger-demo-pulse");
+  
+  if (triggerBtn) triggerBtn.disabled = true;
+  if (demoBtn) demoBtn.disabled = true;
+  if (logEl) {
+    logEl.style.display = "block";
+    logEl.textContent = `Pulse initiated (demo=${demo})... Polling channels & consulting Corvus Warden.`;
+    logEl.style.color = "var(--text-muted)";
+  }
+
+  try {
+    const res = await api(`/api/cron/sync${demo ? "?demo=true" : ""}`, { method: "POST" });
+    const polledTotal = (res.orders_polled?.biblio || 0) + (res.orders_polled?.abebooks || 0);
+    const approved = res.corvus_actions?.approved || 0;
+    const collisions = res.collisions_detected || 0;
+    
+    if (logEl) {
+      logEl.textContent = `✓ Pulse completed: ${res.tenants_checked || 1} tenant(s) checked | Orders polled: ${polledTotal} | Processed: ${res.orders_processed} | Holds checked: ${collisions} collisions | Corvus approved: ${approved}`;
+      logEl.style.color = collisions > 0 ? "var(--warning, #f59e0b)" : "var(--success, #10b981)";
+    }
+    message(`Reconciliation pulse completed: ${res.orders_processed} orders processed, ${approved} Corvus auto-delists executed.`);
+    refresh();
+  } catch (err) {
+    if (logEl) {
+      logEl.textContent = `✗ Pulse failed: ${err.message}`;
+      logEl.style.color = "var(--danger, #ef4444)";
+    }
+    alert(`Reconciliation error: ${err.message}`);
+  } finally {
+    if (triggerBtn) triggerBtn.disabled = false;
+    if (demoBtn) demoBtn.disabled = false;
+  }
+}
+
+if ($("btn-trigger-pulse")) {
+  $("btn-trigger-pulse").onclick = () => triggerReconciliationPulse(false);
+}
+if ($("btn-trigger-demo-pulse")) {
+  $("btn-trigger-demo-pulse").onclick = () => triggerReconciliationPulse(true);
 }
 if ($("btn-export-uiee")) {
   $("btn-export-uiee").onclick = () => {

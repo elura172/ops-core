@@ -122,6 +122,7 @@ def create_app(
     order_repository: Any | None = None,
     settings: Settings | None = None,
     inventory_store: Any | None = None,
+    user_store: Any | None = None,
 ) -> FastAPI:
     configure_logging()
     settings = settings or Settings.from_env_permissive()
@@ -173,6 +174,18 @@ def create_app(
         want_list_store = getattr(operator.executor, "want_list_store", None) or open_want_list_store(settings.want_list_db)
         if hasattr(operator.executor, "want_list_store") and not operator.executor.want_list_store:
             operator.executor.want_list_store = want_list_store
+
+    if user_store is None:
+        user_store = open_user_store(settings.user_db)
+
+    from app.api.reconciliation_service import ReconciliationService
+    reconciliation_service = ReconciliationService(
+        operator=operator,
+        user_store=user_store,
+        settings=settings,
+        want_list_store=want_list_store,
+        inventory_store=inventory_store,
+    )
 
     # Seed demo items for tenant 1 if empty
     try:
@@ -1414,7 +1427,7 @@ def create_app(
         try:
             enc_integrations = user_store.get_tenant_integrations(tenant_id)
             if "square" in enc_integrations:
-                from app.auth import decrypt_credential
+                from app.vault import decrypt_credential
                 token = decrypt_credential(enc_integrations["square"])
         except Exception:
             pass
@@ -1472,7 +1485,7 @@ def create_app(
         try:
             enc_integrations = user_store.get_tenant_integrations(tenant_id)
             if "ebay" in enc_integrations:
-                from app.auth import decrypt_credential
+                from app.vault import decrypt_credential
                 token = decrypt_credential(enc_integrations["ebay"])
         except Exception:
             pass
@@ -1522,7 +1535,7 @@ def create_app(
         try:
             enc_integrations = user_store.get_tenant_integrations(tenant_id)
             if "abebooks" in enc_integrations:
-                from app.auth import decrypt_credential
+                from app.vault import decrypt_credential
                 token = decrypt_credential(enc_integrations["abebooks"])
         except Exception:
             pass
@@ -1584,7 +1597,7 @@ def create_app(
         try:
             enc_integrations = user_store.get_tenant_integrations(tenant_id)
             if "biblio" in enc_integrations:
-                from app.auth import decrypt_credential
+                from app.vault import decrypt_credential
                 token = decrypt_credential(enc_integrations["biblio"])
         except Exception:
             pass
@@ -1623,10 +1636,55 @@ def create_app(
             "details": processed,
         }
 
+    @app.api_route("/api/cron/sync", methods=["GET", "POST"])
+    def cron_sync(
+        demo: bool = False,
+        tenant_id: int | None = None,
+        authorization: str = Header(default=""),
+    ) -> dict[str, Any]:
+        """Automated background pulse triggered by Vercel Cron or authorized operator.
 
-    
+        Ingests orders across active tenants, detects 48h courtesy hold collisions,
+        and triggers Corvus Warden autonomous triage.
+        """
+        token = bearer_token(authorization)
+        cron_secret = getattr(settings, "cron_secret", "") or os.getenv("CRON_SECRET", "")
+
+        authorized = False
+        if cron_secret and token and token == cron_secret:
+            authorized = True
+        elif token:
+            # Check operator token registry
+            try:
+                if settings.tokens.configured:
+                    principal = settings.tokens.resolve(token)
+                    if principal and principal.can(DECIDE):
+                        authorized = True
+            except Exception:
+                pass
+            # Check admin JWT
+            if not authorized:
+                try:
+                    from app.auth import decode_access_token
+                    payload = decode_access_token(token)
+                    if payload.get("sub"):
+                        authorized = True
+                except Exception:
+                    pass
+        elif not cron_secret and settings.dry_run:
+            authorized = True
+
+        if not authorized:
+            logger.warning("cron.sync.unauthorized_attempt")
+            raise HTTPException(401, "unauthorized cron invocation", {"WWW-Authenticate": "Bearer"})
+
+        result = reconciliation_service.run_reconciliation_cycle(
+            demo_sample=demo,
+            force_tenant_id=tenant_id,
+        )
+        return result
+
     from app.auth import get_password_hash, verify_password, create_access_token
-    user_store = open_user_store(settings.user_db)
 
     @app.post("/auth/signup")
     def signup(req: SignupRequest):
