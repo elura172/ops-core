@@ -55,6 +55,10 @@ class Proposal(BaseModel):
     payload: dict[str, Any]
 
 
+class BatchDeleteRequest(BaseModel):
+    review_ids: list[str]
+
+
 class SignupRequest(BaseModel):
     store_name: str
     email: str
@@ -407,6 +411,14 @@ def create_app(
             # Evaluated on the request that moved the counter, so a failure pages
             # even if nobody is watching /alerts.
             alert_manager.evaluate()
+
+    @app.post("/reviews/batch-delete")
+    @app.delete("/reviews/batch")
+    def batch_delete_reviews(
+        payload: BatchDeleteRequest, principal: Principal = Depends(require_decide)
+    ) -> dict[str, Any]:
+        count = operator.delete_batch(payload.review_ids, tenant_id=principal.tenant_id)
+        return {"status": "deleted", "count": count, "review_ids": payload.review_ids}
 
     @app.delete("/reviews/{review_id}")
     def delete_review(

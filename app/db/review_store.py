@@ -324,6 +324,22 @@ class SQLiteReviewStore:
             )
             return bool(res.rowcount and res.rowcount > 0)
 
+    def delete_batch(self, review_ids: list[str], tenant_id: int = 1) -> int:
+        if not review_ids:
+            return 0
+        total = 0
+        chunk_size = 200
+        with self._transaction() as connection:
+            for i in range(0, len(review_ids), chunk_size):
+                chunk = review_ids[i : i + chunk_size]
+                placeholders = ",".join("?" for _ in chunk)
+                res = connection.execute(
+                    f"DELETE FROM reviews WHERE tenant_id = ? AND review_id IN ({placeholders})",
+                    (tenant_id, *chunk),
+                )
+                total += int(res.rowcount or 0)
+        return total
+
     def clear(self, tenant_id: int = 1, status: str | None = None) -> int:
         with self._transaction() as connection:
             if status is None:

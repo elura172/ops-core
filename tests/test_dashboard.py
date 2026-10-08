@@ -237,3 +237,117 @@ def test_multitenant_deletion_isolation(dashboard_client, tmp_path):
     # Subsequent delete is False
     assert sqlite_inv.delete("SKU-101", tenant_id=101) is False
 
+
+def test_batch_delete_proposals_endpoint(dashboard_client):
+    from app.auth import create_access_token
+    admin_headers = {"Authorization": f"Bearer {create_access_token({'sub': 'admin@example.com', 'tenant_id': 1, 'role': 'admin'})}"}
+    operator_headers = {"Authorization": f"Bearer {create_access_token({'sub': 'op@example.com', 'tenant_id': 1, 'role': 'operator'})}"}
+
+    # Create 3 proposals
+    ids = []
+    for i in range(3):
+        res = dashboard_client.post(
+            "/reviews",
+            json={"operation": "update_inventory", "payload": {"sku": f"BATCH-{i}", "stock": i + 1}},
+            headers=admin_headers,
+        )
+        assert res.status_code == 200
+        ids.append(res.json()["review_id"])
+
+    # 1. Unauthenticated -> 401
+    assert dashboard_client.post("/reviews/batch-delete", json={"review_ids": ids}).status_code == 401
+
+    # 2. Operator lacking review:decide -> 403
+    assert dashboard_client.post("/reviews/batch-delete", json={"review_ids": ids}, headers=operator_headers).status_code == 403
+
+    # 3. Batch delete 2 items via POST /reviews/batch-delete
+    del_res = dashboard_client.post(
+        "/reviews/batch-delete",
+        json={"review_ids": ids[:2]},
+        headers=admin_headers,
+    )
+    assert del_res.status_code == 200
+    assert del_res.json()["status"] == "deleted"
+    assert del_res.json()["count"] == 2
+    assert set(del_res.json()["review_ids"]) == set(ids[:2])
+
+    # Verify first 2 are gone, 3rd remains
+    assert dashboard_client.get(f"/reviews/{ids[0]}", headers=admin_headers).status_code == 404
+    assert dashboard_client.get(f"/reviews/{ids[1]}", headers=admin_headers).status_code == 404
+    assert dashboard_client.get(f"/reviews/{ids[2]}", headers=admin_headers).status_code == 200
+
+    # 4. Batch delete the last item via DELETE /reviews/batch
+    del_res2 = dashboard_client.request(
+        "DELETE",
+        "/reviews/batch",
+        json={"review_ids": [ids[2]]},
+        headers=admin_headers,
+    )
+    assert del_res2.status_code == 200
+    assert del_res2.json()["count"] == 1
+    assert dashboard_client.get(f"/reviews/{ids[2]}", headers=admin_headers).status_code == 404
+
+    # 5. Empty review_ids -> 200 with count 0
+    empty_res = dashboard_client.post(
+        "/reviews/batch-delete",
+        json={"review_ids": []},
+        headers=admin_headers,
+    )
+    assert empty_res.status_code == 200
+    assert empty_res.json()["count"] == 0
+
+
+def test_batch_delete_multitenant_isolation(dashboard_client):
+    from app.auth import create_access_token
+
+    t1_headers = {"Authorization": f"Bearer {create_access_token({'sub': 'user1@example.com', 'tenant_id': 201, 'role': 'admin'})}"}
+    t2_headers = {"Authorization": f"Bearer {create_access_token({'sub': 'user2@example.com', 'tenant_id': 202, 'role': 'admin'})}"}
+
+    # Tenant 1 creates 2 proposals
+    t1_ids = []
+    for i in range(2):
+        res = dashboard_client.post(
+            "/reviews",
+            json={"operation": "update_inventory", "payload": {"sku": f"T1-BATCH-{i}", "stock": 1}},
+            headers=t1_headers,
+        )
+        t1_ids.append(res.json()["review_id"])
+
+    # Tenant 2 creates 1 proposal
+    t2_id = dashboard_client.post(
+        "/reviews",
+        json={"operation": "update_inventory", "payload": {"sku": "T2-BATCH-0", "stock": 1}},
+        headers=t2_headers,
+    ).json()["review_id"]
+
+    # Tenant 2 attempts to batch delete Tenant 1's IDs
+    cross_res = dashboard_client.post(
+        "/reviews/batch-delete",
+        json={"review_ids": t1_ids},
+        headers=t2_headers,
+    )
+    assert cross_res.status_code == 200
+    # Deleted count is 0 because tenant 2 does not own them!
+    assert cross_res.json()["count"] == 0
+
+    # Tenant 1 items still exist
+    assert dashboard_client.get(f"/reviews/{t1_ids[0]}", headers=t1_headers).status_code == 200
+    assert dashboard_client.get(f"/reviews/{t1_ids[1]}", headers=t1_headers).status_code == 200
+
+    # Tenant 1 batch deletes own items
+    own_res = dashboard_client.post(
+        "/reviews/batch-delete",
+        json={"review_ids": t1_ids},
+        headers=t1_headers,
+    )
+    assert own_res.status_code == 200
+    assert own_res.json()["count"] == 2
+
+    # Tenant 1 items are now gone
+    assert dashboard_client.get(f"/reviews/{t1_ids[0]}", headers=t1_headers).status_code == 404
+    assert dashboard_client.get(f"/reviews/{t1_ids[1]}", headers=t1_headers).status_code == 404
+
+    # Tenant 2's item is completely unaffected
+    assert dashboard_client.get(f"/reviews/{t2_id}", headers=t2_headers).status_code == 200
+
+

@@ -94,6 +94,11 @@ class OperatorService:
             logger.info("review.deleted", review_id=review_id, tenant_id=tenant_id)
         return deleted
 
+    def delete_batch(self, review_ids: list[str], tenant_id: int = 1) -> int:
+        count = self.reviews.delete_batch(review_ids, tenant_id=tenant_id)
+        logger.info("reviews.batch_deleted", count=count, tenant_id=tenant_id, requested=len(review_ids))
+        return count
+
     def clear(self, tenant_id: int = 1, status: str | None = None) -> int:
         count = self.reviews.clear(tenant_id=tenant_id, status=status)
         logger.info("reviews.cleared", count=count, status=status, tenant_id=tenant_id)

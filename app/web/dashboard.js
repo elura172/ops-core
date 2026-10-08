@@ -63,7 +63,7 @@ function renderBatchDetail() {
   const pendingCount = selectedItems.filter(i => i.status === "PENDING").length;
   const approvedCount = selectedItems.filter(i => i.status === "APPROVED").length;
   
-  if (pendingCount > 0) {
+  if (pendingCount > 0 && session && session.permissions.includes("review:decide")) {
     detail.append(node("p", `${pendingCount} items are awaiting your decision. Batch approval skips inline editing and approves them as-is.`));
     const btnBox = node("div", undefined, "actions");
     const approveBtn = node("button", `Approve ${pendingCount} Actions`, "primary");
@@ -84,7 +84,7 @@ function renderBatchDetail() {
     detail.append(btnBox);
   }
   
-  if (approvedCount > 0) {
+  if (approvedCount > 0 && session && session.permissions.includes("review:execute")) {
     detail.append(node("p", `${approvedCount} items are ready for execution.`));
     const execBox = node("div", undefined, "actions");
     const execBtn = node("button", `Execute ${approvedCount} Actions`, "primary");
@@ -105,30 +105,46 @@ function renderBatchDetail() {
     detail.append(execBox);
   }
 
-  const delBox = node("div", undefined, "actions");
-  delBox.style.marginTop = "16px";
-  delBox.style.paddingTop = "12px";
-  delBox.style.borderTop = "1px solid var(--line-subtle)";
-  const delBatchBtn = node("button", `🗑️ Delete ${selectedItems.length} Selected Proposals`, "danger-sm");
-  delBatchBtn.onclick = async () => {
-    const count = selectedItems.length;
-    if (!confirm(`Are you sure you want to delete ${count} items? This action cannot be reversed.`)) return;
-    busy = true; $("refresh").disabled = true;
-    let success = 0, fail = 0;
-    detail.replaceChildren(node("p", "Deleting proposals..."));
-    for (const item of selectedItems) {
+  if (session && session.permissions.includes("review:decide") && selectedItems.length > 0) {
+    const delBox = node("div", undefined, "actions");
+    delBox.style.marginTop = "16px";
+    delBox.style.paddingTop = "12px";
+    delBox.style.borderTop = "1px solid var(--line-subtle)";
+    const label = `🗑️ Delete ${selectedItems.length} Selected ${selectedItems.length === 1 ? "Proposal" : "Proposals"}`;
+    const delBatchBtn = node("button", label, "danger-sm");
+    delBatchBtn.onclick = async () => {
+      const count = selectedItems.length;
+      if (!confirm(`Are you sure you want to delete ${count} ${count === 1 ? "proposal" : "proposals"}? This action cannot be reversed.`)) return;
+      delBatchBtn.disabled = true;
+      busy = true; $("refresh").disabled = true;
+      detail.replaceChildren(node("p", `Deleting ${count} ${count === 1 ? "proposal" : "proposals"}...`));
+      const idsToDelete = selectedItems.map(i => i.review_id);
       try {
-        await api(`/reviews/${encodeURIComponent(item.review_id)}`, { method: "DELETE" });
-        checkedItems.delete(item.review_id);
-        success++;
-      } catch (e) { fail++; }
-    }
-    busy = false; message(`Batch delete completed: ${success} removed, ${fail} failed.`);
-    selected = null;
-    refresh();
-  };
-  delBox.append(delBatchBtn);
-  detail.append(delBox);
+        const res = await api("/reviews/batch-delete", {
+          method: "POST",
+          body: JSON.stringify({ review_ids: idsToDelete }),
+        });
+        idsToDelete.forEach(id => checkedItems.delete(id));
+        message(`Batch delete completed: ${res.count ?? idsToDelete.length} proposals permanently removed.`);
+      } catch (err) {
+        let success = 0, fail = 0;
+        for (const id of idsToDelete) {
+          try {
+            await api(`/reviews/${encodeURIComponent(id)}`, { method: "DELETE" });
+            checkedItems.delete(id);
+            success++;
+          } catch (e) { fail++; }
+        }
+        message(`Batch delete completed: ${success} removed, ${fail} failed.`);
+      } finally {
+        busy = false;
+        selected = null;
+        refresh();
+      }
+    };
+    delBox.append(delBatchBtn);
+    detail.append(delBox);
+  }
 }
 
 function renderQueue() {

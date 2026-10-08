@@ -57,6 +57,7 @@ class ReviewStore(Protocol):
     def fail_execution(self, review_id: str, error: str, tenant_id: int = 1) -> ReviewItem: ...
     def recover_stale_executions(self, older_than: timedelta) -> list[ReviewItem]: ...
     def delete(self, review_id: str, tenant_id: int = 1) -> bool: ...
+    def delete_batch(self, review_ids: list[str], tenant_id: int = 1) -> int: ...
     def clear(self, tenant_id: int = 1, status: str | None = None) -> int: ...
 
 
@@ -174,6 +175,15 @@ class ReviewQueue:
             del self.items[review_id]
             return True
         return False
+
+    def delete_batch(self, review_ids: list[str], tenant_id: int = 1) -> int:
+        count = 0
+        for rid in review_ids:
+            item = self.items.get(rid)
+            if item and item.tenant_id == tenant_id:
+                del self.items[rid]
+                count += 1
+        return count
 
     def clear(self, tenant_id: int = 1, status: str | None = None) -> int:
         to_delete = []

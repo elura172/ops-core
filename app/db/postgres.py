@@ -283,6 +283,16 @@ class PostgresReviewStore:
             )
             return bool(res.rowcount and res.rowcount > 0)
 
+    def delete_batch(self, review_ids: list[str], tenant_id: int = 1) -> int:
+        if not review_ids:
+            return 0
+        with self.pool.connection() as connection:
+            res = connection.execute(
+                "DELETE FROM reviews WHERE tenant_id = %s AND review_id = ANY(%s)",
+                (tenant_id, list(review_ids)),
+            )
+            return int(res.rowcount or 0)
+
     def clear(self, tenant_id: int = 1, status: str | None = None) -> int:
         with self.pool.connection() as connection:
             if status is None:
