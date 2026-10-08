@@ -71,16 +71,24 @@ class SQLiteUserStore:
                 self.connection.execute(
                     "UPDATE tenants SET subscription_status = 'active' WHERE tenant_id = 1"
                 )
+                from app.auth import get_password_hash, verify_password
+                DEMO_PASSWORD = "Antiquarian-Vault-2026!"
                 demo_user = self.connection.execute(
-                    "SELECT user_id FROM users WHERE email = 'operator@opscore.io'"
+                    "SELECT user_id, password_hash FROM users WHERE email = 'operator@opscore.io'"
                 ).fetchone()
                 if not demo_user:
-                    from app.auth import get_password_hash
-                    pw = get_password_hash("demo1234")
+                    pw = get_password_hash(DEMO_PASSWORD)
                     self.connection.execute(
                         "INSERT INTO users (tenant_id, email, password_hash, role) VALUES (1, 'operator@opscore.io', ?, 'admin')",
                         (pw,)
                     )
+                else:
+                    if verify_password("demo1234", demo_user[1]):
+                        new_pw = get_password_hash(DEMO_PASSWORD)
+                        self.connection.execute(
+                            "UPDATE users SET password_hash = ? WHERE user_id = ?",
+                            (new_pw, demo_user[0]),
+                        )
                 from app.vault import encrypt_credential
                 self.connection.execute(
                     "INSERT OR IGNORE INTO tenant_integrations (tenant_id, provider, encrypted_credentials) VALUES (1, 'square', ?)",
@@ -126,6 +134,14 @@ class SQLiteUserStore:
         if row:
             return User(**dict(row))
         return None
+
+    def update_user_password(self, user_id: int, password_hash: str) -> None:
+        with self._lock:
+            self.connection.execute(
+                "UPDATE users SET password_hash = ? WHERE user_id = ?",
+                (password_hash, user_id),
+            )
+            self.connection.commit()
 
     def list_tenants(self) -> list[int]:
         with self._lock:
@@ -205,16 +221,24 @@ class PostgresUserStore:
                     "ON CONFLICT (tenant_id) DO UPDATE SET subscription_status = 'active'",
                     (datetime.now(timezone.utc),),
                 )
+                from app.auth import get_password_hash, verify_password
+                DEMO_PASSWORD = "Antiquarian-Vault-2026!"
                 demo_user = conn.execute(
-                    "SELECT user_id FROM users WHERE email = 'operator@opscore.io'"
+                    "SELECT user_id, password_hash FROM users WHERE email = 'operator@opscore.io'"
                 ).fetchone()
                 if not demo_user:
-                    from app.auth import get_password_hash
-                    pw = get_password_hash("demo1234")
+                    pw = get_password_hash(DEMO_PASSWORD)
                     conn.execute(
                         "INSERT INTO users (tenant_id, email, password_hash, role) VALUES (1, 'operator@opscore.io', %s, 'admin')",
                         (pw,),
                     )
+                else:
+                    if verify_password("demo1234", demo_user[1]):
+                        new_pw = get_password_hash(DEMO_PASSWORD)
+                        conn.execute(
+                            "UPDATE users SET password_hash = %s WHERE user_id = %s",
+                            (new_pw, demo_user[0]),
+                        )
                 from app.vault import encrypt_credential
                 conn.execute(
                     "INSERT INTO tenant_integrations (tenant_id, provider, encrypted_credentials) VALUES (1, 'square', %s) ON CONFLICT DO NOTHING",
@@ -261,6 +285,13 @@ class PostgresUserStore:
             if row:
                 return User(**row)
             return None
+
+    def update_user_password(self, user_id: int, password_hash: str) -> None:
+        with self.pool.connection() as conn:
+            conn.execute(
+                "UPDATE users SET password_hash = %s WHERE user_id = %s",
+                (password_hash, user_id),
+            )
 
     def list_tenants(self) -> list[int]:
         with self.pool.connection() as conn:

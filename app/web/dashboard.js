@@ -780,7 +780,8 @@ $("show-login").onclick = (e) => { e.preventDefault(); $("signup-panel").hidden 
 if ($("btn-fill-demo")) {
   $("btn-fill-demo").onclick = () => {
     $("login-email").value = "operator@opscore.io";
-    $("login-password").value = "demo1234";
+    $("login-password").value = "Antiquarian-Vault-2026!";
+    handleAuth("/auth/login", {email: "operator@opscore.io", password: "Antiquarian-Vault-2026!"}, $("btn-fill-demo"));
   };
 }
 
