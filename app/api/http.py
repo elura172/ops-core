@@ -379,6 +379,22 @@ def create_app(
         review_id: str, decision: Decision, principal: Principal = Depends(require_decide)
     ) -> dict[str, Any]:
         try:
+            item = operator.reviews.get(review_id, tenant_id=principal.tenant_id)
+            if item and item.operation == "contention_hold_vs_marketplace" and not decision.approve:
+                # Operator chose to honor the collector courtesy hold and cancel marketplace order
+                from app.api.biblio_service import BiblioService
+                order_id = str(item.payload.get("order_id", ""))
+                channel = str(item.payload.get("source_channel", "biblio"))
+                if channel == "biblio" and order_id:
+                    api_key, dealer_id = _get_tenant_biblio_creds(principal.tenant_id)
+                    reason = decision.reason or "Reserved for established patron"
+                    BiblioService.cancel_order(
+                        order_id,
+                        reason=reason,
+                        api_key=api_key,
+                        dealer_id=dealer_id,
+                        dry_run=settings.dry_run,
+                    )
             return operator.decide(
                 review_id,
                 decision.approve,
@@ -559,6 +575,28 @@ def create_app(
             payload,
             operator,
             tenant_id,
+        )
+        return JSONResponse(result, status_code=200)
+
+    @app.post("/webhooks/biblio")
+    async def biblio_webhook_endpoint(
+        request: Request,
+        tenant_id: int = 1,
+    ) -> JSONResponse:
+        import json
+        body = await request.body()
+        try:
+            payload = json.loads(body.decode("utf-8")) if body else {}
+        except Exception:
+            return JSONResponse({"error": "invalid json"}, status_code=400)
+
+        from app.api.biblio_service import BiblioService
+        result = await run_in_threadpool(
+            BiblioService.process_order,
+            payload,
+            operator,
+            tenant_id,
+            want_list_store,
         )
         return JSONResponse(result, status_code=200)
 
@@ -1338,6 +1376,51 @@ def create_app(
         return {
             "status": "synced",
             "marketplace": "abebooks",
+            "orders_checked": len(orders),
+            "orders_processed": len(processed),
+            "details": processed,
+        }
+
+    def _get_tenant_biblio_creds(tenant_id: int) -> tuple[str, str]:
+        import os
+        token = ""
+        try:
+            enc_integrations = user_store.get_tenant_integrations(tenant_id)
+            if "biblio" in enc_integrations:
+                from app.auth import decrypt_credential
+                token = decrypt_credential(enc_integrations["biblio"])
+        except Exception:
+            pass
+        if not token:
+            token = getattr(settings, "biblio_api_key", "") or os.getenv("BIBLIO_API_KEY", "")
+        dealer_id = getattr(settings, "biblio_dealer_id", "") or os.getenv("BIBLIO_DEALER_ID", "")
+        return token, dealer_id
+
+    @app.post("/inventory/biblio/sync-orders")
+    def sync_biblio_orders(
+        demo: bool = False,
+        principal: Principal = Depends(require_decide),
+    ) -> dict[str, Any]:
+        from app.api.biblio_service import BiblioService
+        api_key, dealer_id = _get_tenant_biblio_creds(principal.tenant_id)
+        orders = BiblioService.fetch_orders(
+            api_key=api_key,
+            dealer_id=dealer_id,
+            dry_run=settings.dry_run,
+            demo_sample=demo,
+        )
+        processed = []
+        for order in orders:
+            res = BiblioService.process_order(
+                order,
+                operator=operator,
+                tenant_id=principal.tenant_id,
+                want_list_store=want_list_store,
+            )
+            processed.append(res)
+        return {
+            "status": "synced",
+            "marketplace": "biblio",
             "orders_checked": len(orders),
             "orders_processed": len(processed),
             "details": processed,

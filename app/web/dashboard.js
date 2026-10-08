@@ -2,7 +2,7 @@
 const $ = id => document.getElementById(id);
 let checkedItems = new Set();
 let token = "", session = null, items = [], selected = null, generation = 0, selection = 0, busy = false;
-const labels = {intake_book:"Intake Book", create_product_draft:"Create product draft", update_inventory:"Update stock", update_prices:"Update prices", publish:"Publish content", send_customer_response:"Send customer response", sync_inventory:"Cross-Channel Sync", fulfill_order:"Fulfill Order", resolve_order_contention:"Resolve Contention"};
+const labels = {intake_book:"Intake Book", create_product_draft:"Create product draft", update_inventory:"Update stock", update_prices:"Update prices", publish:"Publish content", send_customer_response:"Send customer response", sync_inventory:"Cross-Channel Sync", fulfill_order:"Fulfill Order", resolve_order_contention:"Resolve Contention", contention_hold_vs_marketplace:"Patron Hold Collision (Biblio)"};
 const human = text => String(text).replaceAll("_", " ");
 function formatError(detail) {
   if (typeof detail === "string") return detail;
@@ -237,6 +237,9 @@ function renderQueue() {
     } else if (item.operation === "sync_inventory" && item.payload?.sku) {
       displayTitle = `Sync SKU: ${item.payload.sku}`;
       subDetail = `Sold on ${human(item.payload.source_channel || "marketplace")} · Delist everywhere`;
+    } else if (item.operation === "contention_hold_vs_marketplace" && item.payload) {
+      displayTitle = `⚠️ Hold Collision: ${item.payload.book_title || item.payload.sku}`;
+      subDetail = `Patron: ${item.payload.collector_name || "Collector"} vs ${human(item.payload.source_channel || "Biblio")} #${item.payload.order_id}`;
     }
 
     const titleEl = node("strong", displayTitle);
@@ -498,6 +501,40 @@ function renderDetail(item) {
       "Substitute SKU": item.payload.substitute_sku || "None Available"
     });
     detail.append(node("p", `Reason: ${item.payload.reason || item.payload.contention_reason}`, "muted"));
+    const raw = node("details"); raw.append(node("summary", "View complete action data"), node("pre", JSON.stringify(item.payload, null, 2))); detail.append(raw);
+  } else if (item.operation === "contention_hold_vs_marketplace") {
+    detail.append(node("h3", "⚠️ Patron Courtesy Hold vs Marketplace Collision"));
+    const p = item.payload;
+    const alertBox = node("div", undefined, "sanctuary-hold-alert");
+    alertBox.style.padding = "12px";
+    alertBox.style.marginBottom = "12px";
+    alertBox.style.borderRadius = "var(--radius-sm)";
+    alertBox.style.border = "1px solid var(--accent-gold)";
+    alertBox.style.background = "rgba(212, 175, 55, 0.08)";
+    alertBox.innerHTML = `<strong>Antiquarian Contention:</strong> An online order arrived on <strong>${human(p.source_channel || "Biblio")}</strong> (#${p.order_id}) for <em>${p.book_title || p.sku}</em>, but this volume is held under a 48-hour priority courtesy hold for <strong>${p.collector_name || "Collector"}</strong>.`;
+    detail.append(alertBox);
+
+    fields(detail, {
+      "Target SKU": p.sku,
+      "Book Title": p.book_title || p.sku,
+      "Established Patron": p.collector_name || "VIP Collector",
+      "Hold Expiry": p.hold_expires_at || "Active",
+      "Marketplace Channel": human(p.source_channel || "Biblio"),
+      "Marketplace Order": p.order_id,
+      "Online Buyer": p.buyer_name || "Online Buyer",
+      "Market Value": p.price_cad ? `$${Number(p.price_cad).toFixed(2)} CAD` : "N/A"
+    });
+
+    const guidance = node("div", undefined, "decision-guidance");
+    guidance.style.marginTop = "10px";
+    guidance.style.padding = "8px 12px";
+    guidance.style.borderRadius = "var(--radius-sm)";
+    guidance.style.background = "var(--surface-raised)";
+    guidance.style.fontSize = "0.9rem";
+    guidance.style.color = "var(--text-subtle)";
+    guidance.innerHTML = `<strong>Operator Options:</strong><br>• <strong>Approve:</strong> Fulfill the ${human(p.source_channel || "Biblio")} order and release patron courtesy hold.<br>• <strong>Reject:</strong> Honor patron hold, keep book on shelf, and cancel ${human(p.source_channel || "Biblio")} order.`;
+    detail.append(guidance);
+
     const raw = node("details"); raw.append(node("summary", "View complete action data"), node("pre", JSON.stringify(item.payload, null, 2))); detail.append(raw);
   } else {
     detail.append(node("h3", "Proposed content")); fields(detail, item.payload);
@@ -1903,6 +1940,35 @@ if ($("btn-sync-abebooks")) {
       btn.textContent = "📖 Sync AbeBooks";
     } finally {
       setTimeout(() => { btn.disabled = false; btn.textContent = "📖 Sync AbeBooks"; }, 3500);
+    }
+  };
+}
+if ($("btn-sync-biblio")) {
+  $("btn-sync-biblio").onclick = async (e) => {
+    const btn = $("btn-sync-biblio");
+    btn.disabled = true;
+    btn.textContent = "Checking Biblio...";
+    try {
+      const isShift = e && e.shiftKey;
+      const res = await api(`/inventory/biblio/sync-orders${isShift ? "?demo=true" : ""}`, { method: "POST" });
+      if (res.orders_checked === 0 && !isShift) {
+        const wantDemo = confirm("Checked Biblio API: 0 new open orders found. Would you like to simulate an incoming Biblio order to test collision detection and dual delisting?");
+        if (wantDemo) {
+          btn.textContent = "Simulating Biblio Order...";
+          const demoRes = await api("/inventory/biblio/sync-orders?demo=true", { method: "POST" });
+          message(`Biblio demo order processed: checked 1 order, processed ${demoRes.orders_processed} action(s). Check Review Queue for arbitration!`);
+          refresh();
+          return;
+        }
+      }
+      message(`Biblio sync complete: checked ${res.orders_checked} order(s), processed ${res.orders_processed} sale(s).`);
+      btn.textContent = `✓ Checked (${res.orders_processed})`;
+      if (res.orders_processed > 0) refresh();
+    } catch(err) {
+      alert(`Biblio sync error: ${err.message}`);
+      btn.textContent = "📚 Sync Biblio";
+    } finally {
+      setTimeout(() => { btn.disabled = false; btn.textContent = "📚 Sync Biblio"; }, 3500);
     }
   };
 }

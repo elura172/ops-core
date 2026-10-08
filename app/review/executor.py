@@ -80,6 +80,7 @@ class ApprovedActionExecutor:
             "collector_hold_notification": self._collector_hold_notification,
             "claim_collector_hold": self._claim_collector_hold,
             "release_collector_hold": self._release_collector_hold,
+            "contention_hold_vs_marketplace": self._resolve_contention_hold_vs_marketplace,
         }
 
     @property
@@ -404,6 +405,50 @@ class ApprovedActionExecutor:
             "marketplace_results": listing_result.get("marketplace_results", {}),
         }
 
+    def _resolve_contention_hold_vs_marketplace(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Resolves an approved collision between an active collector hold and an incoming marketplace order.
+
+        Operator approved: fulfill marketplace order, release courtesy hold, and delist everywhere.
+        """
+        hold_id = payload.get("hold_id")
+        sku = payload["sku"]
+        order_id = payload.get("order_id", "UNKNOWN")
+        source_channel = payload.get("source_channel", "biblio")
+        tenant_id = payload.get("tenant_id", 1)
+
+        # 1. Release the courtesy hold
+        if hold_id and self.want_list_store:
+            now = datetime.now(UTC)
+            self.want_list_store.update_hold(
+                hold_id,
+                tenant_id=tenant_id,
+                status="released",
+                released_at=now,
+                notes=f"Released for {source_channel} order {order_id} via operator decision",
+            )
+
+        # 2. Mark inventory SKU as delisted/sold locally
+        if self.inventory_store:
+            self.inventory_store.delist(sku, tenant_id=tenant_id)
+
+        # 3. Trigger multi-channel delisting across all channels
+        sync_result = self._sync_inventory({
+            "sku": sku,
+            "source_channel": source_channel,
+            "tenant_id": tenant_id,
+            "order_id": order_id,
+        })
+
+        return {
+            "status": "contention_resolved",
+            "action": "fulfilled_marketplace_order",
+            "sku": sku,
+            "order_id": order_id,
+            "channel": source_channel,
+            "hold_id": hold_id,
+            "sync_result": sync_result,
+        }
+
     def _sync_inventory(self, payload: dict[str, Any]) -> dict[str, Any]:
         from app.publish.inventory_sync import MultiChannelInventorySync
         
@@ -412,7 +457,7 @@ class ApprovedActionExecutor:
         adapters = (
             AbeBooksListingAdapter(dry_run=True, api_key=credentials.get("abebooks", "mock_key")),
             AmazonSPAPIAdapter(dry_run=True, refresh_token=credentials.get("amazon", "mock_token")),
-            BiblioListingAdapter(dry_run=True),
+            BiblioListingAdapter(dry_run=True, api_key=credentials.get("biblio", "mock_key")),
             AlibrisListingAdapter(dry_run=True),
             EbayListingAdapter(dry_run=True, api_token=credentials.get("ebay", "mock_token")),
             ShopifyListingAdapter(dry_run=True, access_token=credentials.get("shopify", "")),

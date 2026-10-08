@@ -228,6 +228,7 @@ class AmazonSPAPIAdapter(BookListingAdapter):
 class BiblioListingAdapter(BookListingAdapter):
     """Biblio Inventory API Adapter."""
     api_key: str = "mock_key"
+    dealer_id: str = ""
     dry_run: bool = True
 
     @property
@@ -242,22 +243,24 @@ class BiblioListingAdapter(BookListingAdapter):
         price_cad: Decimal,
         details: dict[str, Any],
     ) -> str | None:
-        if self.dry_run:
+        if self.dry_run or not self.api_key or "mock" in self.api_key.lower():
             logger.info("biblio.list_book.dry_run", sku=sku)
             return f"biblio-dryrun-{sku}"
         return f"biblio-{sku}"
 
     def delist_book(self, sku: str) -> bool:
-        if self.dry_run:
+        if self.dry_run or not self.api_key or "mock" in self.api_key.lower():
             logger.info("biblio.delist_book.dry_run", sku=sku)
             return True
-        return True
+        from app.api.biblio_service import BiblioService
+        return BiblioService.delist_book(sku, api_key=self.api_key, dealer_id=self.dealer_id, dry_run=False)
 
     def cancel_order(self, order_id: str, reason: str = "OUT_OF_STOCK") -> bool:
-        if self.dry_run:
+        if self.dry_run or not self.api_key or "mock" in self.api_key.lower():
             logger.info("biblio.cancel_order.dry_run", order_id=order_id, reason=reason)
             return True
-        return True
+        from app.api.biblio_service import BiblioService
+        return BiblioService.cancel_order(order_id, reason=reason, api_key=self.api_key, dealer_id=self.dealer_id, dry_run=False)
 
 
 @dataclass

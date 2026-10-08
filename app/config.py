@@ -58,6 +58,8 @@ class Settings:
     ebay_marketplace_id: str = "EBAY_CA"
     abebooks_api_key: str = ""
     abebooks_client_id: str = ""
+    biblio_api_key: str = ""
+    biblio_dealer_id: str = ""
     order_db: str = "orders.db"
     review_db: str = "reviews.db"
     user_db: str = "users.db"
@@ -124,6 +126,8 @@ class Settings:
             ebay_marketplace_id=os.getenv("EBAY_MARKETPLACE_ID", "EBAY_CA"),
             abebooks_api_key=os.getenv("ABEBOOKS_API_KEY", ""),
             abebooks_client_id=os.getenv("ABEBOOKS_CLIENT_ID", ""),
+            biblio_api_key=os.getenv("BIBLIO_API_KEY", ""),
+            biblio_dealer_id=os.getenv("BIBLIO_DEALER_ID", ""),
             tokens=tokens,
             order_db=os.getenv("ORDER_DB", os.getenv("POSTGRES_URL", _default_db("orders.db"))).strip() or os.getenv("POSTGRES_URL", _default_db("orders.db")),
             review_db=os.getenv("REVIEW_DB", os.getenv("POSTGRES_URL", _default_db("reviews.db"))).strip() or os.getenv("POSTGRES_URL", _default_db("reviews.db")),
@@ -166,6 +170,8 @@ class Settings:
             ebay_marketplace_id=os.getenv("EBAY_MARKETPLACE_ID", "EBAY_CA"),
             abebooks_api_key=os.getenv("ABEBOOKS_API_KEY", ""),
             abebooks_client_id=os.getenv("ABEBOOKS_CLIENT_ID", ""),
+            biblio_api_key=os.getenv("BIBLIO_API_KEY", ""),
+            biblio_dealer_id=os.getenv("BIBLIO_DEALER_ID", ""),
             tokens=TokenRegistry.from_env(
                 os.getenv("OPS_TOKENS", "").strip()
                 or "10a4c7c9fc5206d6f36dc6944a81bb6f4a3cb0e25014ae3b12e6c3e52712292a:admin:admin"
