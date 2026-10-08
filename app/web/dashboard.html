@@ -229,6 +229,9 @@
             <button type="button" id="btn-export-uiee" class="ghost-sm" title="Download standard UIEE catalog file for AbeBooks, Biblio, and Alibris">
               <span>📄 Export UIEE</span>
             </button>
+            <button type="button" id="btn-scan-barcode" class="ghost-sm" title="Scan barcode with camera (or use hardware barcode gun)">
+              <span>📷 Scan Barcode</span>
+            </button>
             <button type="button" id="btn-audit-shelf" class="primary">
               <span>🔍 Audit Shelf</span>
             </button>
@@ -256,7 +259,41 @@
           </div>
         </div>
 
+        <!-- SELECTION & SCANNER STATUS BAR -->
+        <div id="bookshelf-selection-bar" class="bookshelf-selection-bar">
+          <div class="selection-checkbox-wrap">
+            <input type="checkbox" id="bookshelf-select-all" title="Select all visible">
+            <label for="bookshelf-select-all" id="bookshelf-select-all-label">Select All</label>
+          </div>
+          <div id="bookshelf-catalog-banner" class="bookshelf-catalog-banner" hidden>
+            <span>All <strong id="visible-selected-count">0</strong> visible books selected.</span>
+            <button type="button" id="btn-select-catalog-all" class="catalog-link-btn">Select all <span id="total-catalog-count">0</span> books in catalog</button>
+          </div>
+          <div class="scanner-indicator" title="Hardware barcode guns are continuously active">
+            <span class="scanner-dot"></span> <span class="scanner-text">Scanner Active</span>
+          </div>
+        </div>
+
         <div id="bookshelf-items" class="bookshelf-grid"></div>
+
+        <!-- STICKY BOTTOM FLOATING BATCH ACTION BAR -->
+        <div id="bookshelf-sticky-bar" class="bookshelf-sticky-bar" hidden>
+          <div class="sticky-bar-content">
+            <div class="sticky-bar-count">
+              <span id="sticky-selected-count">0</span> selected
+            </div>
+            <div class="sticky-bar-actions">
+              <button type="button" id="btn-bulk-delist" class="ghost-sm" title="Delist selected books from active sales">❌ Delist</button>
+              <button type="button" id="btn-bulk-relist" class="ghost-sm" title="Relist selected books as active on floor">🔄 Relist</button>
+              <button type="button" id="btn-bulk-price" class="ghost-sm" title="Adjust prices for selected books">🏷️ Adjust Prices</button>
+              <button type="button" id="btn-bulk-relocate" class="ghost-sm" title="Change section/shelf location">📍 Relocate</button>
+              <button type="button" id="btn-bulk-export-csv" class="ghost-sm" title="Export selected books as CSV spreadsheet">📊 Export CSV</button>
+              <button type="button" id="btn-bulk-export-uiee" class="ghost-sm" title="Export selected books as standard UIEE catalog">📄 Export UIEE</button>
+              <button type="button" id="btn-bulk-delete" class="danger-sm" title="Permanently delete selected books from database">🗑️ Delete</button>
+              <button type="button" id="btn-bulk-clear" class="ghost-sm" title="Clear selection">✕</button>
+            </div>
+          </div>
+        </div>
       </section>
 
       <!-- VIEW 2.5: COLLECTORS & WANT LISTS (CRM & COURTESY HOLDS) -->

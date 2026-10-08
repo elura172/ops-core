@@ -52,6 +52,12 @@ class InventoryStore(Protocol):
     def delist(self, sku: str, tenant_id: int = 1) -> None: ...
     def relist(self, sku: str, tenant_id: int = 1) -> None: ...
     def delete(self, sku: str, tenant_id: int = 1) -> bool: ...
+    def get_batch(self, skus: list[str], tenant_id: int = 1) -> list[InventoryItem]: ...
+    def batch_delist(self, skus: list[str], tenant_id: int = 1) -> int: ...
+    def batch_relist(self, skus: list[str], tenant_id: int = 1) -> int: ...
+    def batch_update_location(self, skus: list[str], section: str, shelf: str, tenant_id: int = 1) -> int: ...
+    def batch_delete(self, skus: list[str], tenant_id: int = 1) -> int: ...
+    def batch_update_prices(self, updates: dict[str, tuple[Decimal, Decimal]], tenant_id: int = 1) -> int: ...
     def record_shelf_audit(self, audit: ShelfAuditRecord) -> None: ...
     def list_shelf_audits(self, tenant_id: int = 1, limit: int = 50) -> list[ShelfAuditRecord]: ...
 
@@ -198,6 +204,70 @@ class PostgresInventoryStore:
                 (sku, tenant_id),
             )
             return bool(res.rowcount and res.rowcount > 0)
+
+    def get_batch(self, skus: list[str], tenant_id: int = 1) -> list[InventoryItem]:
+        if not skus:
+            return []
+        with self.pool.connection() as conn:
+            rows = conn.execute(
+                "SELECT * FROM inventory WHERE sku = ANY(%s) AND tenant_id = %s",
+                (skus, tenant_id),
+            ).fetchall()
+            return [_row_to_item(dict(r)) for r in rows]
+
+    def batch_delist(self, skus: list[str], tenant_id: int = 1) -> int:
+        if not skus:
+            return 0
+        with self.pool.connection() as conn, conn.transaction():
+            res = conn.execute(
+                "UPDATE inventory SET status = 'delisted', updated_at = %s WHERE sku = ANY(%s) AND tenant_id = %s",
+                (datetime.now(UTC), skus, tenant_id),
+            )
+            return res.rowcount or 0
+
+    def batch_relist(self, skus: list[str], tenant_id: int = 1) -> int:
+        if not skus:
+            return 0
+        with self.pool.connection() as conn, conn.transaction():
+            res = conn.execute(
+                "UPDATE inventory SET status = 'active', updated_at = %s WHERE sku = ANY(%s) AND tenant_id = %s",
+                (datetime.now(UTC), skus, tenant_id),
+            )
+            return res.rowcount or 0
+
+    def batch_update_location(self, skus: list[str], section: str, shelf: str, tenant_id: int = 1) -> int:
+        if not skus:
+            return 0
+        with self.pool.connection() as conn, conn.transaction():
+            res = conn.execute(
+                "UPDATE inventory SET section = %s, shelf = %s, updated_at = %s WHERE sku = ANY(%s) AND tenant_id = %s",
+                (section, shelf, datetime.now(UTC), skus, tenant_id),
+            )
+            return res.rowcount or 0
+
+    def batch_delete(self, skus: list[str], tenant_id: int = 1) -> int:
+        if not skus:
+            return 0
+        with self.pool.connection() as conn, conn.transaction():
+            res = conn.execute(
+                "DELETE FROM inventory WHERE sku = ANY(%s) AND tenant_id = %s",
+                (skus, tenant_id),
+            )
+            return res.rowcount or 0
+
+    def batch_update_prices(self, updates: dict[str, tuple[Decimal, Decimal]], tenant_id: int = 1) -> int:
+        if not updates:
+            return 0
+        now = datetime.now(UTC)
+        count = 0
+        with self.pool.connection() as conn, conn.transaction():
+            for sku, (in_store, online) in updates.items():
+                res = conn.execute(
+                    "UPDATE inventory SET in_store_price_cad = %s, online_price_cad = %s, updated_at = %s WHERE sku = %s AND tenant_id = %s",
+                    (in_store, online, now, sku, tenant_id),
+                )
+                count += res.rowcount or 0
+        return count
 
     def record_shelf_audit(self, audit: ShelfAuditRecord) -> None:
         from psycopg.types.json import Jsonb
@@ -429,6 +499,75 @@ class SQLiteInventoryStore:
                 (sku, tenant_id),
             )
             return bool(res.rowcount and res.rowcount > 0)
+
+    def get_batch(self, skus: list[str], tenant_id: int = 1) -> list[InventoryItem]:
+        if not skus:
+            return []
+        placeholders = ",".join("?" for _ in skus)
+        with self._transaction() as conn:
+            rows = conn.execute(
+                f"SELECT * FROM inventory WHERE sku IN ({placeholders}) AND tenant_id = ?",
+                (*skus, tenant_id),
+            ).fetchall()
+            return [_row_to_item(dict(r)) for r in rows]
+
+    def batch_delist(self, skus: list[str], tenant_id: int = 1) -> int:
+        if not skus:
+            return 0
+        placeholders = ",".join("?" for _ in skus)
+        with self._transaction() as conn:
+            res = conn.execute(
+                f"UPDATE inventory SET status = 'delisted', updated_at = ? WHERE sku IN ({placeholders}) AND tenant_id = ?",
+                (datetime.now(UTC).isoformat(), *skus, tenant_id),
+            )
+            return res.rowcount or 0
+
+    def batch_relist(self, skus: list[str], tenant_id: int = 1) -> int:
+        if not skus:
+            return 0
+        placeholders = ",".join("?" for _ in skus)
+        with self._transaction() as conn:
+            res = conn.execute(
+                f"UPDATE inventory SET status = 'active', updated_at = ? WHERE sku IN ({placeholders}) AND tenant_id = ?",
+                (datetime.now(UTC).isoformat(), *skus, tenant_id),
+            )
+            return res.rowcount or 0
+
+    def batch_update_location(self, skus: list[str], section: str, shelf: str, tenant_id: int = 1) -> int:
+        if not skus:
+            return 0
+        placeholders = ",".join("?" for _ in skus)
+        with self._transaction() as conn:
+            res = conn.execute(
+                f"UPDATE inventory SET section = ?, shelf = ?, updated_at = ? WHERE sku IN ({placeholders}) AND tenant_id = ?",
+                (section, shelf, datetime.now(UTC).isoformat(), *skus, tenant_id),
+            )
+            return res.rowcount or 0
+
+    def batch_delete(self, skus: list[str], tenant_id: int = 1) -> int:
+        if not skus:
+            return 0
+        placeholders = ",".join("?" for _ in skus)
+        with self._transaction() as conn:
+            res = conn.execute(
+                f"DELETE FROM inventory WHERE sku IN ({placeholders}) AND tenant_id = ?",
+                (*skus, tenant_id),
+            )
+            return res.rowcount or 0
+
+    def batch_update_prices(self, updates: dict[str, tuple[Decimal, Decimal]], tenant_id: int = 1) -> int:
+        if not updates:
+            return 0
+        now = datetime.now(UTC).isoformat()
+        count = 0
+        with self._transaction() as conn:
+            for sku, (in_store, online) in updates.items():
+                res = conn.execute(
+                    "UPDATE inventory SET in_store_price_cad = ?, online_price_cad = ?, updated_at = ? WHERE sku = ? AND tenant_id = ?",
+                    (str(in_store), str(online), now, sku, tenant_id),
+                )
+                count += res.rowcount or 0
+        return count
 
     def record_shelf_audit(self, audit: ShelfAuditRecord) -> None:
         with self._transaction() as conn:

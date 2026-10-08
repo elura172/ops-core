@@ -121,6 +121,7 @@ def create_app(
     operator: OperatorService | None = None,
     order_repository: Any | None = None,
     settings: Settings | None = None,
+    inventory_store: Any | None = None,
 ) -> FastAPI:
     configure_logging()
     settings = settings or Settings.from_env_permissive()
@@ -141,7 +142,8 @@ def create_app(
         # The durable store writes its own audit trail inside each transaction, so
         # the executor is given no second sink.
         review_store = open_review_store(settings.review_db)
-        inventory_store = open_inventory_store(settings.inventory_db)
+        if inventory_store is None:
+            inventory_store = open_inventory_store(settings.inventory_db)
         want_list_store = open_want_list_store(settings.want_list_db)
         recovered = review_store.recover_stale_executions(timedelta(minutes=15))
         if recovered:
@@ -164,7 +166,8 @@ def create_app(
         )
     else:
         review_store = operator.reviews
-        inventory_store = getattr(operator.executor, "inventory_store", None) or open_inventory_store(settings.inventory_db)
+        if inventory_store is None:
+            inventory_store = getattr(operator.executor, "inventory_store", None) or open_inventory_store(settings.inventory_db)
         if hasattr(operator.executor, "inventory_store") and not operator.executor.inventory_store:
             operator.executor.inventory_store = inventory_store
         want_list_store = getattr(operator.executor, "want_list_store", None) or open_want_list_store(settings.want_list_db)
@@ -1109,6 +1112,156 @@ def create_app(
         inventory_store.delist(sku, tenant_id=principal.tenant_id)
         operator.propose("update_inventory", {"sku": sku, "stock": 0}, tenant_id=principal.tenant_id)
         return {"status": "ok"}
+
+    @app.post("/inventory/batch-action")
+    def batch_inventory_action(
+        payload: dict[str, Any],
+        principal: Principal = Depends(require_decide),
+    ) -> dict[str, Any]:
+        from decimal import Decimal
+
+        action = payload.get("action")
+        skus = payload.get("skus") or []
+        params = payload.get("params") or {}
+
+        if not action or not isinstance(skus, list) or not skus:
+            raise HTTPException(400, "action and non-empty skus list required")
+
+        tenant_id = principal.tenant_id
+
+        if action == "delist":
+            affected = inventory_store.batch_delist(skus, tenant_id=tenant_id)
+            rev = operator.propose(
+                "update_inventory",
+                {"changes": {sku: 0 for sku in skus}},
+                tenant_id=tenant_id,
+            )
+            return {"status": "ok", "action": action, "affected_count": affected, "review_id": rev["review_id"]}
+
+        elif action == "relist":
+            affected = inventory_store.batch_relist(skus, tenant_id=tenant_id)
+            rev = operator.propose(
+                "update_inventory",
+                {"changes": {sku: 1 for sku in skus}},
+                tenant_id=tenant_id,
+            )
+            return {"status": "ok", "action": action, "affected_count": affected, "review_id": rev["review_id"]}
+
+        elif action == "relocate":
+            section = str(params.get("section", "General"))
+            shelf = str(params.get("shelf", ""))
+            affected = inventory_store.batch_update_location(skus, section, shelf, tenant_id=tenant_id)
+            return {"status": "ok", "action": action, "affected_count": affected}
+
+        elif action == "delete":
+            affected = inventory_store.batch_delete(skus, tenant_id=tenant_id)
+            rev = operator.propose(
+                "update_inventory",
+                {"changes": {sku: 0 for sku in skus}},
+                tenant_id=tenant_id,
+            )
+            return {"status": "ok", "action": action, "affected_count": affected, "review_id": rev["review_id"]}
+
+        elif action == "price_adjust":
+            price_mode = str(params.get("price_mode", "percent"))
+            price_value = Decimal(str(params.get("price_value", "0")))
+            price_target = str(params.get("price_target", "both"))
+
+            items = inventory_store.get_batch(skus, tenant_id=tenant_id)
+            if not items:
+                return {"status": "ok", "action": action, "affected_count": 0}
+
+            updates: dict[str, tuple[Decimal, Decimal]] = {}
+            online_changes: dict[str, str] = {}
+
+            for item in items:
+                curr_in = item.in_store_price_cad
+                curr_on = item.online_price_cad
+                new_in = curr_in
+                new_on = curr_on
+
+                if price_mode == "flat_override":
+                    if price_target in ("in_store", "both"):
+                        new_in = max(Decimal("0.00"), price_value)
+                    if price_target in ("online", "both"):
+                        new_on = max(Decimal("0.00"), price_value)
+                elif price_mode == "fixed_delta":
+                    if price_target in ("in_store", "both"):
+                        new_in = max(Decimal("0.00"), curr_in + price_value)
+                    if price_target in ("online", "both"):
+                        new_on = max(Decimal("0.00"), curr_on + price_value)
+                elif price_mode == "percent":
+                    factor = Decimal("1") + (price_value / Decimal("100"))
+                    if price_target in ("in_store", "both"):
+                        new_in = max(Decimal("0.00"), (curr_in * factor).quantize(Decimal("0.01")))
+                    if price_target in ("online", "both"):
+                        new_on = max(Decimal("0.00"), (curr_on * factor).quantize(Decimal("0.01")))
+
+                new_in = new_in.quantize(Decimal("0.01"))
+                new_on = new_on.quantize(Decimal("0.01"))
+                updates[item.sku] = (new_in, new_on)
+                online_changes[item.sku] = str(new_on)
+
+            affected = inventory_store.batch_update_prices(updates, tenant_id=tenant_id)
+            rev = operator.propose(
+                "update_prices",
+                {"changes": online_changes},
+                tenant_id=tenant_id,
+            )
+            return {"status": "ok", "action": action, "affected_count": affected, "review_id": rev["review_id"]}
+
+        else:
+            raise HTTPException(400, f"unrecognized batch action: {action}")
+
+    @app.post("/inventory/export")
+    def export_selected_inventory(
+        payload: dict[str, Any],
+        principal: Principal = Depends(require_read),
+    ) -> Response:
+        skus = payload.get("skus") or []
+        export_format = str(payload.get("format", "csv")).lower()
+
+        tenant_id = principal.tenant_id
+        items = inventory_store.get_batch(skus, tenant_id=tenant_id) if skus else inventory_store.list_all(tenant_id=tenant_id)
+
+        if export_format == "uiee":
+            from app.domain.uiee import UIEEExporter
+            uiee_text = UIEEExporter.export_catalog(items=items, status_filter="all", section_filter="all")
+            return PlainTextResponse(
+                content=uiee_text,
+                media_type="text/plain; charset=utf-8",
+                headers={"Content-Disposition": 'attachment; filename="selected_catalog.uiee"'},
+            )
+        else:
+            import csv
+            import io
+            output = io.StringIO()
+            writer = csv.writer(output)
+            writer.writerow([
+                "sku", "title", "authors", "format", "condition",
+                "in_store_price_cad", "online_price_cad", "status",
+                "section", "shelf", "last_audited_at", "created_at"
+            ])
+            for i in items:
+                writer.writerow([
+                    i.sku,
+                    i.title,
+                    "; ".join(i.authors),
+                    i.format,
+                    i.condition,
+                    str(i.in_store_price_cad),
+                    str(i.online_price_cad),
+                    i.status,
+                    i.section,
+                    i.shelf,
+                    i.last_audited_at.isoformat() if i.last_audited_at else "",
+                    i.created_at.isoformat() if i.created_at else "",
+                ])
+            return Response(
+                content=output.getvalue(),
+                media_type="text/csv; charset=utf-8",
+                headers={"Content-Disposition": 'attachment; filename="selected_inventory.csv"'},
+            )
 
     @app.post("/inventory/audit")
     async def run_shelf_audit(

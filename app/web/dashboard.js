@@ -1325,6 +1325,70 @@ if ($("btn-sample-stack")) {
 };
 
 let inventoryItems = [];
+let selectedBookshelfSkus = new Set();
+let currentFilteredSkus = [];
+
+function playScanChime() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(880, ctx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(1320, ctx.currentTime + 0.12);
+    gain.gain.setValueAtTime(0.18, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.25);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start();
+    osc.stop(ctx.currentTime + 0.25);
+  } catch(_) {}
+}
+
+function updateBookshelfBatchBar(filtered) {
+  currentFilteredSkus = filtered.map(i => i.sku);
+  const selectAllCb = $("bookshelf-select-all");
+  const catalogBanner = $("bookshelf-catalog-banner");
+  const stickyBar = $("bookshelf-sticky-bar");
+  const stickyCount = $("sticky-selected-count");
+
+  const selectedVisibleCount = currentFilteredSkus.filter(sku => selectedBookshelfSkus.has(sku)).length;
+
+  if (selectAllCb) {
+    if (currentFilteredSkus.length > 0 && selectedVisibleCount === currentFilteredSkus.length) {
+      selectAllCb.checked = true;
+      selectAllCb.indeterminate = false;
+    } else if (selectedVisibleCount > 0) {
+      selectAllCb.checked = false;
+      selectAllCb.indeterminate = true;
+    } else {
+      selectAllCb.checked = false;
+      selectAllCb.indeterminate = false;
+    }
+  }
+
+  // Catalog expansion banner
+  if (catalogBanner) {
+    if (currentFilteredSkus.length > 0 && selectedVisibleCount === currentFilteredSkus.length && inventoryItems.length > currentFilteredSkus.length && selectedBookshelfSkus.size < inventoryItems.length) {
+      catalogBanner.hidden = false;
+      if ($("visible-selected-count")) $("visible-selected-count").textContent = currentFilteredSkus.length;
+      if ($("total-catalog-count")) $("total-catalog-count").textContent = inventoryItems.length;
+    } else {
+      catalogBanner.hidden = true;
+    }
+  }
+
+  // Sticky bottom action bar
+  if (stickyBar) {
+    if (selectedBookshelfSkus.size > 0) {
+      stickyBar.hidden = false;
+      if (stickyCount) stickyCount.textContent = selectedBookshelfSkus.size;
+    } else {
+      stickyBar.hidden = true;
+    }
+  }
+}
+
 async function renderBookshelf() {
   const list = $("bookshelf-items"); list.replaceChildren();
 
@@ -1363,13 +1427,34 @@ async function renderBookshelf() {
   if (!filtered.length) {
     const msg = inventoryItems.length ? "No books matched current shelf filters." : "Your bookshelf is empty. Approved book intakes will appear here once executed.";
     list.append(node("p", msg, "empty"));
+    updateBookshelfBatchBar([]);
     return;
   }
 
   for (const item of filtered) {
     const card = node("div", undefined, "bookshelf-card");
+    card.id = `card-${item.sku}`;
+    if (selectedBookshelfSkus.has(item.sku)) card.classList.add("selected");
     
-    card.append(node("h3", item.title));
+    const cardHeader = node("div", undefined, "bookshelf-card-header");
+    const cb = node("input", undefined, "bookshelf-card-select-cb");
+    cb.type = "checkbox";
+    cb.checked = selectedBookshelfSkus.has(item.sku);
+    cb.onclick = e => e.stopPropagation();
+    cb.onchange = () => {
+      if (cb.checked) {
+        selectedBookshelfSkus.add(item.sku);
+        card.classList.add("selected");
+      } else {
+        selectedBookshelfSkus.delete(item.sku);
+        card.classList.remove("selected");
+      }
+      updateBookshelfBatchBar(filtered);
+    };
+    const title = node("h3", item.title);
+    cardHeader.append(cb, title);
+    card.append(cardHeader);
+
     const meta = node("div", undefined, "bookshelf-meta");
     const authorsStr = Array.isArray(item.authors) ? item.authors.join(", ") : (item.authors || "Unknown");
     meta.innerHTML = `<strong>${authorsStr}</strong><br>SKU: <code>${item.sku}</code> · Format: ${human(item.format)} · Grade: ${item.condition} · In-Store: $${Number(item.in_store_price_cad).toFixed(2)} CAD`;
@@ -1540,6 +1625,7 @@ async function renderBookshelf() {
     
     list.append(card);
   }
+  updateBookshelfBatchBar(filtered);
 }
 
 async function loadBookshelf() {
@@ -1547,6 +1633,494 @@ async function loadBookshelf() {
     inventoryItems = await api("/inventory");
     renderBookshelf();
   } catch(e) { message(e.message); }
+}
+
+async function downloadSelectedExport(format) {
+  if (selectedBookshelfSkus.size === 0) return;
+  try {
+    const res = await fetch("/inventory/export", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${token}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        skus: Array.from(selectedBookshelfSkus),
+        format: format
+      })
+    });
+    if (!res.ok) throw new Error(`Export failed (${res.status})`);
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = format === "uiee" ? `selected_catalog_${Date.now()}.uiee` : `selected_inventory_${Date.now()}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    message(`Exported ${selectedBookshelfSkus.size} books as ${format.toUpperCase()}.`);
+  } catch(e) {
+    alert(e.message);
+  }
+}
+
+function showBulkPriceAdjustModal() {
+  if (selectedBookshelfSkus.size === 0) return;
+  const overlay = node("div", undefined, "sanctuary-modal-overlay");
+  const modal = node("div", undefined, "bulk-price-modal");
+
+  const header = node("div", undefined, "sanctuary-header");
+  header.append(node("h3", `🏷️ Adjust Prices (${selectedBookshelfSkus.size} books)`));
+  const closeBtn = node("button", "✕", "ghost-sm");
+  closeBtn.onclick = () => overlay.remove();
+  header.append(closeBtn);
+  modal.append(header);
+
+  const selectedItems = inventoryItems.filter(i => selectedBookshelfSkus.has(i.sku));
+
+  const modeRow = node("div");
+  modeRow.style.display = "flex";
+  modeRow.style.gap = "12px";
+  modeRow.style.alignItems = "center";
+
+  const modeSelect = node("select");
+  modeSelect.innerHTML = `
+    <option value="percent">Percentage Adjustment (%)</option>
+    <option value="fixed_delta">Dollar Delta (+/- $ CAD)</option>
+    <option value="flat_override">Flat Price Override ($ CAD)</option>
+  `;
+  modeSelect.style.flex = "1";
+
+  const valInput = node("input");
+  valInput.type = "number";
+  valInput.step = "0.50";
+  valInput.value = "-10";
+  valInput.style.width = "100px";
+
+  modeRow.append(node("label", "Mode:"), modeSelect, valInput);
+  modal.append(modeRow);
+
+  const targetRow = node("div");
+  targetRow.style.display = "flex";
+  targetRow.style.gap = "12px";
+  targetRow.style.alignItems = "center";
+  const targetSelect = node("select");
+  targetSelect.innerHTML = `
+    <option value="both" selected>Both Online & In-Store Prices</option>
+    <option value="online">Online Price Only</option>
+    <option value="in_store">In-Store Price Only</option>
+  `;
+  targetSelect.style.flex = "1";
+  targetRow.append(node("label", "Target:"), targetSelect);
+  modal.append(targetRow);
+
+  const previewWrap = node("div", undefined, "price-preview-table-wrap");
+  const table = node("table", undefined, "price-preview-table");
+  const thead = node("thead");
+  thead.innerHTML = `
+    <tr>
+      <th>SKU</th>
+      <th>Title</th>
+      <th>Cur Online</th>
+      <th>New Online</th>
+      <th>Cur Store</th>
+      <th>New Store</th>
+    </tr>
+  `;
+  const tbody = node("tbody");
+  table.append(thead, tbody);
+  previewWrap.append(table);
+  modal.append(previewWrap);
+
+  function updatePreview() {
+    tbody.replaceChildren();
+    const mode = modeSelect.value;
+    const val = parseFloat(valInput.value) || 0;
+    const target = targetSelect.value;
+
+    selectedItems.slice(0, 50).forEach(item => {
+      const curOn = Number(item.online_price_cad);
+      const curIn = Number(item.in_store_price_cad);
+      let newOn = curOn;
+      let newIn = curIn;
+
+      if (mode === "flat_override") {
+        if (target === "online" || target === "both") newOn = Math.max(0, val);
+        if (target === "in_store" || target === "both") newIn = Math.max(0, val);
+      } else if (mode === "fixed_delta") {
+        if (target === "online" || target === "both") newOn = Math.max(0, curOn + val);
+        if (target === "in_store" || target === "both") newIn = Math.max(0, curIn + val);
+      } else if (mode === "percent") {
+        const factor = 1 + (val / 100);
+        if (target === "online" || target === "both") newOn = Math.max(0, curOn * factor);
+        if (target === "in_store" || target === "both") newIn = Math.max(0, curIn * factor);
+      }
+
+      const tr = node("tr");
+      tr.innerHTML = `
+        <td><code>${item.sku}</code></td>
+        <td style="max-width:140px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${item.title}</td>
+        <td>$${curOn.toFixed(2)}</td>
+        <td style="font-weight:600; color:${newOn !== curOn ? 'var(--accent, #6366f1)' : 'inherit'}">$${newOn.toFixed(2)}</td>
+        <td>$${curIn.toFixed(2)}</td>
+        <td style="font-weight:600; color:${newIn !== curIn ? 'var(--accent, #6366f1)' : 'inherit'}">$${newIn.toFixed(2)}</td>
+      `;
+      tbody.append(tr);
+    });
+  }
+
+  modeSelect.onchange = updatePreview;
+  valInput.oninput = updatePreview;
+  targetSelect.onchange = updatePreview;
+  updatePreview();
+
+  const actionRow = node("div");
+  actionRow.style.display = "flex";
+  actionRow.style.justifyContent = "flex-end";
+  actionRow.style.gap = "8px";
+  actionRow.style.marginTop = "8px";
+
+  const cancelBtn = node("button", "Cancel", "ghost-sm");
+  cancelBtn.onclick = () => overlay.remove();
+
+  const applyBtn = node("button", `Apply to ${selectedItems.length} Books`, "primary");
+  applyBtn.onclick = async () => {
+    applyBtn.disabled = true;
+    try {
+      const mode = modeSelect.value;
+      const val = parseFloat(valInput.value) || 0;
+      const target = targetSelect.value;
+      const res = await api("/inventory/batch-action", {
+        method: "POST",
+        body: JSON.stringify({
+          action: "price_adjust",
+          skus: Array.from(selectedBookshelfSkus),
+          params: { price_mode: mode, price_value: val, price_target: target }
+        })
+      });
+      message(`Adjusted prices on ${res.affected_count} books. Multi-channel price update proposal queued.`);
+      overlay.remove();
+      selectedBookshelfSkus.clear();
+      loadBookshelf();
+    } catch(e) {
+      alert(e.message);
+      applyBtn.disabled = false;
+    }
+  };
+
+  actionRow.append(cancelBtn, applyBtn);
+  modal.append(actionRow);
+
+  overlay.append(modal);
+  overlay.onclick = e => { if (e.target === overlay) overlay.remove(); };
+  document.body.append(overlay);
+}
+
+function showBulkRelocateModal() {
+  if (selectedBookshelfSkus.size === 0) return;
+  const overlay = node("div", undefined, "sanctuary-modal-overlay");
+  const modal = node("div", undefined, "bulk-price-modal");
+
+  const header = node("div", undefined, "sanctuary-header");
+  header.append(node("h3", `📍 Relocate ${selectedBookshelfSkus.size} Books`));
+  const closeBtn = node("button", "✕", "ghost-sm");
+  closeBtn.onclick = () => overlay.remove();
+  header.append(closeBtn);
+  modal.append(header);
+
+  const secRow = node("div");
+  secRow.style.margin = "10px 0";
+  const secLabel = node("label", "Target Section:");
+  secLabel.style.display = "block";
+  secLabel.style.marginBottom = "4px";
+  const secInput = node("input");
+  secInput.placeholder = "e.g. Rare & Antiquarian, Sci-Fi, Folio Society";
+  secInput.value = "Rare & Antiquarian";
+  secInput.style.width = "100%";
+  secRow.append(secLabel, secInput);
+  modal.append(secRow);
+
+  const shelfRow = node("div");
+  shelfRow.style.margin = "10px 0";
+  const shelfLabel = node("label", "Target Shelf:");
+  shelfLabel.style.display = "block";
+  shelfLabel.style.marginBottom = "4px";
+  const shelfInput = node("input");
+  shelfInput.placeholder = "e.g. Vault-B, A-02, Display-Case";
+  shelfInput.value = "Vault-A";
+  shelfInput.style.width = "100%";
+  shelfRow.append(shelfLabel, shelfInput);
+  modal.append(shelfRow);
+
+  const actionRow = node("div");
+  actionRow.style.display = "flex";
+  actionRow.style.justifyContent = "flex-end";
+  actionRow.style.gap = "8px";
+  actionRow.style.marginTop = "14px";
+
+  const cancelBtn = node("button", "Cancel", "ghost-sm");
+  cancelBtn.onclick = () => overlay.remove();
+
+  const applyBtn = node("button", `Relocate ${selectedBookshelfSkus.size} Books`, "primary");
+  applyBtn.onclick = async () => {
+    applyBtn.disabled = true;
+    try {
+      const res = await api("/inventory/batch-action", {
+        method: "POST",
+        body: JSON.stringify({
+          action: "relocate",
+          skus: Array.from(selectedBookshelfSkus),
+          params: { section: secInput.value.trim() || "General", shelf: shelfInput.value.trim() }
+        })
+      });
+      message(`Relocated ${res.affected_count} books to ${secInput.value} / ${shelfInput.value}.`);
+      overlay.remove();
+      selectedBookshelfSkus.clear();
+      loadBookshelf();
+    } catch(e) {
+      alert(e.message);
+      applyBtn.disabled = false;
+    }
+  };
+
+  actionRow.append(cancelBtn, applyBtn);
+  modal.append(actionRow);
+
+  overlay.append(modal);
+  overlay.onclick = e => { if (e.target === overlay) overlay.remove(); };
+  document.body.append(overlay);
+}
+
+function handleScannedBarcode(rawCode) {
+  if (!rawCode) return;
+  const code = rawCode.trim();
+  const lower = code.toLowerCase();
+  const cleanSku = lower.replace(/^bk-/i, "");
+
+  const match = inventoryItems.find(i => {
+    const s = (i.sku || "").toLowerCase();
+    const sClean = s.replace(/^bk-/i, "");
+    if (s === lower || sClean === cleanSku) return true;
+    if ((i.title || "").toLowerCase().includes(lower)) return true;
+    return false;
+  });
+
+  if (match) {
+    playScanChime();
+    if (typeof switchTab === "function") switchTab("bookshelf");
+    renderBookshelf();
+    setTimeout(() => {
+      const card = document.getElementById(`card-${match.sku}`);
+      if (card) {
+        card.scrollIntoView({ behavior: "smooth", block: "center" });
+        card.classList.add("scanner-pulse");
+        setTimeout(() => card.classList.remove("scanner-pulse"), 2500);
+      }
+      showScannedBookDrawer(match);
+    }, 120);
+    message(`Scanned: "${match.title}" (${match.sku})`);
+  } else {
+    if ($("bookshelf-search")) {
+      $("bookshelf-search").value = code;
+      renderBookshelf();
+    }
+    message(`Barcode "${code}" scanned: no direct catalog match found.`);
+  }
+}
+
+function showScannedBookDrawer(item) {
+  const overlay = node("div", undefined, "sanctuary-modal-overlay");
+  const modal = node("div", undefined, "scanned-book-modal");
+
+  const header = node("div", undefined, "sanctuary-header");
+  header.append(node("h3", `📖 Scanned: ${item.title}`));
+  const closeBtn = node("button", "✕", "ghost-sm");
+  closeBtn.onclick = () => overlay.remove();
+  header.append(closeBtn);
+  modal.append(header);
+
+  const info = node("div");
+  const authorsStr = (item.authors || []).join(", ") || "Unknown";
+  info.innerHTML = `
+    <p style="margin:4px 0;"><strong>Author:</strong> ${authorsStr}</p>
+    <p style="margin:4px 0;"><strong>SKU:</strong> <code>${item.sku}</code> · <strong>Status:</strong> ${human(item.status)}</p>
+    <p style="margin:4px 0;"><strong>Location:</strong> 📍 ${item.section || "General"} · ${item.shelf || "Unassigned"}</p>
+    <p style="margin:4px 0;"><strong>In-Store:</strong> $${Number(item.in_store_price_cad).toFixed(2)} CAD · <strong>Online:</strong> $${Number(item.online_price_cad).toFixed(2)} CAD</p>
+  `;
+  modal.append(info);
+
+  const btnRow = node("div", undefined, "bookshelf-channels-row");
+  btnRow.style.marginTop = "14px";
+  btnRow.style.gap = "8px";
+
+  if (item.status === "active") {
+    const delistBtn = node("button", "❌ Delist", "ghost-sm");
+    delistBtn.onclick = async () => {
+      delistBtn.disabled = true;
+      try {
+        await api(`/inventory/${encodeURIComponent(item.sku)}`, { method: "DELETE" });
+        message(`Book ${item.sku} delisted.`);
+        overlay.remove();
+        loadBookshelf();
+      } catch(e) { alert(e.message); delistBtn.disabled = false; }
+    };
+    btnRow.append(delistBtn);
+  } else {
+    const relistBtn = node("button", "🔄 Relist", "ghost-sm");
+    relistBtn.onclick = async () => {
+      relistBtn.disabled = true;
+      try {
+        await api(`/inventory/${encodeURIComponent(item.sku)}/relist`, { method: "POST" });
+        message(`Book ${item.sku} re-activated on floor.`);
+        overlay.remove();
+        loadBookshelf();
+      } catch(e) { alert(e.message); relistBtn.disabled = false; }
+    };
+    btnRow.append(relistBtn);
+  }
+
+  const editLocBtn = node("button", "📍 Move Location", "ghost-sm");
+  editLocBtn.onclick = async () => {
+    const newSec = prompt("Section:", item.section || "General");
+    if (newSec === null) return;
+    const newShelf = prompt("Shelf:", item.shelf || "");
+    if (newShelf === null) return;
+    try {
+      await api(`/inventory/${encodeURIComponent(item.sku)}`, {
+        method: "PUT",
+        body: JSON.stringify({ section: newSec.trim() || "General", shelf: newShelf.trim() })
+      });
+      overlay.remove();
+      loadBookshelf();
+    } catch(e) { alert(e.message); }
+  };
+  btnRow.append(editLocBtn);
+
+  const auditBtn = node("button", "✓ Mark Audited", "primary");
+  auditBtn.style.padding = "4px 10px";
+  auditBtn.style.fontSize = "12px";
+  auditBtn.onclick = async () => {
+    try {
+      await api("/inventory/audit/direct", {
+        method: "POST",
+        body: JSON.stringify({ section: item.section || "General", shelf: item.shelf || "", verified_skus: [item.sku], misplaced_skus: [] })
+      });
+      message(`Verified ${item.sku} in ${item.section || "General"} / ${item.shelf || "Unassigned"}.`);
+      overlay.remove();
+      loadBookshelf();
+    } catch(e) { alert(e.message); }
+  };
+  btnRow.append(auditBtn);
+
+  modal.append(btnRow);
+  overlay.append(modal);
+  overlay.onclick = e => { if (e.target === overlay) overlay.remove(); };
+  document.body.append(overlay);
+}
+
+async function showCameraScannerModal() {
+  const overlay = node("div", undefined, "sanctuary-modal-overlay");
+  const modal = node("div", undefined, "scanner-modal");
+
+  const header = node("div", undefined, "sanctuary-header");
+  header.append(node("h3", "📷 Optical Barcode & ISBN Scanner"));
+  const closeBtn = node("button", "✕", "ghost-sm");
+  header.append(closeBtn);
+  modal.append(header);
+
+  const sub = node("p", "Point your camera at a book's ISBN barcode or EAN code to automatically locate and manage it.", "muted text-sm");
+  modal.append(sub);
+
+  const previewBox = node("div", undefined, "camera-preview-container");
+  const video = node("video", undefined, "camera-preview-video");
+  video.autoplay = true;
+  video.muted = true;
+  video.playsInline = true;
+  video.setAttribute("playsinline", "");
+
+  const overlayBox = node("div", undefined, "camera-scan-overlay");
+  const laser = node("div", undefined, "camera-scan-laser");
+  overlayBox.append(laser);
+  previewBox.append(video, overlayBox);
+  modal.append(previewBox);
+
+  const statusP = node("p", "Initializing camera stream...", "muted text-sm");
+  statusP.style.textAlign = "center";
+  modal.append(statusP);
+
+  const manualRow = node("div");
+  manualRow.style.display = "flex";
+  manualRow.style.gap = "8px";
+  manualRow.style.marginTop = "6px";
+  const manualInput = node("input");
+  manualInput.placeholder = "Or type barcode / ISBN manually...";
+  manualInput.style.flex = "1";
+  const manualBtn = node("button", "Lookup", "ghost-sm");
+  manualBtn.onclick = () => {
+    if (manualInput.value.trim()) {
+      cleanup();
+      overlay.remove();
+      handleScannedBarcode(manualInput.value.trim());
+    }
+  };
+  manualInput.onkeydown = e => { if (e.key === "Enter") manualBtn.click(); };
+  manualRow.append(manualInput, manualBtn);
+  modal.append(manualRow);
+
+  overlay.append(modal);
+  document.body.append(overlay);
+
+  let stream = null;
+  let detector = null;
+  let animId = null;
+  let active = true;
+
+  function cleanup() {
+    active = false;
+    if (animId) cancelAnimationFrame(animId);
+    if (stream) stream.getTracks().forEach(t => t.stop());
+  }
+
+  closeBtn.onclick = () => { cleanup(); overlay.remove(); };
+  overlay.onclick = e => { if (e.target === overlay) { cleanup(); overlay.remove(); } };
+
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 } }
+    });
+    video.srcObject = stream;
+    await video.play();
+    statusP.textContent = "Scanning for ISBN / EAN barcode...";
+
+    if ('BarcodeDetector' in window) {
+      detector = new window.BarcodeDetector({
+        formats: ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'code_39', 'qr_code']
+      });
+
+      async function scanFrame() {
+        if (!active) return;
+        try {
+          if (video.readyState === video.HAVE_ENOUGH_DATA) {
+            const barcodes = await detector.detect(video);
+            if (barcodes.length > 0) {
+              const code = barcodes[0].rawValue;
+              cleanup();
+              overlay.remove();
+              handleScannedBarcode(code);
+              return;
+            }
+          }
+        } catch(_) {}
+        animId = requestAnimationFrame(scanFrame);
+      }
+      animId = requestAnimationFrame(scanFrame);
+    } else {
+      statusP.textContent = "Camera active. Native BarcodeDetector not available in this browser; enter code below or use hardware scanner.";
+    }
+  } catch(err) {
+    statusP.textContent = `Camera unavailable: ${err.message}. Enter barcode manually below.`;
+  }
 }
 
 async function showShelfAuditModal() {
@@ -2043,6 +2617,112 @@ if ($("btn-export-uiee")) {
 }
 if ($("btn-audit-shelf")) $("btn-audit-shelf").onclick = () => showShelfAuditModal();
 if ($("btn-audit-history")) $("btn-audit-history").onclick = () => showShelfAuditHistoryModal();
+if ($("btn-scan-barcode")) $("btn-scan-barcode").onclick = () => showCameraScannerModal();
+
+if ($("bookshelf-select-all")) {
+  $("bookshelf-select-all").onchange = () => {
+    const checked = $("bookshelf-select-all").checked;
+    currentFilteredSkus.forEach(sku => {
+      if (checked) selectedBookshelfSkus.add(sku);
+      else selectedBookshelfSkus.delete(sku);
+    });
+    renderBookshelf();
+  };
+}
+
+if ($("btn-select-catalog-all")) {
+  $("btn-select-catalog-all").onclick = () => {
+    inventoryItems.forEach(i => selectedBookshelfSkus.add(i.sku));
+    renderBookshelf();
+  };
+}
+
+if ($("btn-bulk-clear")) {
+  $("btn-bulk-clear").onclick = () => {
+    selectedBookshelfSkus.clear();
+    renderBookshelf();
+  };
+}
+
+if ($("btn-bulk-delist")) {
+  $("btn-bulk-delist").onclick = async () => {
+    if (selectedBookshelfSkus.size === 0) return;
+    if (!confirm(`Are you sure you want to delist ${selectedBookshelfSkus.size} books? This will mark them delisted and propose stock=0 on all sales channels.`)) return;
+    $("btn-bulk-delist").disabled = true;
+    try {
+      const res = await api("/inventory/batch-action", {
+        method: "POST",
+        body: JSON.stringify({ action: "delist", skus: Array.from(selectedBookshelfSkus) })
+      });
+      message(`Delisted ${res.affected_count} books and queued multi-channel stock sync.`);
+      selectedBookshelfSkus.clear();
+      loadBookshelf();
+    } catch(e) {
+      alert(e.message);
+    } finally {
+      $("btn-bulk-delist").disabled = false;
+    }
+  };
+}
+
+if ($("btn-bulk-relist")) {
+  $("btn-bulk-relist").onclick = async () => {
+    if (selectedBookshelfSkus.size === 0) return;
+    if (!confirm(`Relist ${selectedBookshelfSkus.size} books as active on floor and external channels?`)) return;
+    $("btn-bulk-relist").disabled = true;
+    try {
+      const res = await api("/inventory/batch-action", {
+        method: "POST",
+        body: JSON.stringify({ action: "relist", skus: Array.from(selectedBookshelfSkus) })
+      });
+      message(`Relisted ${res.affected_count} books and queued multi-channel restoration.`);
+      selectedBookshelfSkus.clear();
+      loadBookshelf();
+    } catch(e) {
+      alert(e.message);
+    } finally {
+      $("btn-bulk-relist").disabled = false;
+    }
+  };
+}
+
+if ($("btn-bulk-price")) {
+  $("btn-bulk-price").onclick = () => showBulkPriceAdjustModal();
+}
+
+if ($("btn-bulk-relocate")) {
+  $("btn-bulk-relocate").onclick = () => showBulkRelocateModal();
+}
+
+if ($("btn-bulk-export-csv")) {
+  $("btn-bulk-export-csv").onclick = () => downloadSelectedExport("csv");
+}
+
+if ($("btn-bulk-export-uiee")) {
+  $("btn-bulk-export-uiee").onclick = () => downloadSelectedExport("uiee");
+}
+
+if ($("btn-bulk-delete")) {
+  $("btn-bulk-delete").onclick = async () => {
+    if (selectedBookshelfSkus.size === 0) return;
+    if (!confirm(`⚠️ PERMANENT ACTION: Are you sure you want to permanently delete ${selectedBookshelfSkus.size} books from the database?`)) return;
+    $("btn-bulk-delete").disabled = true;
+    try {
+      const res = await api("/inventory/batch-action", {
+        method: "POST",
+        body: JSON.stringify({ action: "delete", skus: Array.from(selectedBookshelfSkus) })
+      });
+      message(`Permanently deleted ${res.affected_count} books from database.`);
+      selectedBookshelfSkus.clear();
+      loadBookshelf();
+    } catch(e) {
+      alert(e.message);
+    } finally {
+      $("btn-bulk-delete").disabled = false;
+    }
+  };
+}
+
 if ($("bookshelf-filter-section")) $("bookshelf-filter-section").onchange = () => renderBookshelf();
 if ($("bookshelf-filter-shelf")) $("bookshelf-filter-shelf").oninput = () => renderBookshelf();
 if ($("bookshelf-search")) $("bookshelf-search").oninput = () => renderBookshelf();
@@ -2062,8 +2742,32 @@ if ($("desk-btn-sample")) {
   };
 }
 
-// Power operator keyboard shortcuts
+let barcodeScannerBuffer = "";
+let lastBarcodeKeyTime = 0;
+
+// Power operator keyboard shortcuts & ambient barcode scanner listener
 window.addEventListener("keydown", event => {
+  const now = Date.now();
+  const diff = now - lastBarcodeKeyTime;
+  lastBarcodeKeyTime = now;
+
+  if (diff > 75) {
+    barcodeScannerBuffer = "";
+  }
+
+  if (event.key === "Enter") {
+    if (barcodeScannerBuffer.length >= 3) {
+      event.preventDefault();
+      const code = barcodeScannerBuffer.trim();
+      barcodeScannerBuffer = "";
+      handleScannedBarcode(code);
+      return;
+    }
+    barcodeScannerBuffer = "";
+  } else if (event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey) {
+    barcodeScannerBuffer += event.key;
+  }
+
   if (!$("workspace") || $("workspace").hidden) return;
   const tag = (event.target && event.target.tagName) || "";
   if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;

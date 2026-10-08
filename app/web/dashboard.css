@@ -1039,6 +1039,303 @@ button.full-width {
   margin-left: auto;
 }
 
+/* --- Bookshelf Batch Selection & Sticky Bar --- */
+.bookshelf-card {
+  position: relative;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
+}
+
+.bookshelf-card.selected {
+  border-color: var(--accent, #6366f1);
+  background: rgba(99, 102, 241, 0.04);
+  box-shadow: 0 0 0 1px var(--accent, #6366f1);
+}
+
+.bookshelf-card.scanner-pulse {
+  animation: scanPulse 1.6s ease-out;
+}
+
+@keyframes scanPulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.7);
+    border-color: #22c55e;
+    transform: scale(1.01);
+  }
+  50% {
+    box-shadow: 0 0 0 12px rgba(34, 197, 94, 0);
+    border-color: #22c55e;
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(34, 197, 94, 0);
+    transform: scale(1);
+  }
+}
+
+.bookshelf-card-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.bookshelf-card-select-cb {
+  margin-top: 3px;
+  cursor: pointer;
+  accent-color: var(--accent, #6366f1);
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+}
+
+.bookshelf-selection-bar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 10px 14px;
+  margin-bottom: 12px;
+  background: var(--surface-card);
+  border: 1px solid var(--line-subtle);
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.selection-checkbox-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.selection-checkbox-wrap input[type="checkbox"] {
+  cursor: pointer;
+  accent-color: var(--accent, #6366f1);
+  width: 16px;
+  height: 16px;
+}
+
+.selection-checkbox-wrap label {
+  cursor: pointer;
+  font-weight: 500;
+  user-select: none;
+}
+
+.bookshelf-catalog-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 10px;
+  background: rgba(99, 102, 241, 0.08);
+  border-radius: 4px;
+  font-size: 12.5px;
+}
+
+.catalog-link-btn {
+  background: none;
+  border: none;
+  color: var(--accent, #6366f1);
+  font-weight: 600;
+  cursor: pointer;
+  text-decoration: underline;
+  padding: 0;
+  font-size: inherit;
+}
+
+.scanner-indicator {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.scanner-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #22c55e;
+  box-shadow: 0 0 6px rgba(34, 197, 94, 0.8);
+  display: inline-block;
+  animation: scannerBlink 2.5s infinite ease-in-out;
+}
+
+@keyframes scannerBlink {
+  0%, 100% { opacity: 0.8; }
+  50% { opacity: 0.3; }
+}
+
+/* Floating Sticky Action Bar */
+.bookshelf-sticky-bar {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1000;
+  background: var(--surface-card);
+  border: 1px solid var(--line);
+  border-radius: 30px;
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.28), 0 2px 8px rgba(0, 0, 0, 0.12);
+  padding: 8px 16px;
+  animation: slideUp 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+
+@keyframes slideUp {
+  from {
+    transform: translate(-50%, 40px);
+    opacity: 0;
+  }
+  to {
+    transform: translate(-50%, 0);
+    opacity: 1;
+  }
+}
+
+.sticky-bar-content {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.sticky-bar-count {
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  padding-right: 8px;
+  border-right: 1px solid var(--line);
+}
+
+.sticky-bar-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.sticky-bar-actions button {
+  font-size: 12px;
+  padding: 5px 10px;
+  border-radius: 20px;
+  white-space: nowrap;
+}
+
+/* Camera Scanner Modal */
+.scanner-modal {
+  width: 90vw;
+  max-width: 480px;
+  background: var(--surface-card);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  position: relative;
+}
+
+.camera-preview-container {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  background: #000;
+  border-radius: 8px;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.camera-preview-video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.camera-scan-overlay {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 70%;
+  height: 45%;
+  border: 2px solid rgba(34, 197, 94, 0.8);
+  border-radius: 6px;
+  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.4);
+  pointer-events: none;
+}
+
+.camera-scan-laser {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: #22c55e;
+  box-shadow: 0 0 8px #22c55e;
+  animation: laserScan 2s infinite ease-in-out;
+}
+
+@keyframes laserScan {
+  0% { top: 0%; opacity: 0.8; }
+  50% { top: 96%; opacity: 1; }
+  100% { top: 0%; opacity: 0.8; }
+}
+
+/* Price Adjustment Modal */
+.bulk-price-modal {
+  width: 90vw;
+  max-width: 580px;
+  background: var(--surface-card);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.price-preview-table-wrap {
+  max-height: 200px;
+  overflow-y: auto;
+  border: 1px solid var(--line-subtle);
+  border-radius: 6px;
+  margin-top: 10px;
+}
+
+.price-preview-table {
+  width: 100%;
+  font-size: 12px;
+  border-collapse: collapse;
+}
+
+.price-preview-table th,
+.price-preview-table td {
+  padding: 6px 10px;
+  text-align: left;
+  border-bottom: 1px solid var(--line-subtle);
+}
+
+.price-preview-table th {
+  background: var(--surface);
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+
+/* Quick Action Drawer / Dialog for Scanned Book */
+.scanned-book-modal {
+  width: 90vw;
+  max-width: 500px;
+  background: var(--surface-card);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
 /* ==========================================================================
    VIEW 4 & 5: GUARDIAN & ANALYTICS
    ========================================================================== */
