@@ -214,6 +214,9 @@
             <p class="muted">Cataloged volumes active across physical shelves and connected digital marketplaces.</p>
           </div>
           <div class="bookshelf-toolbar-actions">
+            <button type="button" id="btn-open-vision-intake" class="primary-sm" style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); border-color: #059669; color: #fff; font-weight: 600;" title="AI Vision Intake Studio: Snap 3 photos (Cover, Title Page, Copyright) for instant Gemini Vision cataloging">
+              <span>✨ AI Vision Intake</span>
+            </button>
             <button type="button" id="btn-sync-square-all" class="ghost-sm" title="Push all active catalog books into Square POS">
               <span>📲 Sync Square POS</span>
             </button>
@@ -557,6 +560,178 @@
         </div>
       </section>
     </section>
+
+    <!-- MODAL: AI ANTIQUARIAN VISION INTAKE 2.0 -->
+    <div id="modal-vision-intake" class="sanctuary-modal-overlay" hidden>
+      <div class="vision-intake-modal">
+        <div class="vision-modal-header">
+          <div>
+            <div class="vision-eyebrow">
+              <span class="vision-tag">✨ GEMINI MULTI-ANGLE VISION 2.0</span>
+              <span class="vision-pulse-badge">BIBLIOGRAPHIC OCR & PRICING</span>
+            </div>
+            <h3>Antiquarian Book Vision Intake</h3>
+            <p class="muted">Capture 3 key angles (Cover, Title Page, Copyright/Colophon) or upload stack photos for instant cataloging, issue-point detection, and barcode generation.</p>
+          </div>
+          <button type="button" id="btn-close-vision-modal" class="ghost-sm close-modal-btn" title="Close Intake Studio">✕</button>
+        </div>
+
+        <!-- MODE SELECTOR -->
+        <div class="vision-mode-tabs">
+          <button type="button" class="vision-mode-btn active" id="vmode-3angle">
+            <span class="vmode-icon">📖</span>
+            <span class="vmode-text"><strong>3-Angle Single Volume</strong><small>Cover + Title Page + Copyright Page (Antiquarian / Collectibles)</small></span>
+          </button>
+          <button type="button" class="vision-mode-btn" id="vmode-stack">
+            <span class="vmode-icon">📚</span>
+            <span class="vmode-text"><strong>Stack / Shelf Batch</strong><small>Multiple books in 1 or more photos (Rapid Spines)</small></span>
+          </button>
+        </div>
+
+        <!-- CAMERA LIVE VIEWFINDER DRAWER -->
+        <div id="vision-camera-drawer" class="vision-camera-drawer" hidden>
+          <div class="camera-drawer-header">
+            <span id="camera-slot-title">📷 Live Viewfinder: Front Cover & Spine</span>
+            <button type="button" id="btn-stop-camera" class="ghost-sm">✕ Close Camera</button>
+          </div>
+          <div class="camera-viewfinder-wrap">
+            <video id="vision-video" autoplay playsinline muted></video>
+            <canvas id="vision-canvas" hidden></canvas>
+            <div class="viewfinder-overlay">
+              <div class="viewfinder-frame"></div>
+              <p id="viewfinder-hint" class="viewfinder-hint">Align book inside frame</p>
+            </div>
+          </div>
+          <div class="camera-controls">
+            <button type="button" id="btn-snap-viewfinder" class="primary snap-trigger-btn">
+              <span>🔘 Capture Photo</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- 3-ANGLE CAPTURE SLOTS -->
+        <div id="vslots-3angle-container" class="vslots-grid">
+          <!-- Slot 1: Cover / Spine -->
+          <div class="vslot-card" data-slot="cover" id="slot-card-cover">
+            <div class="vslot-header">
+              <span class="vslot-num">1</span>
+              <span class="vslot-title">Front Cover & Spine</span>
+            </div>
+            <p class="vslot-desc">Full dust jacket or cloth binding & spine title</p>
+            <div class="vslot-preview" id="vslot-preview-cover">
+              <div class="vslot-empty-state">
+                <span class="vslot-icon">🖼️</span>
+                <span>Drop photo or snap</span>
+              </div>
+            </div>
+            <div class="vslot-actions">
+              <button type="button" class="ghost-sm btn-slot-cam" data-target="cover">📷 Camera</button>
+              <label class="ghost-sm btn-slot-upload">
+                📁 File
+                <input type="file" accept="image/*" class="slot-file-input" data-target="cover" hidden>
+              </label>
+            </div>
+          </div>
+
+          <!-- Slot 2: Title Page -->
+          <div class="vslot-card" data-slot="title" id="slot-card-title">
+            <div class="vslot-header">
+              <span class="vslot-num">2</span>
+              <span class="vslot-title">Title Page</span>
+            </div>
+            <p class="vslot-desc">Full subtitle, publisher house, illustrator, translator</p>
+            <div class="vslot-preview" id="vslot-preview-title">
+              <div class="vslot-empty-state">
+                <span class="vslot-icon">📖</span>
+                <span>Drop photo or snap</span>
+              </div>
+            </div>
+            <div class="vslot-actions">
+              <button type="button" class="ghost-sm btn-slot-cam" data-target="title">📷 Camera</button>
+              <label class="ghost-sm btn-slot-upload">
+                📁 File
+                <input type="file" accept="image/*" class="slot-file-input" data-target="title" hidden>
+              </label>
+            </div>
+          </div>
+
+          <!-- Slot 3: Copyright / Colophon -->
+          <div class="vslot-card" data-slot="copyright" id="slot-card-copyright">
+            <div class="vslot-header">
+              <span class="vslot-num">3</span>
+              <span class="vslot-title">Copyright / Colophon</span>
+            </div>
+            <p class="vslot-desc">Numberline (e.g. 1-10), "First Edition", date, BCE cues</p>
+            <div class="vslot-preview" id="vslot-preview-copyright">
+              <div class="vslot-empty-state">
+                <span class="vslot-icon">⚖️</span>
+                <span>Drop photo or snap</span>
+              </div>
+            </div>
+            <div class="vslot-actions">
+              <button type="button" class="ghost-sm btn-slot-cam" data-target="copyright">📷 Camera</button>
+              <label class="ghost-sm btn-slot-upload">
+                📁 File
+                <input type="file" accept="image/*" class="slot-file-input" data-target="copyright" hidden>
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <!-- BATCH STACK DRAG & DROP (for stack mode) -->
+        <div id="vslots-stack-container" class="vstack-dropzone" hidden>
+          <label class="vstack-drop-label">
+            <input type="file" id="vstack-files" accept="image/*" multiple hidden>
+            <span class="vstack-icon">📚</span>
+            <strong>Drop or select 1 to 10 photos of stacks/shelves</strong>
+            <span class="muted">Corvus Vision will isolate every individual spine across all photos.</span>
+          </label>
+          <div id="vstack-thumbs" class="vstack-thumbs-row"></div>
+        </div>
+
+        <!-- LOCATION METADATA & OPTIONS -->
+        <div class="vision-intake-options">
+          <div class="voption-field">
+            <label for="vopt-section">Assign Section</label>
+            <input type="text" id="vopt-section" value="General" placeholder="e.g. Rare Books / Sci-Fi">
+          </div>
+          <div class="voption-field">
+            <label for="vopt-shelf">Assign Shelf</label>
+            <input type="text" id="vopt-shelf" value="" placeholder="e.g. Vault-01">
+          </div>
+          <div class="voption-toggle">
+            <label class="checkbox-label" title="Automatically add to active bookshelf with generated barcode">
+              <input type="checkbox" id="vopt-auto-register" checked>
+              <span>⚡ <strong>Instant Register to Bookshelf</strong> (Generate SKU & Barcode immediately)</span>
+            </label>
+          </div>
+        </div>
+
+        <!-- EXTRACTION PROGRESS / ANIMATION -->
+        <div id="vision-progress-card" class="vision-progress-card" hidden>
+          <div class="vision-spinner"></div>
+          <div class="vision-progress-info">
+            <h4 id="vision-progress-title">Analyzing Bibliographic Typography...</h4>
+            <p id="vision-progress-step" class="muted">Extracting spine, title page & copyright numberline via Gemini Vision.</p>
+          </div>
+        </div>
+
+        <!-- EXTRACTION RESULT PREVIEW CARD -->
+        <div id="vision-result-card" class="vision-result-card" hidden></div>
+
+        <!-- MODAL FOOTER ACTIONS -->
+        <div class="vision-modal-footer">
+          <button type="button" id="btn-vision-sample-dune" class="ghost-sm" title="Load sample Dune 1st edition 3-shot set for instant testing">
+            <span>🧪 Test Sample (Dune 1st Ed)</span>
+          </button>
+          <div style="flex: 1;"></div>
+          <button type="button" id="btn-cancel-vision" class="ghost">Cancel</button>
+          <button type="button" id="btn-run-vision-intake" class="primary" disabled>
+            <span>⚡ Run Gemini Vision & Catalog</span>
+          </button>
+        </div>
+      </div>
+    </div>
 
     <footer>◈ &nbsp; Prepared by automation. Directed by you.</footer>
   </main>

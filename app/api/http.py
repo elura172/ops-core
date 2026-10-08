@@ -76,6 +76,20 @@ class IntegrationRequest(BaseModel):
     api_key: str
 
 
+class DirectIntakeRequest(BaseModel):
+    title: str
+    authors: list[str] = []
+    format: str = "Hardcover"
+    condition: str = "Good"
+    in_store_price_cad: float = 0.0
+    online_price_cad: float = 0.0
+    section: str = "General"
+    shelf: str = ""
+    issue_points: dict[str, Any] | None = None
+    pricing_rationale: str = ""
+    channel_strategy: str = "multi_channel_antiquarian"
+
+
 def _authorize(tokens: TokenRegistry, permission: str) -> Callable[[str], Principal]:
     def dependency(authorization: str = Header(default="")) -> Principal:
         token = bearer_token(authorization)
@@ -652,6 +666,7 @@ def create_app(
         intake_mode: str = Form("multi_stack"),
         section: str = Form("General"),
         shelf: str = Form(""),
+        auto_register: bool = Form(False),
         principal: Principal = Depends(require_decide)
     ) -> dict[str, Any]:
         from app.ai.book_vision import (
@@ -786,6 +801,7 @@ def create_app(
         pricing = PricingEngine(scraper)
 
         proposals = []
+        all_payloads = []
         for batch_item in extracted_items:
             book = batch_item.book
             condition = "Good" if "clean_as_new" in book.visible_condition_cues else "Acceptable"
@@ -937,8 +953,27 @@ def create_app(
             except Exception as w_exc:
                 logger.debug("want_match.check_failed", error=str(w_exc))
 
+            all_payloads.append(payload)
             try:
                 result = operator.propose("intake_book", payload, tenant_id=principal.tenant_id)
+                result["payload"] = payload
+                if auto_register:
+                    operator.decide(
+                        review_id=result["review_id"],
+                        approve=True,
+                        reviewer=principal.name,
+                        reason="Auto-registered via AI Vision Intake Studio",
+                        tenant_id=principal.tenant_id,
+                    )
+                    outcome = operator.execute(
+                        review_id=result["review_id"],
+                        actor=principal.name,
+                        tenant_id=principal.tenant_id,
+                    )
+                    result["executed"] = True
+                    result["execution_outcome"] = outcome
+                    res_sku = outcome.get("result", {}).get("sku") or outcome.get("result", {}).get("details", {}).get("sku") or ""
+                    result["sku"] = res_sku
                 proposals.append(result)
             except Exception as exc:
                 logger.error("Failed to propose book", error=str(exc))
@@ -951,8 +986,41 @@ def create_app(
             "failed_images": [f.to_dict() for f in failed_images],
             "orientation": dominant_orientation,
             "intake_mode": intake_mode,
+            "auto_register": auto_register,
             "duplicates_suppressed": [s.to_dict() for s in suppressed_duplicates],
             "proposals": proposals,
+            "extracted_items": [
+                {
+                    "title": item.book.title,
+                    "subtitle": getattr(item.book, "subtitle", None),
+                    "authors": list(item.book.authors or ()),
+                    "publisher_imprint": getattr(item.book, "publisher_imprint", ""),
+                    "format": item.book.format.value if hasattr(item.book.format, "value") else str(item.book.format),
+                    "confidence": getattr(item.book, "confidence", "high"),
+                    "visible_condition_cues": list(item.book.visible_condition_cues or ()),
+                    "edition_or_series_markers": list(item.book.edition_or_series_markers or ()),
+                    "raw_spine_text": getattr(item.book, "raw_spine_text", ""),
+                    "raw_copyright_text": getattr(item.book, "raw_copyright_text", ""),
+                    "raw_flap_text": getattr(item.book, "raw_flap_text", ""),
+                }
+                for item in extracted_items
+            ],
+            "analyzed_payloads": [
+                {
+                    "title": p.get("extraction", {}).get("title"),
+                    "authors": p.get("extraction", {}).get("authors", []),
+                    "format": p.get("extraction", {}).get("format"),
+                    "condition": p.get("valuation", {}).get("condition_grade"),
+                    "in_store_price_cad": p.get("valuation", {}).get("in_store_price_cad"),
+                    "online_price_cad": p.get("valuation", {}).get("online_price_cad"),
+                    "channel_strategy": p.get("valuation", {}).get("channel_strategy"),
+                    "pricing_rationale": p.get("valuation", {}).get("pricing_rationale"),
+                    "issue_point_analysis": p.get("issue_point_analysis", {}),
+                    "disambiguation": p.get("disambiguation", {}),
+                    "want_match": p.get("want_match"),
+                }
+                for p in all_payloads
+            ],
         }
 
     @app.post("/intake/sample")
@@ -1066,6 +1134,169 @@ def create_app(
             "orientation": "horizontal_stack",
             "proposals": proposals,
         }
+
+    @app.post("/intake/sample-dune")
+    async def process_sample_dune_upload(
+        auto_register: bool = Form(False),
+        section: str = Form("Rare Books"),
+        shelf: str = Form("Vault-01"),
+        principal: Principal = Depends(require_decide),
+    ) -> dict[str, Any]:
+        """High-fidelity fixture for 3-Angle Antiquarian Vision Intake: Dune 1st Edition."""
+        from app.domain.issue_points import BibliographicIssuePointDecoder
+
+        issue_result = BibliographicIssuePointDecoder.decode(
+            publisher="Chilton Books, Philadelphia",
+            raw_copyright_text="First Edition. Copyright 1965 by Frank Herbert. Library of Congress Catalog Card Number 65-22547.",
+            raw_flap_text="$5.95 price intact on front dust jacket flap. Chilton Books, Philadelphia.",
+            visible_condition_cues=["clean_as_new"],
+            format_str="hardcover_with_jacket",
+        )
+
+        in_store_price = "750.00"
+        online_price = "850.00"
+        pricing_rationale = (
+            "[COLLECTIBLE PREMIUM] Elevated to first edition tier ($850.00 CAD). "
+            "True First Edition, First Impression confirmed via Chilton Books rule (Four lines of copyright, unclipped $5.95 jacket)."
+        )
+        channel_strat = "antiquarian_first_edition_vault"
+
+        payload = {
+            "section": section,
+            "shelf": shelf,
+            "extraction": {
+                "title": "Dune",
+                "authors": ["Frank Herbert"],
+                "format": "hardcover_with_jacket",
+                "raw_spine_text": "DUNE FRANK HERBERT CHILTON BOOKS",
+                "raw_copyright_text": "First Edition. Copyright 1965 by Frank Herbert. Library of Congress Catalog Card Number 65-22547.",
+                "raw_flap_text": "$5.95 price intact on front dust jacket flap.",
+                "visible_condition_cues": ["clean_as_new"],
+                "source_filename": "dune_sample_3_shots",
+                "source_image_index": 0,
+            },
+            "disambiguation": {
+                "best_candidate": {
+                    "title": "Dune",
+                    "match_score": 0.99,
+                    "primary_isbn": "UNKNOWN",
+                },
+                "triage_reason": (
+                    "Synthesized from 3 multi-angle photographs. 🎯 TRUE 1st EDITION (1st Impression) CONFIRMED via "
+                    f"{issue_result.publisher_rule_name}. {issue_result.reasoning_trace}"
+                ),
+            },
+            "issue_point_analysis": issue_result.to_dict(),
+            "valuation": {
+                "condition_grade": "Near Fine",
+                "channel_strategy": channel_strat,
+                "in_store_price_cad": in_store_price,
+                "online_price_cad": online_price,
+                "pricing_rationale": pricing_rationale,
+            },
+            "pricing_evidence": {
+                "source": "AbeBooks / Rare Book Hub Historical Auction Averages",
+                "comparables": [
+                    {"title": "Dune (1st Ed/1st Pr, Chilton 1965)", "condition": "Near Fine / Near Fine", "price_cad": "950.00"},
+                    {"title": "Dune (1st Ed, Chilton)", "condition": "Very Good / Very Good", "price_cad": "750.00"},
+                ],
+            },
+        }
+
+        # Check for collector want list match (Priority Courtesy Hold)
+        try:
+            from decimal import Decimal
+            from app.domain.want_list import WantListMatcher
+            w_matcher = WantListMatcher()
+            active_wants = want_list_store.list_wants(tenant_id=principal.tenant_id, status="active")
+            collectors_map = {c.id: c for c in want_list_store.list_collectors(tenant_id=principal.tenant_id)}
+            w_cand = {
+                "title": "Dune",
+                "authors": ["Frank Herbert"],
+                "condition": "Near Fine",
+                "format": "hardcover_with_jacket",
+                "price_cad": Decimal("850.00"),
+            }
+            w_match = w_matcher.find_best_match(active_wants, collectors_map, w_cand)
+            if w_match and w_match.matched:
+                c_name = w_match.collector.name if w_match.collector else "Collector"
+                payload["disambiguation"]["triage_reason"] = (
+                    f"MATCHES COLLECTOR WANT: {c_name} has an active want for '{w_match.want_item.title}' "
+                    f"(Budget: ${w_match.want_item.max_price_cad or 'Open'}). "
+                    f"Priority 48h courtesy hold recommended."
+                )
+                payload["want_match"] = {
+                    "matched": True,
+                    "collector_name": c_name,
+                    "collector_id": w_match.collector.id if w_match.collector else "",
+                    "want_id": w_match.want_item.id if w_match.want_item else "",
+                    "match_score": w_match.match_score,
+                }
+        except Exception as w_exc:
+            logger.debug("want_match.check_failed", error=str(w_exc))
+
+        result = operator.propose("intake_book", payload, tenant_id=principal.tenant_id)
+        result["payload"] = payload
+        if auto_register:
+            operator.decide(
+                review_id=result["review_id"],
+                approve=True,
+                reviewer=principal.name,
+                reason="Auto-registered via AI Vision Intake Studio (Sample Dune)",
+                tenant_id=principal.tenant_id,
+            )
+            outcome = operator.execute(
+                review_id=result["review_id"],
+                actor=principal.name,
+                tenant_id=principal.tenant_id,
+            )
+            result["executed"] = True
+            result["execution_outcome"] = outcome
+            res_sku = outcome.get("result", {}).get("sku") or outcome.get("result", {}).get("details", {}).get("sku") or ""
+            result["sku"] = res_sku
+
+        return {
+            "processed": 1,
+            "total_images": 3,
+            "successful_images": 3,
+            "failed_images": [],
+            "orientation": "mixed_or_scattered",
+            "intake_mode": "multi_angle_single_book",
+            "auto_register": auto_register,
+            "duplicates_suppressed": [],
+            "proposals": [result],
+            "extracted_items": [
+                {
+                    "title": "Dune",
+                    "subtitle": None,
+                    "authors": ["Frank Herbert"],
+                    "publisher_imprint": "Chilton Books, Philadelphia",
+                    "format": "hardcover_with_jacket",
+                    "confidence": "high",
+                    "visible_condition_cues": ["clean_as_new"],
+                    "edition_or_series_markers": ["First Edition stated on copyright page", "$5.95 unclipped dust jacket"],
+                    "raw_spine_text": "DUNE FRANK HERBERT CHILTON BOOKS",
+                    "raw_copyright_text": "First Edition. Copyright 1965 by Frank Herbert. Library of Congress Catalog Card Number 65-22547.",
+                    "raw_flap_text": "$5.95 price intact on front dust jacket flap.",
+                }
+            ],
+            "analyzed_payloads": [
+                {
+                    "title": "Dune",
+                    "authors": ["Frank Herbert"],
+                    "format": "hardcover_with_jacket",
+                    "condition": "Near Fine",
+                    "in_store_price_cad": in_store_price,
+                    "online_price_cad": online_price,
+                    "channel_strategy": channel_strat,
+                    "pricing_rationale": pricing_rationale,
+                    "issue_point_analysis": issue_result.to_dict(),
+                    "disambiguation": payload["disambiguation"],
+                    "want_match": payload.get("want_match"),
+                }
+            ],
+        }
+
 
     
     @app.get("/inventory")
@@ -1276,6 +1507,86 @@ def create_app(
                 media_type="text/csv; charset=utf-8",
                 headers={"Content-Disposition": 'attachment; filename="selected_inventory.csv"'},
             )
+
+    @app.post("/inventory/intake-direct")
+    def intake_book_direct(
+        req: DirectIntakeRequest,
+        principal: Principal = Depends(require_decide),
+    ) -> dict[str, Any]:
+        from decimal import Decimal
+        payload = {
+            "section": req.section,
+            "shelf": req.shelf,
+            "extraction": {
+                "title": req.title,
+                "authors": req.authors,
+                "format": req.format,
+            },
+            "disambiguation": {
+                "best_candidate": {
+                    "title": req.title,
+                    "authors": req.authors,
+                },
+                "triage_reason": "Direct intake confirmed via AI Vision Intake Studio.",
+            },
+            "issue_point_analysis": req.issue_points or {},
+            "valuation": {
+                "condition_grade": req.condition,
+                "channel_strategy": req.channel_strategy,
+                "in_store_price_cad": f"{req.in_store_price_cad:.2f}",
+                "online_price_cad": f"{req.online_price_cad:.2f}",
+                "pricing_rationale": req.pricing_rationale,
+            },
+        }
+
+        # Check for collector want list match (Priority Courtesy Hold)
+        try:
+            from app.domain.want_list import WantListMatcher
+            w_matcher = WantListMatcher()
+            active_wants = want_list_store.list_wants(tenant_id=principal.tenant_id, status="active")
+            collectors_map = {c.id: c for c in want_list_store.list_collectors(tenant_id=principal.tenant_id)}
+            w_cand = {
+                "title": req.title,
+                "authors": req.authors,
+                "condition": req.condition,
+                "format": req.format,
+                "price_cad": Decimal(str(req.online_price_cad or req.in_store_price_cad or 0.0)),
+            }
+            w_match = w_matcher.find_best_match(active_wants, collectors_map, w_cand)
+            if w_match and w_match.matched:
+                c_name = w_match.collector.name if w_match.collector else "Collector"
+                payload["want_match"] = {
+                    "matched": True,
+                    "collector_name": c_name,
+                    "collector_id": w_match.collector.id if w_match.collector else "",
+                    "want_id": w_match.want_item.id if w_match.want_item else "",
+                    "match_score": w_match.match_score,
+                }
+        except Exception as w_exc:
+            logger.debug("want_match.check_failed", error=str(w_exc))
+
+        proposed = operator.propose("intake_book", payload, tenant_id=principal.tenant_id)
+        operator.decide(
+            review_id=proposed["review_id"],
+            approve=True,
+            reviewer=principal.name,
+            reason="Confirmed and registered via AI Vision Intake Studio",
+            tenant_id=principal.tenant_id,
+        )
+        outcome = operator.execute(
+            review_id=proposed["review_id"],
+            actor=principal.name,
+            tenant_id=principal.tenant_id,
+        )
+        res_sku = outcome.get("result", {}).get("sku") or outcome.get("result", {}).get("details", {}).get("sku") or ""
+        return {
+            "review_id": outcome["review_id"],
+            "status": outcome["status"],
+            "executed": True,
+            "sku": res_sku,
+            "result": outcome.get("result", {}),
+            "payload": payload,
+        }
 
     @app.post("/inventory/audit")
     async def run_shelf_audit(

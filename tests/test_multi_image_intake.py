@@ -469,3 +469,128 @@ def test_api_multi_image_collector_want_interception(dashboard_client):
         assert payload["want_match"]["collector_name"] == "Dr. Eleanor Vance"
         assert "MATCHES COLLECTOR WANT" in payload["disambiguation"]["triage_reason"]
 
+
+def test_api_camera_auto_register_generates_sku_and_bookshelf_record(dashboard_client):
+    from tests.test_dashboard import REVIEWER_TOKEN, auth
+
+    reviewer = auth(REVIEWER_TOKEN)
+
+    mock_ext = BookStackExtraction(
+        books=(
+            SpineExtractionItem(
+                stack_order=1,
+                box_2d=(0, 0, 10, 10),
+                title="Hyperion",
+                authors=("Dan Simmons",),
+                format=BookFormat.HARDCOVER_WITH_JACKET,
+                visible_condition_cues=("clean_as_new",),
+                confidence="high",
+            ),
+        ),
+        orientation="horizontal_stack",
+    )
+
+    with (
+        patch("app.ai.book_vision.resolve_gemini_api_key", return_value="fake-key"),
+        patch(
+            "app.ai.book_vision.GeminiBookVisionProvider.extract_stack",
+            return_value=mock_ext,
+        ),
+    ):
+        files = [("files", ("hyperion.jpg", b"\xff\xd8\xff\xe0data", "image/jpeg"))]
+        resp = dashboard_client.post(
+            "/intake/camera",
+            files=files,
+            data={"auto_register": "true", "section": "Sci-Fi", "shelf": "SF-04"},
+            headers=reviewer,
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["auto_register"] is True
+        proposal = data["proposals"][0]
+        assert proposal["executed"] is True
+        sku = proposal["sku"]
+        assert sku.startswith("BK-")
+
+        # Verify book now exists in inventory
+        inv_resp = dashboard_client.get("/inventory", headers=reviewer)
+        assert inv_resp.status_code == 200
+        items = inv_resp.json()
+        match = next((item for item in items if item["sku"] == sku), None)
+        assert match is not None
+        assert match["title"] == "Hyperion"
+        assert match["section"] == "Sci-Fi"
+        assert match["shelf"] == "SF-04"
+
+
+def test_api_sample_dune_endpoint_and_want_matching(dashboard_client):
+    from tests.test_dashboard import REVIEWER_TOKEN, auth
+
+    reviewer = auth(REVIEWER_TOKEN)
+
+    # Register collector want for Dune
+    c_resp = dashboard_client.post(
+        "/collectors",
+        json={"name": "Paul Atreides", "phone": "555-0100", "notes": "Frank Herbert firsts"},
+        headers=reviewer,
+    )
+    assert c_resp.status_code == 200
+    c_id = c_resp.json()["id"]
+
+    dashboard_client.post(
+        f"/collectors/{c_id}/wants",
+        json={"title": "Dune", "author": "Frank Herbert", "max_price_cad": 1000.0},
+        headers=reviewer,
+    )
+
+    # Call sample Dune endpoint
+    resp = dashboard_client.post(
+        "/intake/sample-dune",
+        data={"auto_register": "true", "section": "Vault", "shelf": "V-01"},
+        headers=reviewer,
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["processed"] == 1
+    assert data["extracted_items"][0]["title"] == "Dune"
+    payload = data["analyzed_payloads"][0]
+    assert payload["issue_point_analysis"]["is_first_edition"] is True
+    assert payload["issue_point_analysis"]["is_first_impression"] is True
+    assert payload["want_match"]["matched"] is True
+    assert payload["want_match"]["collector_name"] == "Paul Atreides"
+
+    sku = data["proposals"][0]["sku"]
+    assert sku.startswith("BK-")
+
+    # Verify inventory record
+    inv_resp = dashboard_client.get("/inventory", headers=reviewer)
+    match = next((i for i in inv_resp.json() if i["sku"] == sku), None)
+    assert match is not None
+    assert match["title"] == "Dune"
+    assert match["section"] == "Vault"
+
+
+def test_api_intake_direct_endpoint(dashboard_client):
+    from tests.test_dashboard import REVIEWER_TOKEN, auth
+
+    reviewer = auth(REVIEWER_TOKEN)
+
+    body = {
+        "title": "Solaris",
+        "authors": ["Stanislaw Lem"],
+        "format": "hardcover_with_jacket",
+        "condition": "Very Good",
+        "section": "Sci-Fi",
+        "shelf": "Shelf-9",
+        "in_store_price_cad": 35.0,
+        "online_price_cad": 45.0,
+        "pricing_rationale": "Collectible Polish sci-fi in translation",
+    }
+    resp = dashboard_client.post("/inventory/intake-direct", json=body, headers=reviewer)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] in ("EXECUTED", "approved")
+    assert data["executed"] is True
+    assert data["sku"].startswith("BK-")
+
+

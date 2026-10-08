@@ -3342,3 +3342,748 @@ if ($("btn-new-want")) $("btn-new-want").onclick = () => showNewWantModal();
 if ($("btn-refresh-collectors")) $("btn-refresh-collectors").onclick = () => loadCollectorsView();
 if ($("collector-search-input")) $("collector-search-input").oninput = () => renderCollectors(cachedCollectors);
 
+// ============================================================================
+// AI ANTIQUARIAN VISION INTAKE 2.0 (IN-BROWSER CAMERA & MULTI-ANGLE STUDIO)
+// ============================================================================
+
+function generateBarcodeSvg(code) {
+  if (!code) return "";
+  const clean = String(code).toUpperCase().replace(/[^0-9A-Z\-\. \$\/\+\%]/g, "");
+  const textToEncode = `*${clean}*`;
+
+  const CODE39 = {
+    '0': '000110100', '1': '100100001', '2': '001100001', '3': '101100000',
+    '4': '000110001', '5': '100110000', '6': '001110000', '7': '000100101',
+    '8': '100100100', '9': '001100100', 'A': '100001001', 'B': '001001001',
+    'C': '101001000', 'D': '000011001', 'E': '100011000', 'F': '001011000',
+    'G': '000001101', 'H': '100001100', 'I': '001001100', 'J': '000011100',
+    'K': '100000011', 'L': '001000011', 'M': '101000010', 'N': '000010011',
+    'O': '100010010', 'P': '001010010', 'Q': '000000111', 'R': '100000110',
+    'S': '001000110', 'T': '000010110', 'U': '110000001', 'V': '011000001',
+    'W': '111000000', 'X': '010010001', 'Y': '110010000', 'Z': '011010000',
+    '-': '010000101', '.': '110000100', ' ': '011000100', '*': '010010100',
+    '$': '010101000', '/': '010100010', '+': '010001010', '%': '000101010'
+  };
+
+  const narrow = 2;
+  const wide = 5;
+  const gap = 2;
+  const height = 44;
+
+  let x = 10;
+  const rects = [];
+
+  for (let i = 0; i < textToEncode.length; i++) {
+    const ch = textToEncode[i];
+    const pattern = CODE39[ch] || CODE39['*'];
+    for (let j = 0; j < 9; j++) {
+      const isBar = (j % 2 === 0);
+      const isWide = pattern[j] === '1';
+      const w = isWide ? wide : narrow;
+      if (isBar) {
+        rects.push(`<rect x="${x}" y="0" width="${w}" height="${height}" fill="#000" />`);
+      }
+      x += w;
+    }
+    x += gap;
+  }
+  const totalWidth = x + 10;
+  return `<svg viewBox="0 0 ${totalWidth} ${height + 18}" width="${Math.min(totalWidth, 260)}" height="${Math.round((height + 18) * 0.8)}" xmlns="http://www.w3.org/2000/svg" style="background:#fff; border-radius:4px; padding:4px;">
+    ${rects.join("")}
+    <text x="${totalWidth / 2}" y="${height + 14}" text-anchor="middle" font-family="monospace" font-size="11" font-weight="bold" fill="#000">${clean}</text>
+  </svg>`;
+}
+
+function printBookLabel(item) {
+  const w = window.open("", "_blank", "width=420,height=300");
+  if (!w) return;
+  const sku = item.sku || "UNKNOWN";
+  const title = (item.title || "").substring(0, 38);
+  const author = Array.isArray(item.authors) ? item.authors.join(", ") : (item.authors || "");
+  const price = (item.online_price_cad || item.in_store_price_cad)
+    ? `$${Number(item.online_price_cad || item.in_store_price_cad).toFixed(2)} CAD`
+    : "";
+  const loc = `${item.section || "General"} · ${item.shelf || "Floor"}`;
+  const barcodeSvg = generateBarcodeSvg(sku);
+  w.document.write(`
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <title>Label ${sku}</title>
+      <style>
+        @page { size: 2.25in 1.25in; margin: 0; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 6px; padding: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
+        .title { font-size: 11px; font-weight: 700; max-width: 220px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .author { font-size: 9px; color: #444; max-width: 200px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 2px; }
+        .price { font-size: 11px; font-weight: 700; color: #111; margin-bottom: 3px; }
+        .loc { font-size: 9px; color: #666; margin-top: 2px; }
+      </style>
+    </head>
+    <body>
+      <div class="title">${title}</div>
+      <div class="author">${author}</div>
+      <div class="price">${price}</div>
+      ${barcodeSvg}
+      <div class="loc">📍 ${loc}</div>
+      <script>window.onload = () => { window.print(); setTimeout(() => window.close(), 500); };<\/script>
+    </body>
+    </html>
+  `);
+  w.document.close();
+}
+
+function createSampleBookShot(type) {
+  const canvas = document.createElement("canvas");
+  canvas.width = 400;
+  canvas.height = 550;
+  const ctx = canvas.getContext("2d");
+
+  if (type === "cover") {
+    ctx.fillStyle = "#1b2838";
+    ctx.fillRect(0, 0, 400, 550);
+    ctx.strokeStyle = "#c5a059";
+    ctx.lineWidth = 4;
+    ctx.strokeRect(20, 20, 360, 510);
+    ctx.fillStyle = "#e5c158";
+    ctx.font = "bold 38px serif";
+    ctx.textAlign = "center";
+    ctx.fillText("DUNE", 200, 180);
+    ctx.fillStyle = "#f3f4f6";
+    ctx.font = "italic 22px serif";
+    ctx.fillText("FRANK HERBERT", 200, 240);
+    ctx.fillStyle = "#c5a059";
+    ctx.font = "14px sans-serif";
+    ctx.fillText("CHILTON BOOKS", 200, 480);
+  } else if (type === "title") {
+    ctx.fillStyle = "#fbf8ee";
+    ctx.fillRect(0, 0, 400, 550);
+    ctx.fillStyle = "#111827";
+    ctx.font = "bold 34px serif";
+    ctx.textAlign = "center";
+    ctx.fillText("DUNE", 200, 160);
+    ctx.font = "18px serif";
+    ctx.fillText("by", 200, 210);
+    ctx.font = "bold 22px serif";
+    ctx.fillText("FRANK HERBERT", 200, 250);
+    ctx.font = "13px serif";
+    ctx.fillText("CHILTON COMPANY - BOOK DIVISION", 200, 440);
+    ctx.fillText("Publishers", 200, 465);
+    ctx.fillText("Philadelphia  ·  New York", 200, 490);
+  } else {
+    ctx.fillStyle = "#fbf8ee";
+    ctx.fillRect(0, 0, 400, 550);
+    ctx.fillStyle = "#374151";
+    ctx.font = "12px sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText("FIRST EDITION", 200, 200);
+    ctx.fillText("Copyright © 1965 by Frank Herbert", 200, 230);
+    ctx.fillText("Library of Congress Catalog Card Number 65-22547", 200, 260);
+    ctx.fillText("All Rights Reserved", 200, 290);
+    ctx.fillText("Printed in the United States of America", 200, 320);
+  }
+
+  return new Promise((resolve) => {
+    canvas.toBlob((blob) => {
+      resolve(new File([blob], `dune_${type}.jpg`, { type: "image/jpeg" }));
+    }, "image/jpeg", 0.9);
+  });
+}
+
+let visionMode = "3angle"; // "3angle" | "stack"
+const visionSlotFiles = { cover: null, title: null, copyright: null };
+const visionSlotUrls = { cover: null, title: null, copyright: null };
+let visionStackFiles = [];
+let visionCameraStream = null;
+let visionCameraTargetSlot = null;
+
+const slotTitles = {
+  cover: "Front Cover & Spine",
+  title: "Title Page",
+  copyright: "Copyright / Colophon",
+};
+const slotIcons = {
+  cover: "🖼️",
+  title: "📖",
+  copyright: "⚖️",
+};
+
+function initVisionIntake() {
+  const modal = $("modal-vision-intake");
+  const openBtn = $("btn-open-vision-intake");
+  const closeBtn = $("btn-close-vision-modal");
+  const cancelBtn = $("btn-cancel-vision");
+  const mode3AngleBtn = $("vmode-3angle");
+  const modeStackBtn = $("vmode-stack");
+  const runBtn = $("btn-run-vision-intake");
+  const sampleBtn = $("btn-vision-sample-dune");
+  const cameraDrawer = $("vision-camera-drawer");
+  const stopCamBtn = $("btn-stop-camera");
+  const snapBtn = $("btn-snap-viewfinder");
+
+  if (!modal || !openBtn) return;
+
+  function updateRunButtonState() {
+    if (!runBtn) return;
+    if (visionMode === "3angle") {
+      const hasAny = Boolean(visionSlotFiles.cover || visionSlotFiles.title || visionSlotFiles.copyright);
+      runBtn.disabled = !hasAny;
+    } else {
+      runBtn.disabled = visionStackFiles.length === 0;
+    }
+  }
+
+  function setSlotFile(slot, file) {
+    if (visionSlotUrls[slot]) {
+      URL.revokeObjectURL(visionSlotUrls[slot]);
+      visionSlotUrls[slot] = null;
+    }
+    visionSlotFiles[slot] = file || null;
+    const preview = $(`vslot-preview-${slot}`);
+    if (!preview) return;
+
+    if (file) {
+      const url = URL.createObjectURL(file);
+      visionSlotUrls[slot] = url;
+      preview.innerHTML = `
+        <div class="vslot-preview-filled">
+          <img src="${url}" alt="${slotTitles[slot]} preview">
+          <button type="button" class="btn-slot-remove" data-slot="${slot}" title="Remove photo">✕</button>
+        </div>
+      `;
+      const remBtn = preview.querySelector(".btn-slot-remove");
+      if (remBtn) {
+        remBtn.onclick = (e) => {
+          e.stopPropagation();
+          setSlotFile(slot, null);
+        };
+      }
+    } else {
+      preview.innerHTML = `
+        <div class="vslot-empty-state">
+          <span class="vslot-icon">${slotIcons[slot]}</span>
+          <span>Drop photo or snap</span>
+        </div>
+      `;
+    }
+    updateRunButtonState();
+  }
+
+  function openModal() {
+    modal.hidden = false;
+    if ($("vision-progress-card")) $("vision-progress-card").hidden = true;
+    if ($("vision-result-card")) {
+      $("vision-result-card").hidden = true;
+      $("vision-result-card").replaceChildren();
+    }
+    updateRunButtonState();
+  }
+
+  function closeModal() {
+    stopVisionCamera();
+    modal.hidden = true;
+  }
+
+  openBtn.onclick = openModal;
+  if (closeBtn) closeBtn.onclick = closeModal;
+  if (cancelBtn) cancelBtn.onclick = closeModal;
+  modal.onclick = (e) => {
+    if (e.target === modal) closeModal();
+  };
+
+  // Mode switching
+  if (mode3AngleBtn && modeStackBtn) {
+    mode3AngleBtn.onclick = () => {
+      visionMode = "3angle";
+      mode3AngleBtn.classList.add("active");
+      modeStackBtn.classList.remove("active");
+      if ($("vslots-3angle-container")) $("vslots-3angle-container").hidden = false;
+      if ($("vslots-stack-container")) $("vslots-stack-container").hidden = true;
+      updateRunButtonState();
+    };
+
+    modeStackBtn.onclick = () => {
+      visionMode = "stack";
+      modeStackBtn.classList.add("active");
+      mode3AngleBtn.classList.remove("active");
+      if ($("vslots-3angle-container")) $("vslots-3angle-container").hidden = true;
+      if ($("vslots-stack-container")) $("vslots-stack-container").hidden = false;
+      updateRunButtonState();
+    };
+  }
+
+  // Camera handling
+  async function startVisionCamera(slot) {
+    visionCameraTargetSlot = slot;
+    if ($("camera-slot-title")) {
+      $("camera-slot-title").textContent = `📷 Live Viewfinder: ${slotTitles[slot] || "Angle"}`;
+    }
+    if (cameraDrawer) cameraDrawer.hidden = false;
+
+    try {
+      if (visionCameraStream) {
+        visionCameraStream.getTracks().forEach((t) => t.stop());
+      }
+      visionCameraStream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: "environment" }, width: { ideal: 1920 }, height: { ideal: 1080 } },
+      });
+      const video = $("vision-video");
+      if (video) {
+        video.srcObject = visionCameraStream;
+        await video.play();
+      }
+    } catch (err) {
+      alert(`Camera unavailable: ${err.message}. You can upload a photo from your files.`);
+      stopVisionCamera();
+    }
+  }
+
+  function stopVisionCamera() {
+    if (visionCameraStream) {
+      visionCameraStream.getTracks().forEach((t) => t.stop());
+      visionCameraStream = null;
+    }
+    const video = $("vision-video");
+    if (video) video.srcObject = null;
+    if (cameraDrawer) cameraDrawer.hidden = true;
+    visionCameraTargetSlot = null;
+  }
+
+  if (stopCamBtn) stopCamBtn.onclick = stopVisionCamera;
+
+  if (snapBtn) {
+    snapBtn.onclick = () => {
+      const video = $("vision-video");
+      const canvas = $("vision-canvas");
+      if (!video || !canvas || !visionCameraTargetSlot) return;
+
+      canvas.width = video.videoWidth || 1280;
+      canvas.height = video.videoHeight || 720;
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+      canvas.toBlob(
+        (blob) => {
+          if (!blob) return;
+          const file = new File([blob], `${visionCameraTargetSlot}_snap.jpg`, { type: "image/jpeg" });
+          setSlotFile(visionCameraTargetSlot, file);
+          stopVisionCamera();
+        },
+        "image/jpeg",
+        0.92
+      );
+    };
+  }
+
+  // Wire slot buttons and file inputs
+  document.querySelectorAll(".btn-slot-cam").forEach((btn) => {
+    btn.onclick = (e) => {
+      e.stopPropagation();
+      const target = btn.dataset.target;
+      if (target) startVisionCamera(target);
+    };
+  });
+
+  document.querySelectorAll(".slot-file-input").forEach((input) => {
+    input.onchange = (e) => {
+      const target = input.dataset.target;
+      if (target && input.files && input.files[0]) {
+        setSlotFile(target, input.files[0]);
+      }
+    };
+  });
+
+  // Drag and drop onto individual 3-angle slot cards
+  document.querySelectorAll(".vslot-card").forEach((card) => {
+    const slot = card.dataset.slot;
+    if (!slot) return;
+
+    ["dragenter", "dragover"].forEach((evt) => {
+      card.addEventListener(evt, (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        card.classList.add("drag-over");
+      });
+    });
+    ["dragleave", "drop"].forEach((evt) => {
+      card.addEventListener(evt, (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        card.classList.remove("drag-over");
+      });
+    });
+    card.addEventListener("drop", (e) => {
+      if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length) {
+        const file = Array.from(e.dataTransfer.files).find((f) =>
+          f.type.startsWith("image/") || /\.(jpe?g|png|webp|heic|heif)$/i.test(f.name)
+        );
+        if (file) setSlotFile(slot, file);
+      }
+    });
+  });
+
+  // Stack mode drag-and-drop & file selection
+  const stackDropzone = $("vslots-stack-container");
+  const stackInput = $("vstack-files");
+  const stackThumbs = $("vstack-thumbs");
+
+  function renderStackThumbs() {
+    if (!stackThumbs) return;
+    stackThumbs.replaceChildren();
+    visionStackFiles.forEach((f, idx) => {
+      const wrap = node("div", undefined, "vstack-thumb-wrap");
+      const img = node("img");
+      img.src = URL.createObjectURL(f);
+      img.onload = () => URL.revokeObjectURL(img.src);
+      wrap.append(img);
+      const rem = node("button", "✕", "btn-thumb-remove");
+      rem.onclick = (e) => {
+        e.stopPropagation();
+        visionStackFiles.splice(idx, 1);
+        renderStackThumbs();
+        updateRunButtonState();
+      };
+      wrap.append(rem);
+      stackThumbs.append(wrap);
+    });
+  }
+
+  if (stackInput) {
+    stackInput.onchange = () => {
+      if (stackInput.files && stackInput.files.length) {
+        visionStackFiles.push(...Array.from(stackInput.files));
+        renderStackThumbs();
+        updateRunButtonState();
+      }
+    };
+  }
+
+  if (stackDropzone) {
+    ["dragenter", "dragover"].forEach((evt) => {
+      stackDropzone.addEventListener(evt, (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        stackDropzone.classList.add("drag-over");
+      });
+    });
+    ["dragleave", "drop"].forEach((evt) => {
+      stackDropzone.addEventListener(evt, (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        stackDropzone.classList.remove("drag-over");
+      });
+    });
+    stackDropzone.addEventListener("drop", (e) => {
+      if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length) {
+        const files = Array.from(e.dataTransfer.files).filter((f) =>
+          f.type.startsWith("image/") || /\.(jpe?g|png|webp|heic|heif)$/i.test(f.name)
+        );
+        if (files.length) {
+          visionStackFiles.push(...files);
+          renderStackThumbs();
+          updateRunButtonState();
+        }
+      }
+    });
+  }
+
+  // Render Extraction Result Preview Card
+  function renderVisionResultCard(data) {
+    const card = $("vision-result-card");
+    if (!card) return;
+    card.hidden = false;
+    card.replaceChildren();
+
+    const bookData = (data.analyzed_payloads && data.analyzed_payloads[0]) ||
+      (data.extracted_items && data.extracted_items[0]) || {};
+    const proposal = (data.proposals && data.proposals[0]) || {};
+    const issuePoints = bookData.issue_point_analysis || {};
+    const wantMatch = bookData.want_match || (proposal.payload && proposal.payload.want_match);
+
+    const title = bookData.title || "Untitled Book";
+    const authors = Array.isArray(bookData.authors) ? bookData.authors.join(", ") : (bookData.authors || "Unknown");
+    const fmt = human(bookData.format || "hardcover_with_jacket");
+    const condition = bookData.condition || "Good";
+    const inStorePrice = bookData.in_store_price_cad || "0.00";
+    const onlinePrice = bookData.online_price_cad || "0.00";
+    const rationale = bookData.pricing_rationale || "";
+    const isAutoRegistered = Boolean(data.auto_register && proposal.sku);
+    const sku = proposal.sku || (proposal.result && proposal.result.sku) || "";
+
+    // 1. Issue-Point Banner
+    const banner = node("div", undefined, "vresult-banner");
+    if (issuePoints.is_first_edition && issuePoints.is_first_impression) {
+      banner.className = "vresult-banner first-edition";
+      banner.innerHTML = `<span>🎯</span> <strong>TRUE 1st EDITION (1st Impression) CONFIRMED</strong> &nbsp;·&nbsp; ${issuePoints.publisher_rule_name || "Antiquarian Rule"}`;
+    } else if (issuePoints.is_book_club) {
+      banner.className = "vresult-banner book-club";
+      banner.innerHTML = `<span>⚠️</span> <strong>BOOK CLUB EDITION (BCE) DISQUALIFIED</strong> &nbsp;·&nbsp; Reading copy valuation applied`;
+    } else {
+      banner.className = "vresult-banner";
+      banner.style.background = "rgba(255, 255, 255, 0.08)";
+      banner.innerHTML = `<span>📘</span> <strong>STANDARD TRADE EDITION</strong> &nbsp;·&nbsp; Bibliographic record verified`;
+    }
+    card.append(banner);
+
+    // 2. Want Match Alert (if matched)
+    if (wantMatch && wantMatch.matched) {
+      const wantBanner = node("div", undefined, "vresult-banner");
+      wantBanner.style.background = "rgba(245, 158, 11, 0.2)";
+      wantBanner.style.border = "1px solid rgba(245, 158, 11, 0.5)";
+      wantBanner.style.color = "#fef08a";
+      wantBanner.innerHTML = `<span>⭐</span> <strong>PRIORITY COURTESY HOLD:</strong> Matched active want for <strong>${wantMatch.collector_name || "Collector"}</strong>! 48h hold initiated.`;
+      card.append(wantBanner);
+    }
+
+    // 3. Grid: Left (Metadata & Pricing), Right (Barcode & SKU)
+    const grid = node("div", undefined, "vresult-grid");
+
+    const leftCol = node("div", undefined, "vresult-field-group");
+    const bookTitleHeading = node("h4", title);
+    bookTitleHeading.style.margin = "0";
+    bookTitleHeading.style.fontSize = "1.1rem";
+    bookTitleHeading.style.color = "var(--ink-bright, #fff)";
+
+    const authorLine = node("p", `By ${authors}`, "muted text-sm");
+    authorLine.style.margin = "2px 0 8px 0";
+
+    const metaTags = node("div");
+    metaTags.style.display = "flex";
+    metaTags.style.gap = "8px";
+    metaTags.style.flexWrap = "wrap";
+    metaTags.style.marginBottom = "8px";
+
+    const fmtBadge = node("span", `Format: ${fmt}`, "status-badge");
+    const condBadge = node("span", `Condition: ${condition}`, "status-badge");
+    metaTags.append(fmtBadge, condBadge);
+
+    const priceInfo = node("div");
+    priceInfo.style.background = "rgba(0, 0, 0, 0.3)";
+    priceInfo.style.padding = "8px 12px";
+    priceInfo.style.borderRadius = "6px";
+    priceInfo.style.fontSize = "0.85rem";
+    priceInfo.innerHTML = `
+      <div><strong>Online Valuation:</strong> <span style="color:var(--green, #22c55e); font-weight:700;">$${onlinePrice} CAD</span> &nbsp;·&nbsp; <strong>In-Store:</strong> $${inStorePrice} CAD</div>
+      <div style="font-size:0.75rem; color:#9ca3af; margin-top:4px;">${rationale}</div>
+    `;
+
+    leftCol.append(bookTitleHeading, authorLine, metaTags, priceInfo);
+
+    // Right Column: Barcode & Actions
+    const rightCol = node("div", undefined, "vresult-field-group");
+    rightCol.style.alignItems = "center";
+    rightCol.style.justifyContent = "center";
+
+    if (isAutoRegistered && sku) {
+      const barcodeBox = node("div", undefined, "vresult-barcode-box");
+      barcodeBox.innerHTML = `
+        ${generateBarcodeSvg(sku)}
+        <span class="vresult-sku-text">${sku}</span>
+      `;
+      const printBtn = node("button", "🖨️ Print Barcode Label", "ghost-sm");
+      printBtn.style.marginTop = "8px";
+      printBtn.style.width = "100%";
+      printBtn.onclick = () => {
+        printBookLabel({
+          sku,
+          title,
+          authors: [authors],
+          in_store_price_cad: inStorePrice,
+          online_price_cad: onlinePrice,
+          section: $("vopt-section") ? $("vopt-section").value : "Rare Books",
+          shelf: $("vopt-shelf") ? $("vopt-shelf").value : "",
+        });
+      };
+
+      const viewShelfBtn = node("button", "📚 View on Bookshelf", "primary");
+      viewShelfBtn.style.marginTop = "4px";
+      viewShelfBtn.style.width = "100%";
+      viewShelfBtn.onclick = () => {
+        closeModal();
+        switchTab("bookshelf");
+        loadBookshelf();
+      };
+
+      rightCol.append(barcodeBox, printBtn, viewShelfBtn);
+    } else {
+      const statusBox = node("div");
+      statusBox.style.background = "rgba(0, 0, 0, 0.3)";
+      statusBox.style.padding = "12px";
+      statusBox.style.borderRadius = "8px";
+      statusBox.style.textAlign = "center";
+      statusBox.innerHTML = `
+        <div style="font-size:1.2rem; margin-bottom:4px;">📋</div>
+        <strong>Queued for Review</strong>
+        <p class="muted text-sm" style="margin:4px 0 8px 0;">Review ID: <code>${proposal.review_id || "rev-staged"}</code></p>
+      `;
+      const viewDeskBtn = node("button", "Review on Desk →", "primary");
+      viewDeskBtn.style.width = "100%";
+      viewDeskBtn.onclick = () => {
+        closeModal();
+        switchTab("queue");
+        refresh();
+      };
+      statusBox.append(viewDeskBtn);
+      rightCol.append(statusBox);
+    }
+
+    grid.append(leftCol, rightCol);
+    card.append(grid);
+  }
+
+  // Sample Dune Test Button
+  if (sampleBtn) {
+    sampleBtn.onclick = async () => {
+      sampleBtn.disabled = true;
+      const prevHtml = sampleBtn.innerHTML;
+      sampleBtn.innerHTML = `<span>⏳ Simulating 3-Angle Gemini Extraction...</span>`;
+
+      // Fill visual slot previews
+      try {
+        const [coverFile, titleFile, copyFile] = await Promise.all([
+          createSampleBookShot("cover"),
+          createSampleBookShot("title"),
+          createSampleBookShot("copyright")
+        ]);
+        setSlotFile("cover", coverFile);
+        setSlotFile("title", titleFile);
+        setSlotFile("copyright", copyFile);
+      } catch (_) {}
+
+      const progressCard = $("vision-progress-card");
+      if (progressCard) {
+        progressCard.hidden = false;
+        if ($("vision-progress-title")) $("vision-progress-title").textContent = "Decoding Chilton 1965 Issue Points...";
+        if ($("vision-progress-step")) $("vision-progress-step").textContent = "Synthesizing cover cloth, Title page imprint & 4-line copyright page...";
+      }
+      if ($("vision-result-card")) $("vision-result-card").hidden = true;
+
+      try {
+        const formData = new FormData();
+        formData.append("auto_register", $("vopt-auto-register") ? $("vopt-auto-register").checked : true);
+        formData.append("section", $("vopt-section") ? $("vopt-section").value.trim() || "Rare Books" : "Rare Books");
+        formData.append("shelf", $("vopt-shelf") ? $("vopt-shelf").value.trim() || "Vault-01" : "Vault-01");
+
+        const response = await fetch("/intake/sample-dune", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}` },
+          body: formData,
+        });
+
+        if (!response.ok) {
+          const text = await response.text();
+          throw new Error(text || `Sample intake failed (${response.status})`);
+        }
+
+        const data = await response.json();
+        if (progressCard) progressCard.hidden = true;
+        renderVisionResultCard(data);
+
+        message("✨ Sample Dune 1st Edition analyzed and cataloged!");
+        loadBookshelf();
+        refresh();
+      } catch (err) {
+        if (progressCard) progressCard.hidden = true;
+        alert(`Sample intake failed: ${err.message}`);
+      } finally {
+        sampleBtn.disabled = false;
+        sampleBtn.innerHTML = prevHtml;
+      }
+    };
+  }
+
+  // Run Gemini Vision & Catalog
+  if (runBtn) {
+    runBtn.onclick = async () => {
+      const filesToUpload =
+        visionMode === "3angle"
+          ? [visionSlotFiles.cover, visionSlotFiles.title, visionSlotFiles.copyright].filter(Boolean)
+          : visionStackFiles;
+
+      if (!filesToUpload.length) {
+        alert("Please snap or select at least one photo first.");
+        return;
+      }
+
+      runBtn.disabled = true;
+      const prevRunHtml = runBtn.innerHTML;
+      runBtn.innerHTML = `<span>⏳ Processing with Gemini Vision...</span>`;
+
+      const progressCard = $("vision-progress-card");
+      if (progressCard) {
+        progressCard.hidden = false;
+        if ($("vision-progress-title")) {
+          $("vision-progress-title").textContent =
+            visionMode === "3angle" ? "Analyzing Bibliographic Angles..." : "Analyzing Stack Spines...";
+        }
+        if ($("vision-progress-step")) {
+          $("vision-progress-step").textContent =
+            visionMode === "3angle"
+              ? "Gemini Vision synthesizing cover, title page & copyright numberline..."
+              : `Gemini Vision detecting every visible spine across ${filesToUpload.length} photo(s)...`;
+        }
+      }
+      if ($("vision-result-card")) $("vision-result-card").hidden = true;
+
+      try {
+        const formData = new FormData();
+        for (const file of filesToUpload) {
+          try {
+            const prep = await prepareImageFile(file);
+            formData.append("files", prep);
+          } catch (_) {
+            formData.append("files", file);
+          }
+        }
+        formData.append("intake_mode", visionMode === "3angle" ? "multi_angle_single_book" : "multi_stack");
+        formData.append("section", $("vopt-section") ? $("vopt-section").value.trim() || "General" : "General");
+        formData.append("shelf", $("vopt-shelf") ? $("vopt-shelf").value.trim() || "" : "");
+        formData.append("auto_register", $("vopt-auto-register") ? $("vopt-auto-register").checked : true);
+
+        const response = await fetch("/intake/camera", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}` },
+          body: formData,
+        });
+
+        const text = await response.text();
+        let data;
+        try {
+          data = JSON.parse(text);
+        } catch (_) {
+          data = { detail: text || `Upload failed (${response.status})` };
+        }
+
+        if (!response.ok) {
+          throw new Error(formatError(data.detail) || `Intake failed (${response.status})`);
+        }
+
+        if (progressCard) progressCard.hidden = true;
+        renderVisionResultCard(data);
+
+        message(
+          data.auto_register
+            ? `✨ Successfully cataloged and registered to Bookshelf!`
+            : `✨ Analyzed and queued for review on Desk.`
+        );
+        loadBookshelf();
+        refresh();
+      } catch (err) {
+        if (progressCard) progressCard.hidden = true;
+        alert(`Gemini Vision Intake failed: ${err.message}`);
+      } finally {
+        runBtn.disabled = false;
+        runBtn.innerHTML = prevRunHtml;
+        updateRunButtonState();
+      }
+    };
+  }
+}
+
+// Initialize on script load
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", initVisionIntake);
+} else {
+  initVisionIntake();
+}
+
+
