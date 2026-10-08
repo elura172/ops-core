@@ -11,7 +11,7 @@
   "crons": [
     {
       "path": "/api/cron/sync",
-      "schedule": "*/10 * * * *"
+      "schedule": "0 4 * * *"
     }
   ],
   "routes": [
