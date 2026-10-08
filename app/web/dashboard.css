@@ -2002,3 +2002,129 @@ footer {
   line-height: 1.4;
 }
 
+/* ==========================================================================
+   BIBLIOGRAPHIC ISSUE POINT AUDIT CARD
+   ========================================================================== */
+.issue-point-card {
+  background: var(--surface-card);
+  border: 1.5px solid var(--copper);
+  border-radius: 10px;
+  padding: 16px 20px;
+  margin: 16px 0;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.04);
+}
+
+.issue-point-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.issue-point-header h4 {
+  margin: 0;
+  font-size: 14.5px;
+  font-family: var(--font-serif);
+  color: var(--ink);
+}
+
+.issue-point-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 11px;
+  border-radius: 16px;
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.badge-first-edition {
+  background: oklch(0.93 0.12 145);
+  color: oklch(0.28 0.16 145);
+  border: 1.5px solid oklch(0.78 0.14 145);
+  box-shadow: 0 0 8px rgba(34, 197, 94, 0.15);
+}
+
+.badge-bce {
+  background: oklch(0.94 0.11 40);
+  color: oklch(0.38 0.16 40);
+  border: 1.5px solid oklch(0.80 0.14 40);
+}
+
+.badge-later-printing {
+  background: oklch(0.94 0.05 240);
+  color: oklch(0.40 0.08 240);
+  border: 1px solid oklch(0.85 0.06 240);
+}
+
+.badge-neutral {
+  background: var(--surface-subtle);
+  color: var(--muted);
+  border: 1px solid var(--line);
+}
+
+.issue-point-pub-row {
+  font-size: 12.5px;
+  color: var(--ink);
+  margin-bottom: 8px;
+}
+
+.confidence-tag {
+  display: inline-block;
+  font-size: 10.5px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--surface-subtle);
+  color: var(--muted);
+  border: 1px solid var(--line);
+}
+
+.issue-point-trace {
+  font-size: 12px;
+  color: var(--ink);
+  background: var(--surface-subtle);
+  padding: 9px 13px;
+  border-radius: 6px;
+  border-left: 3px solid var(--copper);
+  margin: 10px 0;
+  line-height: 1.45;
+}
+
+.issue-point-evidence-list {
+  list-style: none;
+  padding: 0;
+  margin: 8px 0 0 0;
+  font-size: 12px;
+  color: var(--ink);
+}
+
+.issue-point-evidence-list li {
+  padding: 4px 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  line-height: 1.35;
+}
+
+.issue-point-evidence-list li::before {
+  content: "✓";
+  color: var(--green);
+  font-weight: 700;
+}
+
+.issue-point-disqualify-list {
+  list-style: none;
+  padding: 0;
+  margin: 8px 0 0 0;
+  font-size: 12px;
+  color: oklch(0.45 0.18 30);
+}
+
+.issue-point-disqualify-list li {
+  padding: 3px 0;
+  line-height: 1.35;
+}
+

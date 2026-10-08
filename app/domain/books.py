@@ -48,6 +48,8 @@ class SpineExtractionItem:
     visible_condition_cues: tuple[str, ...] = ()
     edition_or_series_markers: tuple[str, ...] = ()
     raw_spine_text: str = ""
+    raw_copyright_text: str = ""
+    raw_flap_text: str = ""
     confidence: str = "medium"
 
     @classmethod
@@ -78,6 +80,8 @@ class SpineExtractionItem:
                 str(m).strip() for m in data.get("edition_or_series_markers", []) if str(m).strip()
             ),
             raw_spine_text=str(data.get("raw_spine_text", "")).strip(),
+            raw_copyright_text=str(data.get("raw_copyright_text", "")).strip(),
+            raw_flap_text=str(data.get("raw_flap_text", "")).strip(),
             confidence=str(data.get("confidence", "medium")).lower(),
         )
 
@@ -93,6 +97,8 @@ class SpineExtractionItem:
             "visible_condition_cues": list(self.visible_condition_cues),
             "edition_or_series_markers": list(self.edition_or_series_markers),
             "raw_spine_text": self.raw_spine_text,
+            "raw_copyright_text": self.raw_copyright_text,
+            "raw_flap_text": self.raw_flap_text,
             "confidence": self.confidence,
         }
 

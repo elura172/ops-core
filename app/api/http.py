@@ -724,6 +724,62 @@ def create_app(
             author_str = ", ".join(resolved_authors)
             price_data = await run_in_threadpool(pricing.discover_price, book.title, author_str, condition, fmt_str)
 
+            # Deterministic Bibliographic Edition & Issue-Point Collation
+            from app.domain.issue_points import BibliographicIssuePointDecoder
+            copy_text = getattr(book, "raw_copyright_text", "") or ""
+            flap_text = getattr(book, "raw_flap_text", "") or ""
+            if not copy_text and book.edition_or_series_markers:
+                copy_text = " | ".join(book.edition_or_series_markers)
+
+            issue_result = BibliographicIssuePointDecoder.decode(
+                publisher=book.publisher_imprint,
+                raw_copyright_text=copy_text,
+                raw_flap_text=flap_text,
+                visible_condition_cues=book.visible_condition_cues,
+                format_str=fmt_str,
+            )
+
+            channel_strat = "multi_channel_antiquarian"
+            in_store_price = price_data["in_store_price_cad"]
+            online_price = price_data["recommended_price_cad"]
+            pricing_rationale = price_data["rationale"]
+
+            prefix = (
+                f"Synthesized from {len(prepared_images)} multi-angle photographs. "
+                if intake_mode == "multi_angle_single_book"
+                else ""
+            )
+
+            if issue_result.is_first_edition and issue_result.is_first_impression:
+                channel_strat = "antiquarian_first_edition_vault"
+                triage_reason = (
+                    f"{prefix}🎯 TRUE 1st EDITION (1st Impression) CONFIRMED via {issue_result.publisher_rule_name}. "
+                    f"{issue_result.reasoning_trace}"
+                )
+                try:
+                    num_p = float(online_price)
+                    if num_p < 45.0:
+                        online_price = f"{max(num_p * 2.5, 45.0):.2f}"
+                        pricing_rationale += f" [COLLECTIBLE PREMIUM] Elevated to first edition tier (${online_price} CAD). {issue_result.reasoning_trace}"
+                except (ValueError, TypeError):
+                    pass
+            elif issue_result.is_book_club:
+                channel_strat = "in_store_reading_copy"
+                triage_reason = (
+                    f"{prefix}⚠️ BOOK CLUB EDITION (BCE) DISQUALIFIED: {issue_result.reasoning_trace}"
+                )
+                try:
+                    num_p = float(online_price)
+                    if num_p > 16.0:
+                        online_price = "14.00"
+                        in_store_price = "12.00"
+                        pricing_rationale = (
+                            f"Capped at used reading copy valuation ($14.00 CAD). "
+                            f"Disqualified as trade first: {issue_result.reasoning_trace}"
+                        )
+                except (ValueError, TypeError):
+                    pass
+
             payload = {
                 "section": section,
                 "shelf": shelf,
@@ -732,6 +788,8 @@ def create_app(
                     "authors": resolved_authors,
                     "format": fmt_str,
                     "raw_spine_text": book.raw_spine_text,
+                    "raw_copyright_text": copy_text,
+                    "raw_flap_text": flap_text,
                     "visible_condition_cues": book.visible_condition_cues,
                     "source_filename": batch_item.source_filename,
                     "source_image_index": batch_item.source_image_index,
@@ -744,12 +802,13 @@ def create_app(
                     },
                     "triage_reason": triage_reason,
                 },
+                "issue_point_analysis": issue_result.to_dict(),
                 "valuation": {
                     "condition_grade": condition,
-                    "channel_strategy": "multi_channel_antiquarian",
-                    "in_store_price_cad": price_data["in_store_price_cad"],
-                    "online_price_cad": price_data["recommended_price_cad"],
-                    "pricing_rationale": price_data["rationale"],
+                    "channel_strategy": channel_strat,
+                    "in_store_price_cad": in_store_price,
+                    "online_price_cad": online_price,
+                    "pricing_rationale": pricing_rationale,
                 },
                 "pricing_evidence": price_data["evidence"]
             }

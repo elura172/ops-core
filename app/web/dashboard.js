@@ -313,6 +313,61 @@ function renderDetail(item) {
       if (dis.triage_reason) detail.append(node("p", `Triage: ${dis.triage_reason}`, "muted"));
     }
 
+    if (item.payload.issue_point_analysis) {
+      const ip = item.payload.issue_point_analysis;
+      const card = node("div", undefined, "issue-point-card");
+      
+      const headerRow = node("div", undefined, "issue-point-header");
+      const titleSpan = node("h4", "🎯 Bibliographic Issue Point Audit", "eyebrow");
+      
+      let badgeClass = "badge-neutral";
+      let badgeText = ip.classification;
+      if (ip.is_first_edition && ip.is_first_impression) {
+        badgeClass = "badge-first-edition";
+        badgeText = "🎯 True 1st Edition (1st Printing)";
+      } else if (ip.is_book_club) {
+        badgeClass = "badge-bce";
+        badgeText = "⚠️ Book Club Edition (BCE)";
+      } else if (ip.impression_number && ip.impression_number > 1) {
+        badgeClass = "badge-later-printing";
+        badgeText = `📖 ${ip.impression_number}th Printing`;
+      }
+      
+      const badge = node("span", badgeText, `issue-point-badge ${badgeClass}`);
+      headerRow.append(titleSpan, badge);
+      card.append(headerRow);
+
+      const pubLine = node("div", undefined, "issue-point-pub-row");
+      const confTag = node("span", (ip.confidence || "conclusive").toUpperCase(), "confidence-tag");
+      pubLine.append(node("strong", "Publisher Rule: "), node("em", ip.publisher_rule_name || "Standard Antiquarian Inspection"), node("span", " · "), confTag);
+      card.append(pubLine);
+
+      if (ip.reasoning_trace) {
+        const traceP = node("p", ip.reasoning_trace, "issue-point-trace");
+        card.append(traceP);
+      }
+
+      if (ip.evidence_points && ip.evidence_points.length) {
+        const evList = node("ul", undefined, "issue-point-evidence-list");
+        ip.evidence_points.forEach(e => {
+          const li = node("li", e);
+          evList.append(li);
+        });
+        card.append(evList);
+      }
+
+      if (ip.disqualification_flags && ip.disqualification_flags.length) {
+        const disList = node("ul", undefined, "issue-point-disqualify-list");
+        ip.disqualification_flags.forEach(d => {
+          const li = node("li", `⚠️ ${d}`);
+          disList.append(li);
+        });
+        card.append(disList);
+      }
+
+      detail.append(card);
+    }
+
     if (item.payload.pricing_evidence) {
       const ev = item.payload.pricing_evidence;
       const card = node("div", undefined, "pricing-evidence-card");

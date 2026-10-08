@@ -90,6 +90,12 @@ SYNTHESIS GUIDELINES:
    - Aggregate all visible condition flaws across every angle: sunned_faded_spine, creased_reading_spine, bumped_headcap_or_tail, torn_or_chipped_jacket, ex_library_stickers_or_tape, remainder_mark_visible, cocked_spine, or clean_as_new.
 7. TRANSCRIPTION:
    - Record key transcribed text from the spine and title page in `raw_spine_text`. Set confidence to "high".
+
+8. COPYRIGHT & NUMBERLINE TRANSCRIPTION:
+   - Verbatim transcribe all text on the copyright or colophon page, especially printing statements, date codes, and numberline sequences (e.g. "First Edition", "2 4 6 8 9 7 5 3", "First Published in 1954") into `raw_copyright_text`.
+
+9. DUST JACKET FLAP & PRICE:
+   - If the dust jacket front flap is visible, transcribe the printed retail price (e.g. "$16.95") or note the absence of price into `raw_flap_text`.
 """
 
 BOOK_STACK_GEMINI_SCHEMA = {
@@ -144,6 +150,8 @@ BOOK_STACK_GEMINI_SCHEMA = {
                         "items": {"type": "string"},
                     },
                     "raw_spine_text": {"type": "string"},
+                    "raw_copyright_text": {"type": "string"},
+                    "raw_flap_text": {"type": "string"},
                     "confidence": {
                         "type": "string",
                         "enum": ["high", "medium", "low"],

@@ -255,6 +255,8 @@ class BatchSpineDeduplicator:
             visible_condition_cues=tuple(combined_cues),
             edition_or_series_markers=tuple(combined_markers),
             raw_spine_text=kept.raw_spine_text or suppressed.raw_spine_text,
+            raw_copyright_text=kept.raw_copyright_text or suppressed.raw_copyright_text,
+            raw_flap_text=kept.raw_flap_text or suppressed.raw_flap_text,
             confidence=kept.confidence,
         )
 
@@ -403,6 +405,12 @@ class MultiAngleBookMerger:
         raw_texts = [it.raw_spine_text.strip() for it in items if it.raw_spine_text and it.raw_spine_text.strip()]
         consolidated_raw = " | ".join(raw_texts)
 
+        # 9. Copyright & flap text
+        copy_texts = [it.raw_copyright_text.strip() for it in items if it.raw_copyright_text and it.raw_copyright_text.strip()]
+        best_copyright = max(copy_texts, key=len) if copy_texts else ""
+        flap_texts = [it.raw_flap_text.strip() for it in items if it.raw_flap_text and it.raw_flap_text.strip()]
+        best_flap = max(flap_texts, key=len) if flap_texts else ""
+
         return SpineExtractionItem(
             stack_order=1,
             box_2d=items[0].box_2d,
@@ -414,5 +422,7 @@ class MultiAngleBookMerger:
             visible_condition_cues=tuple(all_cues),
             edition_or_series_markers=tuple(all_markers),
             raw_spine_text=consolidated_raw,
+            raw_copyright_text=best_copyright,
+            raw_flap_text=best_flap,
             confidence="high",
         )
