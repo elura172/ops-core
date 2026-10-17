@@ -132,6 +132,15 @@ def test_sample_stack_endpoint(dashboard_client):
     data = resp.json()
     assert data["processed"] == 3
     assert len(data["proposals"]) == 3
+    review_id = data["proposals"][0]["review_id"]
+    detail = dashboard_client.get(f"/reviews/{review_id}", headers=reviewer).json()
+    assert detail["payload"].get("sample_preview", False) is False
+    decision = dashboard_client.post(
+        f"/reviews/{review_id}/decision",
+        json={"approve": True, "payload_update": {"sample_preview": False}},
+        headers=reviewer,
+    )
+    assert decision.status_code == 200
 
 
 def test_delete_and_clear_reviews_endpoints(dashboard_client):

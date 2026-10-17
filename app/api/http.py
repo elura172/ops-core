@@ -129,18 +129,25 @@ def _require_active_subscription(user_store: Any, tenant_id: int) -> None:
         raise HTTPException(402, "an active subscription is required")
 
 
-def _authorize(tokens: TokenRegistry, permission: str, user_store: Any | None = None) -> Callable[[str], Principal]:
+def _authorize(
+    tokens: TokenRegistry,
+    permission: str,
+    user_store: Any | None = None,
+    *,
+    allow_inactive: bool = False,
+) -> Callable[[str], Principal]:
     def dependency(authorization: str = Header(default="")) -> Principal:
         token = bearer_token(authorization)
         if not token:
             raise HTTPException(401, "bearer token required", {"WWW-Authenticate": "Bearer"})
+        registry_unconfigured = False
         try:
             principal = tokens.resolve(token)
         except AuthenticationNotConfigured:
-            # Fail closed and loudly: an unconfigured registry is a deployment fault,
-            # not an invitation to serve the endpoint unauthenticated.
-            logger.error("auth.not_configured", permission=permission)
-            raise HTTPException(503, "operator authentication is not configured") from None
+            # Account JWTs are independently signed and remain usable when no
+            # static operator-token registry is configured.
+            registry_unconfigured = True
+            principal = None
         if principal is None:
             # Support dynamic JWT tokens from multi-tenant auth
             try:
@@ -152,7 +159,9 @@ def _authorize(tokens: TokenRegistry, permission: str, user_store: Any | None = 
                 tenant_id = int(payload.get("tenant_id", 1))
                 principal = Principal(name=email, roles=frozenset({role}), tenant_id=tenant_id)
             except Exception:
-                pass
+                if registry_unconfigured:
+                    logger.error("auth.not_configured", permission=permission)
+                    raise HTTPException(503, "operator authentication is not configured") from None
 
         if principal is None:
             logger.warning("auth.token_rejected", permission=permission)
@@ -160,7 +169,7 @@ def _authorize(tokens: TokenRegistry, permission: str, user_store: Any | None = 
         if not principal.can(permission):
             logger.warning("auth.forbidden", principal=principal.name, permission=permission)
             raise HTTPException(403, f"principal lacks {permission}")
-        if user_store is not None:
+        if user_store is not None and not allow_inactive:
             _require_active_subscription(user_store, principal.tenant_id)
         return principal
 
@@ -465,6 +474,9 @@ def create_app(
     require_read = _authorize(settings.tokens, READ, user_store)
     require_decide = _authorize(settings.tokens, DECIDE, user_store)
     require_execute = _authorize(settings.tokens, EXECUTE, user_store)
+    require_preview_read = _authorize(settings.tokens, READ, user_store, allow_inactive=True)
+    require_preview_decide = _authorize(settings.tokens, DECIDE, user_store, allow_inactive=True)
+    require_preview_execute = _authorize(settings.tokens, EXECUTE, user_store, allow_inactive=True)
 
     app = FastAPI(title="Ops Core", version="0.3.0")
     from app.api.custom_site import custom_site_router
@@ -575,7 +587,7 @@ def create_app(
         }
 
     @app.get("/reviews/{review_id}")
-    def review_detail(review_id: str, principal: Principal = Depends(require_read)) -> dict[str, Any]:
+    def review_detail(review_id: str, principal: Principal = Depends(require_preview_read)) -> dict[str, Any]:
         try:
             return operator.review_detail(review_id, tenant_id=principal.tenant_id)
         except KeyError as exc:
@@ -611,7 +623,9 @@ def create_app(
         }
 
     @app.get("/reviews")
-    def list_reviews(pending_only: bool = False, principal: Principal = Depends(require_read)) -> list[dict[str, Any]]:
+    def list_reviews(
+        pending_only: bool = False, principal: Principal = Depends(require_preview_read)
+    ) -> list[dict[str, Any]]:
         return operator.list_reviews(pending_only, tenant_id=principal.tenant_id)
 
     @app.post("/reviews")
@@ -622,9 +636,16 @@ def create_app(
             raise HTTPException(400, str(exc)) from exc
 
     @app.post("/reviews/{review_id}/decision")
-    def decision(review_id: str, decision: Decision, principal: Principal = Depends(require_decide)) -> dict[str, Any]:
+    def decision(
+        review_id: str, decision: Decision, principal: Principal = Depends(require_preview_decide)
+    ) -> dict[str, Any]:
         try:
             item = operator.reviews.get(review_id, tenant_id=principal.tenant_id)
+            billing = user_store.get_tenant_billing_status(principal.tenant_id)
+            if billing.get("subscription_status") != "active" and (
+                not item or item.operation not in {"intake_book", "review_shelf_capture"}
+            ):
+                raise HTTPException(402, "only catalogue draft reviews are available in preview")
             if item and item.operation == "contention_hold_vs_marketplace" and not decision.approve:
                 # Operator chose to honor the collector courtesy hold and cancel marketplace order
                 from app.api.biblio_service import BiblioService
@@ -641,12 +662,15 @@ def create_app(
                         dealer_id=dealer_id,
                         dry_run=settings.dry_run,
                     )
+            payload_update = decision.payload_update
+            if item and item.payload.get("sample_preview"):
+                payload_update = {**(payload_update or {}), "sample_preview": True}
             return operator.decide(
                 review_id,
                 decision.approve,
                 principal.name,
                 decision.reason,
-                decision.payload_update,
+                payload_update,
                 tenant_id=principal.tenant_id,
             )
         except KeyError as exc:
@@ -655,8 +679,16 @@ def create_app(
             raise HTTPException(409, str(exc)) from exc
 
     @app.post("/reviews/{review_id}/execute")
-    def execute(review_id: str, principal: Principal = Depends(require_execute)) -> dict[str, Any]:
+    def execute(review_id: str, principal: Principal = Depends(require_preview_execute)) -> dict[str, Any]:
         try:
+            item = operator.reviews.get(review_id, tenant_id=principal.tenant_id)
+            billing = user_store.get_tenant_billing_status(principal.tenant_id)
+            if item and item.payload.get("sample_preview"):
+                raise HTTPException(409, "sample catalogue drafts cannot be executed")
+            if billing.get("subscription_status") != "active" and (
+                not item or item.operation != "review_shelf_capture"
+            ):
+                raise HTTPException(402, "inventory changes require an active subscription")
             return operator.execute(review_id, actor=principal.name, tenant_id=principal.tenant_id)
         except KeyError as exc:
             raise HTTPException(404, "review not found") from exc
@@ -855,13 +887,14 @@ def create_app(
         section: str = Form("General"),
         shelf: str = Form(""),
         auto_register: bool = Form(False),
-        principal: Principal = Depends(require_decide),
+        principal: Principal = Depends(require_preview_decide),
     ) -> dict[str, Any]:
         if intake_mode not in {"multi_stack", "multi_angle_single_book", "shelf_capture"}:
             raise HTTPException(422, "Choose a supported photo intake mode")
         shelf_mode = intake_mode == "shelf_capture"
         auto_register_requested = auto_register
-        if shelf_mode:
+        billing = user_store.get_tenant_billing_status(principal.tenant_id)
+        if shelf_mode or billing.get("subscription_status") != "active":
             auto_register = False
         from app.ai.book_vision import (
             GeminiBookVisionProvider,
@@ -1321,18 +1354,10 @@ def create_app(
 
     @app.post("/intake/sample")
     async def process_sample_upload(
-        principal: Principal = Depends(require_decide),
+        principal: Principal = Depends(require_preview_decide),
     ) -> dict[str, Any]:
-        from app.amazon.scraper import AmazonScraperClient, SnapshotStore
-        from app.pricing import PricingEngine
-
-        scraper = AmazonScraperClient(
-            api_key=settings.amazon_scraper_api_key,
-            store=SnapshotStore(),
-            live=not settings.dry_run and bool(settings.amazon_scraper_api_key),
-        )
-        pricing = PricingEngine(scraper)
-
+        billing = user_store.get_tenant_billing_status(principal.tenant_id)
+        preview_mode = billing.get("subscription_status") != "active"
         sample_books = [
             {
                 "title": "Neuromancer",
@@ -1341,6 +1366,8 @@ def create_app(
                 "condition": "Very Good",
                 "raw_spine_text": "GIBSON NEUROMANCER ACE SCIENCE FICTION",
                 "match_score": 0.94,
+                "in_store_price_cad": 12.0,
+                "online_price_cad": 18.0,
             },
             {
                 "title": "Foundation",
@@ -1349,6 +1376,8 @@ def create_app(
                 "condition": "Good",
                 "raw_spine_text": "FOUNDATION ASIMOV GNOME PRESS",
                 "match_score": 0.91,
+                "in_store_price_cad": 18.0,
+                "online_price_cad": 26.0,
             },
             {
                 "title": "The Left Hand of Darkness",
@@ -1357,19 +1386,23 @@ def create_app(
                 "condition": "Very Good",
                 "raw_spine_text": "THE LEFT HAND OF DARKNESS LE GUIN WALKER",
                 "match_score": 0.89,
+                "in_store_price_cad": 15.0,
+                "online_price_cad": 22.0,
             },
         ]
 
         proposals = []
         for idx, book in enumerate(sample_books, start=1):
-            price_data = await run_in_threadpool(
-                pricing.discover_price,
-                book["title"],
-                ", ".join(book["authors"]),
-                book["condition"],
-                book.get("format", "hardcover"),
+            sample_rationale = (
+                "Illustrative sample price only; verify edition, condition, and current market before listing."
             )
+            sample_evidence = {
+                "confidence_label": "Sample only",
+                "comps_found": 0,
+                "top_comps": [],
+            }
             payload = {
+                "sample_preview": preview_mode,
                 "section": "Sci-Fi / Fantasy" if idx <= 3 else "Canadiana / Rare",
                 "shelf": "B-03" if idx <= 3 else "Vault-1",
                 "extraction": {
@@ -1390,44 +1423,49 @@ def create_app(
                 "valuation": {
                     "condition_grade": book["condition"],
                     "channel_strategy": "multi_channel_antiquarian",
-                    "in_store_price_cad": price_data["in_store_price_cad"],
-                    "online_price_cad": price_data["recommended_price_cad"],
-                    "pricing_rationale": price_data["rationale"],
+                    "in_store_price_cad": book["in_store_price_cad"],
+                    "online_price_cad": book["online_price_cad"],
+                    "pricing_rationale": sample_rationale,
                 },
-                "pricing_evidence": price_data["evidence"],
+                "pricing_evidence": sample_evidence,
             }
 
-            # Check for collector want list match (Priority Courtesy Hold)
-            try:
-                from app.domain.want_list import WantListMatcher
+            # Inactive accounts get isolated demo records. Active accounts keep
+            # the existing collector-want preview behavior of this sample flow.
+            if not preview_mode:
+                try:
+                    from app.domain.want_list import WantListMatcher
 
-                w_matcher = WantListMatcher()
-                active_wants = want_list_store.list_wants(tenant_id=principal.tenant_id, status="active")
-                collectors_map = {c.id: c for c in want_list_store.list_collectors(tenant_id=principal.tenant_id)}
-                w_cand = {
-                    "title": book["title"],
-                    "authors": book["authors"],
-                    "condition": book["condition"],
-                    "format": book["format"],
-                    "price_cad": price_data["recommended_price_cad"],
-                }
-                w_match = w_matcher.find_best_match(active_wants, collectors_map, w_cand)
-                if w_match and w_match.matched:
-                    c_name = w_match.collector.name if w_match.collector else "Collector"
-                    payload["disambiguation"]["triage_reason"] = (
-                        f"MATCHES COLLECTOR WANT: {c_name} has an active want for '{w_match.want_item.title}' "
-                        f"(Budget: ${w_match.want_item.max_price_cad or 'Open'}). "
-                        f"Priority 48h courtesy hold recommended."
+                    matcher = WantListMatcher()
+                    active_wants = want_list_store.list_wants(tenant_id=principal.tenant_id, status="active")
+                    collectors = {c.id: c for c in want_list_store.list_collectors(tenant_id=principal.tenant_id)}
+                    match = matcher.find_best_match(
+                        active_wants,
+                        collectors,
+                        {
+                            "title": book["title"],
+                            "authors": book["authors"],
+                            "condition": book["condition"],
+                            "format": book["format"],
+                            "price_cad": book["online_price_cad"],
+                        },
                     )
-                    payload["want_match"] = {
-                        "matched": True,
-                        "collector_name": c_name,
-                        "collector_id": w_match.collector.id if w_match.collector else "",
-                        "want_id": w_match.want_item.id if w_match.want_item else "",
-                        "match_score": w_match.match_score,
-                    }
-            except Exception as w_exc:
-                logger.debug("want_match.check_failed", error=str(w_exc))
+                    if match and match.matched:
+                        collector_name = match.collector.name if match.collector else "Collector"
+                        payload["disambiguation"]["triage_reason"] = (
+                            f"MATCHES COLLECTOR WANT: {collector_name} has an active want for "
+                            f"'{match.want_item.title}' (Budget: ${match.want_item.max_price_cad or 'Open'}). "
+                            "Priority 48h courtesy hold recommended."
+                        )
+                        payload["want_match"] = {
+                            "matched": True,
+                            "collector_name": collector_name,
+                            "collector_id": match.collector.id if match.collector else "",
+                            "want_id": match.want_item.id if match.want_item else "",
+                            "match_score": match.match_score,
+                        }
+                except Exception as exc:
+                    logger.debug("want_match.check_failed", error=str(exc))
 
             res = operator.propose("intake_book", payload, tenant_id=principal.tenant_id)
             proposals.append(res)

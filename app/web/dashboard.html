@@ -57,7 +57,7 @@
       <div id="signup-panel" hidden>
         <p class="eyebrow">JOIN OPS CORE</p>
         <h2>Create a Workspace</h2>
-        <p class="muted signup-note">Create an account, then choose a subscription to open your workspace.</p>
+        <p class="muted signup-note">Create an account to try a sample shelf or preview your own photo. Subscribe when you’re ready to open the full workspace.</p>
         <form id="form-signup">
           <label for="signup-store">Store Name</label>
           <input id="signup-store" type="text" required autocomplete="organization" spellcheck="false" placeholder="Blackwood Books Antiquarian">
@@ -82,6 +82,34 @@
         <p class="muted" style="margin-bottom: 24px;">Choose a subscription to manage your books and review changes.</p>
         <button id="btn-subscribe" class="primary">Choose a subscription</button>
       </div>
+    </section>
+
+    <!-- FIRST CATALOGUE PREVIEW -->
+    <section id="starter-section" class="panel starter-panel" hidden>
+      <div class="starter-heading">
+        <p class="eyebrow">YOUR FIRST CATALOGUE</p>
+        <h2>Start with a shelf.</h2>
+        <p class="muted">See book details prepared for review. Nothing is added to inventory or published.</p>
+      </div>
+      <div class="starter-choices">
+        <div class="starter-choice">
+          <div class="starter-mark sample-mark" aria-hidden="true">▥</div>
+          <div>
+            <h3>Try a sample shelf</h3>
+            <p class="muted">Open three example book drafts and explore the review step.</p>
+          </div>
+          <button type="button" id="btn-starter-sample" class="primary">See sample drafts</button>
+        </div>
+        <div class="starter-choice">
+          <div class="starter-mark upload-mark" aria-hidden="true">＋</div>
+          <div>
+            <h3>Use your own photo</h3>
+            <p class="muted">Choose a shelf photo or add overlapping close-ups of the same shelf.</p>
+          </div>
+          <button type="button" id="btn-starter-upload" class="secondary">Choose a photo</button>
+        </div>
+      </div>
+      <p class="starter-footnote">Your drafts stay in your private review desk. A shop connection isn’t needed for this preview.</p>
     </section>
 
     <!-- ONBOARDING -->
@@ -124,11 +152,11 @@
             <span class="tab-label">Review Desk</span>
             <span id="tab-queue-badge" class="tab-count"></span>
           </button>
-          <button type="button" id="tab-bookshelf" class="nav-tab">
+          <button type="button" id="tab-bookshelf" class="nav-tab" data-paid-only>
             <span class="tab-icon">📚</span>
             <span class="tab-label">Inventory</span>
           </button>
-          <button type="button" id="tab-collectors" class="nav-tab">
+          <button type="button" id="tab-collectors" class="nav-tab" data-paid-only>
             <span class="tab-icon">📇</span>
             <span class="tab-label">Collectors & Wants</span>
             <span id="tab-holds-badge" class="tab-count badge-holds" style="display:none;">0</span>
@@ -137,11 +165,11 @@
             <span class="tab-icon">📷</span>
             <span class="tab-label">Intake Studio</span>
           </button>
-          <button type="button" id="tab-settings" class="nav-tab">
+          <button type="button" id="tab-settings" class="nav-tab" data-paid-only>
             <span class="tab-icon">🛡️</span>
             <span class="tab-label">Shops & stock</span>
           </button>
-          <button type="button" id="tab-analytics" class="nav-tab">
+          <button type="button" id="tab-analytics" class="nav-tab" data-paid-only>
             <span class="tab-icon">📊</span>
             <span class="tab-label">Activity</span>
           </button>

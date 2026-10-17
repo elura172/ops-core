@@ -3862,7 +3862,7 @@ select:focus {
 
 /* Shelf capture keeps photo evidence beside copy-count decisions. */
 .shelf-observations { display: grid; gap: 16px; margin: 20px 0; }
-.shelf-observation { display: flex; gap: 16px; padding: 16px 0; border-top: 1px solid var(--border); min-width: 0; }
+.shelf-observation { display: flex; gap: 16px; padding: 16px 0; border-top: 1px solid var(--line); min-width: 0; }
 .shelf-observation-content { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .shelf-observation-content h3 { margin: 0; }
 .shelf-observation-content select { width: 100%; min-width: 0; }
@@ -3876,4 +3876,50 @@ select:focus {
 @media (max-width: 520px) {
   .shelf-observation { flex-direction: column; }
   .shelf-spine-crop { width: auto; max-width: 100%; max-height: 160px; }
+}
+
+/* First-use catalogue preview: two clear actions, in the existing bookshop palette. */
+.starter-panel {
+  max-width: 980px;
+  margin: 24px auto 52px;
+  padding: clamp(24px, 5vw, 48px);
+}
+.starter-heading { max-width: 620px; }
+.starter-heading h2 { margin: 4px 0 10px; font-size: clamp(30px, 4vw, 42px); }
+.starter-heading > p:last-child { max-width: 520px; margin: 0; line-height: 1.65; }
+.starter-choices {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-top: 34px;
+  border-top: 1px solid var(--line);
+}
+.starter-choice {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  align-content: start;
+  align-items: start;
+  gap: 2px 16px;
+  min-width: 0;
+  padding: 26px 28px 0 0;
+}
+.starter-choice + .starter-choice { border-left: 1px solid var(--line); padding: 26px 0 0 28px; }
+.starter-mark {
+  grid-row: span 2;
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  color: var(--copper);
+  border: 1px solid var(--line);
+  font-size: 21px;
+}
+.starter-choice h3 { margin: 0 0 5px; font-family: var(--font-serif); font-size: 22px; font-weight: 500; }
+.starter-choice p { margin: 0; max-width: 330px; line-height: 1.55; }
+.starter-choice button { grid-column: 2; justify-self: start; margin-top: 20px; }
+.starter-footnote { margin: 28px 0 0; padding-top: 16px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; }
+@media (max-width: 640px) {
+  .starter-panel { margin: 12px 0 32px; padding: 24px 20px; }
+  .starter-choices { grid-template-columns: minmax(0, 1fr); margin-top: 24px; }
+  .starter-choice { padding: 20px 0; }
+  .starter-choice + .starter-choice { border-left: 0; border-top: 1px solid var(--line); padding: 20px 0 0; }
 }

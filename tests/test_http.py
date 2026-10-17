@@ -91,6 +91,8 @@ def test_endpoints_fail_closed_when_no_tokens_are_configured(settings):
         )
     )
     assert unconfigured.get("/reviews", headers=auth("anything")).status_code == 503
+    account_token = create_access_token({"sub": "bookshop@example.test", "tenant_id": 101, "role": "admin"})
+    assert unconfigured.get("/reviews", headers=auth(account_token)).status_code == 200
 
 
 def test_forged_webhook_returns_a_real_401_status(client):
@@ -244,7 +246,7 @@ def test_quarantined_events_are_scoped_to_the_authenticated_tenant(settings):
     assert [row["event_id"] for row in tenant_one_events.json()] == ["cancelled-t1"]
 
 
-def test_inactive_tenant_can_reach_checkout_but_not_workspace_apis(settings, monkeypatch):
+def test_inactive_tenant_can_preview_catalogue_but_not_manage_inventory(settings, monkeypatch):
     from app.api.http import create_app
 
     monkeypatch.setattr(
@@ -266,8 +268,17 @@ def test_inactive_tenant_can_reach_checkout_but_not_workspace_apis(settings, mon
         create_app(settings=checkout_settings),
         base_url="https://ops-core.test",
     )
-    token = create_access_token({"sub": "unpaid@example.test", "tenant_id": 999, "role": "admin"})
-    headers = auth(token)
+    landing = client.get("/")
+    assert landing.status_code == 200
+    assert 'href="/dashboard?mode=signup"' in landing.text
+    signup_page = client.get("/dashboard?mode=signup")
+    assert signup_page.status_code == 200 and 'id="form-signup"' in signup_page.text
+    signup = client.post(
+        "/auth/signup",
+        json={"store_name": "Preview Books", "email": "unpaid@example.test", "password": "Local-test-pass-123!"},
+    )
+    assert signup.status_code == 200
+    headers = auth(signup.json()["access_token"])
 
     identity = client.get("/auth/me", headers=headers)
     assert identity.status_code == 200
@@ -281,7 +292,8 @@ def test_inactive_tenant_can_reach_checkout_but_not_workspace_apis(settings, mon
         headers=headers,
     )
     assert checkout.status_code == 200
-    assert client.get("/reviews", headers=headers).status_code == 402
+    assert client.get("/reviews", headers=headers).status_code == 200
+    assert client.get("/reviews?pending_only=true", headers=headers).status_code == 200
     assert client.get("/inventory", headers=headers).status_code == 402
     assert client.get("/integrations", headers=headers).status_code == 402
     assert client.get("/analytics", headers=headers).status_code == 402
@@ -293,6 +305,75 @@ def test_inactive_tenant_can_reach_checkout_but_not_workspace_apis(settings, mon
         ).status_code
         == 402
     )
+
+    sample = client.post("/intake/sample", headers=headers)
+    assert sample.status_code == 200
+    assert sample.json()["processed"] == 3
+    review_id = sample.json()["proposals"][0]["review_id"]
+    preview_detail = client.get(f"/reviews/{review_id}", headers=headers)
+    assert preview_detail.status_code == 200
+    assert preview_detail.json()["payload"]["sample_preview"] is True
+    decision = client.post(f"/reviews/{review_id}/decision", json={"approve": True}, headers=headers)
+    assert decision.status_code == 200
+    assert client.post(f"/reviews/{review_id}/execute", headers=headers).status_code == 409
+
+    import io
+
+    from PIL import Image
+
+    from app.domain.books import BookFormat, BookStackExtraction, SpineExtractionItem
+
+    photo = io.BytesIO()
+    Image.new("RGB", (800, 600), "white").save(photo, "JPEG")
+    raw_photo = photo.getvalue()
+    extraction = BookStackExtraction(
+        books=(
+            SpineExtractionItem(
+                stack_order=1,
+                box_2d=(40, 80, 720, 170),
+                title="The Sample Spine",
+                authors=("Example Bookseller",),
+                format=BookFormat.TRADE_PAPERBACK,
+                confidence="high",
+            ),
+        ),
+        orientation="vertical_shelf",
+    )
+    monkeypatch.setattr("app.ai.book_vision.resolve_gemini_api_key", lambda *_args: "fake-preview-key")
+    monkeypatch.setattr(
+        "app.ai.book_vision.GeminiBookVisionProvider.extract_shelf_stack",
+        lambda *_args: extraction,
+    )
+    upload = client.post(
+        "/intake/camera",
+        files=[("files", (f"shelf-{index}.jpg", raw_photo, "image/jpeg")) for index in (1, 2)],
+        data={"intake_mode": "shelf_capture", "auto_register": "true"},
+        headers=headers,
+    )
+    assert upload.status_code == 200, upload.text
+    uploaded = upload.json()
+    assert uploaded["auto_register_requested"] is True and uploaded["auto_register"] is False
+    shelf_review_id = uploaded["shelf_draft"]["review_id"]
+    shelf_detail = client.get(f"/reviews/{shelf_review_id}", headers=headers).json()
+    assert shelf_detail["operation"] == "review_shelf_capture"
+    payload = shelf_detail["payload"]
+    approve_shelf = client.post(
+        f"/reviews/{shelf_review_id}/decision",
+        json={
+            "approve": True,
+            "payload_update": {
+                "copy_count_confirmed": True,
+                "copy_groups": payload["suggested_groups"],
+                "excluded_observations": [],
+            },
+        },
+        headers=headers,
+    )
+    assert approve_shelf.status_code == 200
+    created_reviews = client.post(f"/reviews/{shelf_review_id}/execute", headers=headers)
+    assert created_reviews.status_code == 200
+    assert len(created_reviews.json()["result"]["review_ids"]) == 1
+    assert client.get("/inventory", headers=headers).status_code == 402
 
 
 def test_approvals_survive_a_process_restart(tmp_path, settings):

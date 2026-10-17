@@ -1,7 +1,7 @@
 "use strict";
 const $ = id => document.getElementById(id);
 let checkedItems = new Set();
-let token = "", session = null, items = [], selected = null, generation = 0, selection = 0, busy = false;
+let token = "", session = null, items = [], selected = null, generation = 0, selection = 0, busy = false, previewMode = false;
 const labels = {review_shelf_capture:"Review shelf capture", publish_custom_site:"Publish to own website", review_stock_conflict:"Review competing stock claims", intake_book:"Intake Book", create_product_draft:"Create product draft", update_inventory:"Update stock", update_prices:"Update prices", publish:"Publish content", send_customer_response:"Send customer response", sync_inventory:"Update connected shops", fulfill_order:"Fulfill Order", resolve_order_contention:"Resolve sale conflict", contention_hold_vs_marketplace:"Collector hold vs. Biblio sale"};
 const human = text => String(text).replaceAll("_", " ");
 function formatError(detail) {
@@ -63,11 +63,16 @@ function focusDialog(dialog, label, close) {
 }
 function message(text) { $("message").textContent = text; }
 function disconnect() {
-  generation++; selection++; token = ""; session = null; items = []; selected = null; busy = false;
-  $("items").replaceChildren(); $("detail").replaceChildren();
+  generation++; selection++; token = ""; session = null; items = []; selected = null; checkedItems.clear(); busy = false; previewMode = false;
+  renderQueue();
+  $("detail").replaceChildren();
   $("identity").textContent = ""; $("workspace").hidden = true; $("logout").hidden = true;
+  $("mode").textContent = ""; $("mode").className = "badge";
+  const holdsBadge = $("tab-holds-badge");
+  if (holdsBadge) { holdsBadge.textContent = "0"; holdsBadge.style.display = "none"; }
   $("login-section").hidden = false; 
   if ($("billing-section")) $("billing-section").hidden = true;
+  if ($("starter-section")) $("starter-section").hidden = true;
   if ($("onboarding-section")) $("onboarding-section").hidden = true;
   if (typeof switchTab === "function") switchTab("queue");
   $("refresh").disabled = false;
@@ -741,7 +746,8 @@ function renderDetail(item) {
   if (item.failure) detail.append(node("p", `Needs reconciliation: ${item.failure}`));
   if (item.execution_blocked) detail.append(node("p", `Execution unavailable: ${item.execution_blocked}`));
   const actions = node("div", undefined, "actions");
-  if (item.status === "PENDING" && session.permissions.includes("review:decide")) {
+  const previewCatalogueOperation = ["intake_book", "review_shelf_capture"].includes(item.operation);
+  if (item.status === "PENDING" && session.permissions.includes("review:decide") && (!previewMode || previewCatalogueOperation)) {
     const label = node("label", "Decision note (optional)", "reason"); label.htmlFor = "reason";
     const reason = node("textarea"); reason.id = "reason"; reason.rows = 2;
     detail.append(label, reason);
@@ -772,8 +778,16 @@ function renderDetail(item) {
       };
       actions.append(button);
     }
-  } else if (item.status === "PENDING") detail.append(node("p", "Waiting for a reviewer’s decision.", "muted"));
-  if (item.status === "APPROVED" && session.permissions.includes("review:execute")) {
+  } else if (item.status === "PENDING") {
+    detail.append(node("p", previewMode && !previewCatalogueOperation ? "This action is available after subscription." : "Waiting for a reviewer’s decision.", "muted"));
+  }
+  if (item.status === "APPROVED" && item.payload.sample_preview) {
+    detail.append(node("p", "Example catalogue draft only. Sample books can’t be added to inventory.", "muted"));
+  } else if (item.status === "APPROVED" && previewMode && item.operation === "intake_book") {
+    detail.append(node("p", "Catalogue draft saved. Inventory changes and publishing are available after subscription.", "muted"));
+  } else if (item.status === "APPROVED" && previewMode && item.operation !== "review_shelf_capture") {
+    detail.append(node("p", "This action is available after subscription.", "muted"));
+  } else if (item.status === "APPROVED" && session.permissions.includes("review:execute")) {
     detail.append(node("p", "Approval is recorded. Execution uses the configured adapter; publishing and customer email may still be simulated or disabled.", "muted"));
     const button = node("button", "Execute approved action", "primary"); button.disabled = Boolean(item.execution_blocked);
     button.onclick = ()=> {
@@ -966,17 +980,20 @@ async function handleAuth(path, body, button) {
     // Fetch identity
     const identity = await api("/auth/me");
     if (epoch !== generation) return;
-    session = {name: identity.sub, permissions: ["review:read", "review:decide", "review:execute"]}; 
+    previewMode = identity.subscription_status !== "active";
+    session = {name: identity.sub, permissions: ["review:read", "review:decide", "review:execute"], previewMode};
     $("identity").textContent = identity.sub;
-    $("mode").textContent = "WORKSPACE";
-    $("mode").className = `badge live`;
+    $("mode").textContent = previewMode ? "CATALOGUE PREVIEW" : "WORKSPACE";
+    $("mode").className = `badge ${previewMode ? "pending" : "live"}`;
+    document.querySelectorAll("[data-paid-only]").forEach(el => { el.hidden = previewMode; });
     $("login-section").hidden = true;
     $("logout").hidden = false;
 
-    if (identity.subscription_status !== "active") {
+    if (previewMode) {
         $("workspace").hidden = true;
         $("onboarding-section").hidden = true;
-        $("billing-section").hidden = false;
+        $("billing-section").hidden = true;
+        $("starter-section").hidden = false;
         
         // Setup checkout flow
         $("btn-subscribe").onclick = async () => {
@@ -998,6 +1015,7 @@ async function handleAuth(path, body, button) {
           }
         };
     } else {
+        $("starter-section").hidden = true;
         $("billing-section").hidden = true;
         // Check integrations for onboarding
         const integrations = await api("/integrations");
@@ -1018,6 +1036,23 @@ async function handleAuth(path, body, button) {
   } finally {
     button.disabled = false;
   }
+}
+
+$("btn-starter-sample")?.addEventListener("click", () => {
+  $("starter-section").hidden = true;
+  $("workspace").hidden = false;
+  switchTab("intake");
+  $("btn-sample-stack")?.click();
+});
+$("btn-starter-upload")?.addEventListener("click", () => {
+  $("starter-section").hidden = true;
+  $("workspace").hidden = false;
+  switchTab("intake");
+  $("camera-file")?.click();
+});
+if (new URLSearchParams(window.location.search).get("mode") === "signup") {
+  $("login-panel").hidden = true;
+  $("signup-panel").hidden = false;
 }
 
 $("form-login").onsubmit = async event => {
@@ -1274,6 +1309,11 @@ $("camera-file").onchange = event => {
   if (!files.length) return;
 
   stagedPhotos.push(...files);
+  if (previewMode) {
+    $("starter-section").hidden = true;
+    $("workspace").hidden = false;
+    switchTab("intake");
+  }
   renderStagedTray();
   $("camera-status").textContent = `${stagedPhotos.length} photo${stagedPhotos.length > 1 ? "s" : ""} staged. Click 'Catalog Staged Photos' to begin.`;
   $("camera-file").value = "";
@@ -1454,7 +1494,11 @@ async function executeBatchIntake() {
       ? `Book details are ready for review.`
       : `Batch cataloged ${processedCount} volumes (${dupCount} overlapping duplicates suppressed).`
     );
-    refresh();
+    await refresh();
+    if (body.proposals?.length) {
+      switchTab("queue");
+      await select(body.proposals[0].review_id);
+    }
 
   } catch (error) {
     const msg = error && error.message ? error.message : String(error || "Upload failed");
@@ -1481,13 +1525,15 @@ if ($("btn-sample-stack")) {
   $("btn-sample-stack").onclick = async () => {
     const btn = $("btn-sample-stack");
     btn.disabled = true;
-    btn.textContent = "Extracting sample stack...";
+      btn.textContent = "Preparing sample drafts...";
     $("camera-status").textContent = "Processing sample stack...";
     try {
       const body = await api("/intake/sample", { method: "POST" });
-      $("camera-status").textContent = `Extracted ${body.processed} books (${human(body.orientation)}).`;
-      message(`Vision AI extracted ${body.processed} books from the sample stack and queued them for review.`);
-      refresh();
+      $("camera-status").textContent = `Sample drafts ready: ${body.processed} example books.`;
+      message("Sample catalogue drafts are ready for review. Nothing has been published.");
+      await refresh();
+      switchTab("queue");
+      if (body.proposals?.length) await select(body.proposals[0].review_id);
     } catch(err) {
       $("camera-status").textContent = "Sample load failed.";
       message(err.message);
