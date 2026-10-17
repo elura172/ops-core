@@ -494,7 +494,8 @@ def create_app(
         allow_headers=["*"],
     )
 
-    media_spines_dir = os.path.join(os.getcwd(), "media", "spines")
+    media_root = "/tmp/ops-core" if os.getenv("VERCEL") else os.getcwd()
+    media_spines_dir = os.path.join(media_root, "media", "spines")
     os.makedirs(media_spines_dir, exist_ok=True)
     app.mount("/media/spines", StaticFiles(directory=media_spines_dir), name="media_spines")
 
