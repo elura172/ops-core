@@ -6,8 +6,8 @@ from shippo.models import components
 
 
 class CarrierAdapter(Protocol):
-    def create_label(self, payload: dict[str, Any]) -> dict[str, Any]:
-        ...
+    def create_label(self, payload: dict[str, Any]) -> dict[str, Any]: ...
+
 
 class ShippoAdapter:
     def __init__(self, api_key: str, dry_run: bool = False):
@@ -71,7 +71,7 @@ class ShippoAdapter:
                     "address_to": shippo_address_to,
                     "address_from": shippo_address_from,
                     "parcel": shippo_parcel,
-                }
+                },
             }
 
         # Live API Call
@@ -80,7 +80,7 @@ class ShippoAdapter:
                 address_from=components.AddressCreateRequest(**shippo_address_from),
                 address_to=components.AddressCreateRequest(**shippo_address_to),
                 parcels=[components.ParcelCreateRequest(**shippo_parcel)],
-                async_=False
+                async_=False,
             )
         )
 
@@ -91,11 +91,7 @@ class ShippoAdapter:
             raise ValueError("No rates returned by Shippo")
 
         transaction = self.client.transactions.create(
-            components.TransactionCreateRequest(
-                rate=rate_id,
-                label_file_type="PDF",
-                async_=False
-            )
+            components.TransactionCreateRequest(rate=rate_id, label_file_type="PDF", async_=False)
         )
 
         if transaction.status != "SUCCESS":
@@ -106,5 +102,5 @@ class ShippoAdapter:
             "provider": transaction.rate.provider,
             "label_url": transaction.label_url,
             "status": "label_generated",
-            "dry_run": False
+            "dry_run": False,
         }

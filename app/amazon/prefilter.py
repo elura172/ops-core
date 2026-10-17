@@ -185,8 +185,7 @@ class QuickCandidate:
 
 
 _EXCLUSION_PATTERNS = tuple(
-    (code, why, tuple((kw, _word_pattern(kw)) for kw in keywords))
-    for code, why, keywords in EXCLUSIONS
+    (code, why, tuple((kw, _word_pattern(kw)) for kw in keywords)) for code, why, keywords in EXCLUSIONS
 )
 _SATURATED_PATTERNS = tuple(tuple((kw, _word_pattern(kw)) for kw in group) for group in SATURATED)
 _BRAND_PATTERNS = tuple((brand, _word_pattern(brand)) for brand in sorted(DOMINANT_BRANDS))
@@ -251,8 +250,7 @@ def prefilter(
         out.append(
             Rejection(
                 "commodity_multipack",
-                f"{multipack.group(1)}-count multipack — competes on price per unit,"
-                " not on product",
+                f"{multipack.group(1)}-count multipack — competes on price per unit, not on product",
             )
         )
     return out
@@ -277,11 +275,7 @@ def parse_bulk(text: str) -> list[QuickCandidate]:
         if not prices:
             continue
         fields = [f.strip() for f in re.split(r"[,\n]", segment)]
-        titles = [
-            f
-            for f in fields
-            if len(f) > 20 and "http" not in f and "$" not in f and not ASIN_PATTERN.search(f)
-        ]
+        titles = [f for f in fields if len(f) > 20 and "http" not in f and "$" not in f and not ASIN_PATTERN.search(f)]
         if not titles:
             continue
         candidates.append(

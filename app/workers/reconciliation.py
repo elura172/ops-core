@@ -5,9 +5,7 @@ from app.domain.order_store import OrderStore, reconcile
 from app.domain.orders import OrderStatus
 
 
-def reconcile_orders(
-    store: OrderStore, remote: list[tuple[str, OrderStatus]], audit: AuditLog
-) -> list[str]:
+def reconcile_orders(store: OrderStore, remote: list[tuple[str, OrderStatus]], audit: AuditLog) -> list[str]:
     drift = reconcile(store.orders.values(), remote)
     audit.record(
         AuditEvent(

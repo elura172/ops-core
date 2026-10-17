@@ -7,6 +7,7 @@ from decimal import Decimal
 from typing import Any, Protocol
 from urllib.request import Request, urlopen
 
+from app.amazon.sp_api import AmazonSPAPIClient, LwaTokenProvider
 from app.net import RetryPolicy
 from app.observability.logging import get_logger
 
@@ -125,11 +126,12 @@ class AbeBooksListingAdapter(BookListingAdapter):
 class AmazonSPAPIAdapter(BookListingAdapter):
     """Amazon Selling Partner API (SP-API) Adapter for Book Listings."""
 
-    refresh_token: str = "mock_token"
-    client_id: str = "mock_client"
-    client_secret: str = "mock_secret"
-    endpoint: str = "https://sellingpartnerapi-na.amazon.com/listings/2021-08-01/items"
-    merchant_id: str = "default_merchant"
+    refresh_token: str = ""
+    client_id: str = ""
+    client_secret: str = ""
+    endpoint: str = "https://sellingpartnerapi-na.amazon.com"
+    merchant_id: str = ""
+    marketplace_id: str = "A2EUQ1WTGCTBG2"
     retries: RetryPolicy = field(default_factory=RetryPolicy)
     dry_run: bool = True
 
@@ -138,7 +140,29 @@ class AmazonSPAPIAdapter(BookListingAdapter):
         return "amazon_spapi"
 
     def _get_access_token(self) -> str:
-        return "stubbed_amazon_access_token"
+        if not hasattr(self, "_token_provider"):
+            self._token_provider = LwaTokenProvider(
+                self.client_id,
+                self.client_secret,
+                self.refresh_token,
+                retries=self.retries,
+            )
+        return self._token_provider.get_access_token()
+
+    def _client(self) -> AmazonSPAPIClient:
+        if not hasattr(self, "_sp_api_client"):
+            provider = LwaTokenProvider(
+                self.client_id,
+                self.client_secret,
+                self.refresh_token,
+                retries=self.retries,
+            )
+            self._sp_api_client = AmazonSPAPIClient(provider, endpoint=self.endpoint)
+        return self._sp_api_client
+
+    def get_offer_definition(self) -> dict[str, Any]:
+        """Fetch current Amazon offer requirements before preparing a live listing."""
+        return self._client().get_offer_definition(self.marketplace_id)
 
     def list_book(
         self,
@@ -148,48 +172,32 @@ class AmazonSPAPIAdapter(BookListingAdapter):
         price_cad: Decimal,
         details: dict[str, Any],
     ) -> str | None:
-        isbn = details.get("isbn")
-        if not isbn:
-            logger.warning("amazon_spapi.list_book.missing_isbn", sku=sku)
+        if not details.get("isbn") and not details.get("asin"):
+            logger.warning("amazon_spapi.list_book.missing_catalog_identifier", sku=sku)
             return None
 
         if self.dry_run:
             logger.info("amazon_spapi.list_book.dry_run", sku=sku, price=str(price_cad))
             return f"amz-dryrun-{sku}"
 
-        access_token = self._get_access_token()
-        payload = {
-            "productType": "BOOKS",
-            "requirements": "LISTING",
-            "attributes": {
-                "condition_type": [
-                    {"value": self._map_condition(condition), "marketplace_id": "A2EUQ1WTGCTBG2"}
-                ],
-                "purchasable_offer": [
-                    {
-                        "currency": "CAD",
-                        "our_price": [{"schedule": [{"value_with_tax": str(price_cad)}]}],
-                        "marketplace_id": "A2EUQ1WTGCTBG2",
-                    }
-                ],
-            },
-        }
-
-        url = f"{self.endpoint}/{self.merchant_id}/{sku}?marketplaceIds=A2EUQ1WTGCTBG2"
-        req = Request(
-            url,
-            data=json.dumps(payload).encode("utf-8"),
-            headers={
-                "x-amz-access-token": access_token,
-                "Content-Type": "application/json",
-            },
-            method="PUT",
-        )
-
         try:
-            with urlopen(req, timeout=10.0) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
-                return str(data.get("submissionId"))
+            # Amazon's offer-only schema changes by marketplace. Requiring
+            # caller-prepared attributes prevents silently submitting stale,
+            # hard-coded catalog fields from this adapter.
+            attributes = details.get("amazon_listing_attributes")
+            if not self.merchant_id or not isinstance(attributes, dict):
+                logger.warning("amazon_sp_api.listing_not_prepared", sku=sku)
+                return None
+            result = self._client().submit_listing(self.merchant_id, sku, self.marketplace_id, attributes)
+            if result.get("status") != "ACCEPTED":
+                logger.warning(
+                    "amazon_sp_api.listing_rejected",
+                    sku=sku,
+                    status=result.get("status"),
+                    issues=result.get("issues", []),
+                )
+                return None
+            return str(result.get("submissionId") or sku)
         except Exception as exc:
             logger.error("amazon_spapi.list_book.failed", sku=sku, error=str(exc))
             return None
@@ -211,22 +219,29 @@ class AmazonSPAPIAdapter(BookListingAdapter):
         if self.dry_run:
             logger.info("amazon_spapi.delist_book.dry_run", sku=sku)
             return True
-        
-        # In SP-API, we PATCH the offer quantity to 0 or DELETE the listing
-        logger.info("amazon_spapi.delist_book.success", sku=sku)
-        return True
+
+        if not self.merchant_id:
+            logger.error("amazon_sp_api.delist.missing_seller_id", sku=sku)
+            return False
+        try:
+            result = self._client().set_offer_quantity(self.merchant_id, sku, self.marketplace_id, 0)
+            return result.get("status") == "ACCEPTED"
+        except Exception as exc:
+            logger.error("amazon_sp_api.delist.failed", sku=sku, error=str(exc))
+            return False
 
     def cancel_order(self, order_id: str, reason: str = "OUT_OF_STOCK") -> bool:
         if self.dry_run:
             logger.info("amazon_spapi.cancel_order.dry_run", order_id=order_id, reason=reason)
             return True
-        logger.info("amazon_spapi.cancel_order.success", order_id=order_id, reason=reason)
-        return True
+        logger.error("amazon_sp_api.cancel.unsupported", order_id=order_id)
+        return False
 
 
 @dataclass
 class BiblioListingAdapter(BookListingAdapter):
     """Biblio Inventory API Adapter."""
+
     api_key: str = "mock_key"
     dealer_id: str = ""
     dry_run: bool = True
@@ -253,6 +268,7 @@ class BiblioListingAdapter(BookListingAdapter):
             logger.info("biblio.delist_book.dry_run", sku=sku)
             return True
         from app.api.biblio_service import BiblioService
+
         return BiblioService.delist_book(sku, api_key=self.api_key, dealer_id=self.dealer_id, dry_run=False)
 
     def cancel_order(self, order_id: str, reason: str = "OUT_OF_STOCK") -> bool:
@@ -260,12 +276,16 @@ class BiblioListingAdapter(BookListingAdapter):
             logger.info("biblio.cancel_order.dry_run", order_id=order_id, reason=reason)
             return True
         from app.api.biblio_service import BiblioService
-        return BiblioService.cancel_order(order_id, reason=reason, api_key=self.api_key, dealer_id=self.dealer_id, dry_run=False)
+
+        return BiblioService.cancel_order(
+            order_id, reason=reason, api_key=self.api_key, dealer_id=self.dealer_id, dry_run=False
+        )
 
 
 @dataclass
 class AlibrisListingAdapter(BookListingAdapter):
     """Alibris Partner API Adapter."""
+
     api_key: str = "mock_key"
     dry_run: bool = True
 
@@ -302,6 +322,7 @@ class AlibrisListingAdapter(BookListingAdapter):
 @dataclass
 class EbayListingAdapter(BookListingAdapter):
     """eBay Inventory API Adapter. Drafts listings on eBay so condition photos and attributes can be attached."""
+
     api_token: str = "mock_token"
     marketplace_id: str = "EBAY_CA"
     dry_run: bool = True
@@ -365,12 +386,10 @@ class EbayListingAdapter(BookListingAdapter):
 
 
 @dataclass
-
-
 class ShopifyListingAdapter:
     """Pushes standard product listings to a standalone Shopify store via the Admin API."""
 
-    def __init__(self, store_url: str = "", access_token: str = "", dry_run: bool = False) -> None:
+    def __init__(self, store_url: str = "", access_token: str = "", dry_run: bool = True) -> None:
         self.store_url = store_url.rstrip("/")
         self.access_token = access_token
         self.dry_run = dry_run
@@ -387,61 +406,28 @@ class ShopifyListingAdapter:
         price_cad: Decimal,
         details: dict[str, Any],
     ) -> str | None:
-        if not self.store_url or not self.access_token:
-            if not self.dry_run:
-                logger.warning("shopify.list_book.unconfigured", sku=sku)
-                return None
-
         if self.dry_run:
             logger.info("shopify.list_book.dry_run", sku=sku, price=str(price_cad))
             return f"gid://shopify/Product/dryrun-{sku}"
-            
-        authors = details.get("authors", ["Unknown"])
-        format_str = details.get("format", "Unknown")
-        rationale = details.get("rationale", "")
-        
-        body_html = f"""
-        <p><strong>Author:</strong> {", ".join(authors)}</p>
-        <p><strong>Format:</strong> {format_str}</p>
-        <p><strong>Condition:</strong> {condition}</p>
-        <p>{rationale}</p>
-        """
 
-        headers = {
-            "X-Shopify-Access-Token": self.access_token,
-            "Content-Type": "application/json"
-        }
-        
-        # In a real environment, this would use httpx or requests to hit the GraphQL or REST API.
-        # e.g., POST {self.store_url}/admin/api/2023-10/products.json
-        # For this adapter implementation, since it's fully built but not active, we'll just log and mock.
-        
-        logger.info("shopify.list_book.success", sku=sku)
-        return f"gid://shopify/Product/{sku}-live"
+        logger.error("shopify.list_book.unsupported_live_operation", sku=sku)
+        return None
 
     def delist_book(self, sku: str) -> bool:
         if self.dry_run:
             logger.info("shopify.delist_book.dry_run", sku=sku)
             return True
-            
-        if not self.store_url or not self.access_token:
-            return False
-            
-        # In a real environment, this would hit the API to set inventory to 0 or delete the product.
-        logger.info("shopify.delist_book.success", sku=sku)
-        return True
+
+        logger.error("shopify.delist_book.unsupported_live_operation", sku=sku)
+        return False
 
     def cancel_order(self, order_id: str, reason: str = "OUT_OF_STOCK") -> bool:
         if self.dry_run:
             logger.info("shopify.cancel_order.dry_run", order_id=order_id)
             return True
-            
-        if not self.store_url or not self.access_token:
-            return False
-            
-        # In a real environment, this would hit POST /admin/api/2023-10/orders/{order_id}/cancel.json
-        logger.info("shopify.cancel_order.success", order_id=order_id)
-        return True
+
+        logger.error("shopify.cancel_order.unsupported_live_operation", order_id=order_id)
+        return False
 
 
 @dataclass
@@ -539,7 +525,9 @@ class BookListingOrchestrator:
                 "sku": sku,
                 "status": "skipped",
                 "message": "Book routed to physical floor only.",
-                "marketplace_results": {ad.channel_name: {"status": "skipped", "reason": "Physical floor only"} for ad in self.adapters},
+                "marketplace_results": {
+                    ad.channel_name: {"status": "skipped", "reason": "Physical floor only"} for ad in self.adapters
+                },
                 "details": details,
             }
 
@@ -558,7 +546,7 @@ class BookListingOrchestrator:
             if adapter.channel_name == "amazon_spapi" and not details["isbn"]:
                 results[adapter.channel_name] = {"status": "skipped", "reason": "No ISBN"}
                 continue
-                
+
             # Collectibles skip Amazon generally since condition notes matter deeply
             if adapter.channel_name == "amazon_spapi" and strategy == "online_only_collectible":
                 results[adapter.channel_name] = {

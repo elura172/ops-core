@@ -8,7 +8,6 @@ from typing import Any
 
 from app.db.want_list import Collector, WantItem
 
-
 GRADE_RANKS: dict[str, int] = {
     "poor": 1,
     "reading copy": 1,
@@ -64,7 +63,7 @@ class WantMatchResult:
 
 class WantListMatcher:
     """Bibliographic matching engine for antiquarian collector want lists.
-    
+
     Evaluates newly cataloged books against active wants using fuzzy title token
     similarity, normalized author attribution, price budget constraints,
     minimum condition grade hierarchies, and binding requirements.
@@ -109,10 +108,7 @@ class WantListMatcher:
         if not want_author or not want_author.strip():
             return True, 1.0  # Open want without specific author
 
-        if isinstance(candidate_authors, str):
-            c_authors_list = [candidate_authors]
-        else:
-            c_authors_list = list(candidate_authors)
+        c_authors_list = [candidate_authors] if isinstance(candidate_authors, str) else list(candidate_authors)
 
         w_tokens = _extract_tokens(want_author)
         if not w_tokens:
@@ -147,7 +143,9 @@ class WantListMatcher:
 
         cand_title = str(candidate.get("title", "")).strip()
         cand_authors = candidate.get("authors") or candidate.get("author") or []
-        cand_price = candidate.get("price_cad") or candidate.get("online_price_cad") or candidate.get("in_store_price_cad")
+        cand_price = (
+            candidate.get("price_cad") or candidate.get("online_price_cad") or candidate.get("in_store_price_cad")
+        )
         cand_condition = str(candidate.get("condition", candidate.get("condition_grade", ""))).strip()
         cand_format = str(candidate.get("format", candidate.get("binding", ""))).strip()
 
@@ -159,7 +157,9 @@ class WantListMatcher:
                 want_item=want,
                 collector=collector,
                 match_score=t_score,
-                reasons=[f"Title score {t_score:.2f} below threshold (want: '{want.title}', candidate: '{cand_title}')"],
+                reasons=[
+                    f"Title score {t_score:.2f} below threshold (want: '{want.title}', candidate: '{cand_title}')"
+                ],
             )
         reasons.append(f"Title match: {t_score:.2f} ('{want.title}' ~ '{cand_title}')")
 
@@ -186,9 +186,7 @@ class WantListMatcher:
                         want_item=want,
                         collector=collector,
                         match_score=0.0,
-                        reasons=[
-                            f"Price ${price_val:.2f} CAD exceeds collector budget ${want.max_price_cad:.2f} CAD"
-                        ],
+                        reasons=[f"Price ${price_val:.2f} CAD exceeds collector budget ${want.max_price_cad:.2f} CAD"],
                     )
                 reasons.append(f"Within budget (${price_val:.2f} <= ${want.max_price_cad:.2f} CAD)")
             except Exception:
@@ -205,7 +203,8 @@ class WantListMatcher:
                     collector=collector,
                     match_score=0.0,
                     reasons=[
-                        f"Condition '{cand_condition}' (grade {c_rank}) below required '{want.min_condition}' (grade {w_rank})"
+                        f"Condition '{cand_condition}' (grade {c_rank}) below required "
+                        f"'{want.min_condition}' (grade {w_rank})"
                     ],
                 )
             reasons.append(f"Condition satisfied ('{cand_condition}' >= '{want.min_condition}')")
@@ -253,7 +252,6 @@ class WantListMatcher:
                 continue
             collector = collectors_by_id.get(want.collector_id)
             result = self.evaluate(want, collector, candidate)
-            if result.matched:
-                if best_match is None or result.match_score > best_match.match_score:
-                    best_match = result
+            if result.matched and (best_match is None or result.match_score > best_match.match_score):
+                best_match = result
         return best_match

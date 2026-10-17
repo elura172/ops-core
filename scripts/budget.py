@@ -45,9 +45,7 @@ def main() -> int:
 
     fixed = FixedCosts()
     if args.lean:
-        fixed = FixedCosts(
-            photography=Decimal("0"), inspection=Decimal("0"), samples=Decimal("120")
-        )
+        fixed = FixedCosts(photography=Decimal("0"), inspection=Decimal("0"), samples=Decimal("120"))
 
     plan = LaunchPlan(
         units=args.units,
@@ -78,20 +76,14 @@ def main() -> int:
     print(f"    landed {e.landed_cost:>8}  referral {e.referral_fee:>7}  FBA {e.fulfilment_fee:>7}")
     print(f"    storage {e.storage_fee:>12}   returns  {e.returns_reserve:>7}")
     colour = GREEN if e.net_profit > 0 else RED
-    print(
-        f"    {colour}profit {e.net_profit:>9}  margin {e.margin:>7.1%}  ROI {e.roi:>8.1%}{RESET}\n"
-    )
+    print(f"    {colour}profit {e.net_profit:>9}  margin {e.margin:>7.1%}  ROI {e.roi:>8.1%}{RESET}\n")
 
     be = plan.break_even_units
     print(f"  {BOLD}Getting it back{RESET}")
     if be is None:
         print(f"    {RED}never — the unit loses money at this price{RESET}")
     else:
-        verdict = (
-            GREEN + "within the first order"
-            if plan.recovers_on_first_order
-            else RED + "needs a second order"
-        )
+        verdict = GREEN + "within the first order" if plan.recovers_on_first_order else RED + "needs a second order"
         print(f"    break-even at {be} of {args.units} units — {verdict}{RESET}")
         print(f"    profit if it all sells      ${plan.profit_if_sold_out}")
     days = plan.cash_cycle_days(args.sell_through)

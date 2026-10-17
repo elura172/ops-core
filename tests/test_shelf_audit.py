@@ -3,22 +3,74 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from decimal import Decimal
 
-from app.db.inventory import InventoryItem, SQLiteInventoryStore, ShelfAuditRecord
+from app.db.inventory import InventoryItem, ShelfAuditRecord, SQLiteInventoryStore
 from app.domain.shelf_audit import ShelfAuditService
 
 
 def test_shelf_audit_reconciliation_matching():
     now = datetime.now(UTC)
-    
+
     # 3 expected books on Sci-Fi / B-03
     expected_books = [
-        InventoryItem("BK-DUNE", "Dune", ["Frank Herbert"], "hardcover", "Fine", Decimal("50.00"), Decimal("55.00"), "active", now, now, section="Sci-Fi / Fantasy", shelf="B-03"),
-        InventoryItem("BK-NEURO", "Neuromancer", ["William Gibson"], "paperback", "Very Good", Decimal("20.00"), Decimal("22.00"), "active", now, now, section="Sci-Fi / Fantasy", shelf="B-03"),
-        InventoryItem("BK-F451", "Fahrenheit 451", ["Ray Bradbury"], "paperback", "Good", Decimal("15.00"), Decimal("18.00"), "active", now, now, section="Sci-Fi / Fantasy", shelf="B-03"),
+        InventoryItem(
+            "BK-DUNE",
+            "Dune",
+            ["Frank Herbert"],
+            "hardcover",
+            "Fine",
+            Decimal("50.00"),
+            Decimal("55.00"),
+            "active",
+            now,
+            now,
+            section="Sci-Fi / Fantasy",
+            shelf="B-03",
+        ),
+        InventoryItem(
+            "BK-NEURO",
+            "Neuromancer",
+            ["William Gibson"],
+            "paperback",
+            "Very Good",
+            Decimal("20.00"),
+            Decimal("22.00"),
+            "active",
+            now,
+            now,
+            section="Sci-Fi / Fantasy",
+            shelf="B-03",
+        ),
+        InventoryItem(
+            "BK-F451",
+            "Fahrenheit 451",
+            ["Ray Bradbury"],
+            "paperback",
+            "Good",
+            Decimal("15.00"),
+            Decimal("18.00"),
+            "active",
+            now,
+            now,
+            section="Sci-Fi / Fantasy",
+            shelf="B-03",
+        ),
     ]
 
     # Store inventory including an item from another shelf
-    foundation = InventoryItem("BK-FOUND", "Foundation", ["Isaac Asimov"], "hardcover", "Good", Decimal("40.00"), Decimal("45.00"), "active", now, now, section="Classics", shelf="C-01")
+    foundation = InventoryItem(
+        "BK-FOUND",
+        "Foundation",
+        ["Isaac Asimov"],
+        "hardcover",
+        "Good",
+        Decimal("40.00"),
+        Decimal("45.00"),
+        "active",
+        now,
+        now,
+        section="Classics",
+        shelf="C-01",
+    )
     store_inventory = [*expected_books, foundation]
 
     # Scanned spines from photo:
@@ -27,10 +79,30 @@ def test_shelf_audit_reconciliation_matching():
     # 3. Foundation (Expected on Classics C-01 -> Misplaced here!)
     # 4. Hyperion (Not in store -> Uncataloged)
     scanned = [
-        {"title": "Dune", "authors": ["Frank Herbert"], "raw_spine_text": "HERBERT DUNE CHILTON", "format": "hardcover"},
-        {"title": "Neuromancer", "authors": ["William Gibson"], "raw_spine_text": "GIBSON NEUROMANCER ACE", "format": "trade_paperback"},
-        {"title": "Foundation", "authors": ["Isaac Asimov"], "raw_spine_text": "FOUNDATION ASIMOV", "format": "hardcover"},
-        {"title": "Hyperion", "authors": ["Dan Simmons"], "raw_spine_text": "HYPERION DAN SIMMONS", "format": "trade_paperback"},
+        {
+            "title": "Dune",
+            "authors": ["Frank Herbert"],
+            "raw_spine_text": "HERBERT DUNE CHILTON",
+            "format": "hardcover",
+        },
+        {
+            "title": "Neuromancer",
+            "authors": ["William Gibson"],
+            "raw_spine_text": "GIBSON NEUROMANCER ACE",
+            "format": "trade_paperback",
+        },
+        {
+            "title": "Foundation",
+            "authors": ["Isaac Asimov"],
+            "raw_spine_text": "FOUNDATION ASIMOV",
+            "format": "hardcover",
+        },
+        {
+            "title": "Hyperion",
+            "authors": ["Dan Simmons"],
+            "raw_spine_text": "HYPERION DAN SIMMONS",
+            "format": "trade_paperback",
+        },
     ]
 
     result = ShelfAuditService.reconcile(
@@ -63,7 +135,7 @@ def test_shelf_audit_reconciliation_matching():
 def test_sqlite_inventory_location_and_audits():
     store = SQLiteInventoryStore(":memory:")
     now = datetime.now(UTC)
-    
+
     item = InventoryItem(
         sku="BK-TEST-1",
         title="Solaris",
@@ -133,6 +205,7 @@ def test_migration_0007_discovery():
 
 def test_shelf_audit_api_endpoint(settings):
     from fastapi.testclient import TestClient
+
     from app.api.http import create_app
     from app.domain.order_store import OrderStore
     from tests.conftest import ADMIN_TOKEN, auth
@@ -148,7 +221,11 @@ def test_shelf_audit_api_endpoint(settings):
             "section": "Sci-Fi / Fantasy",
             "shelf": "B-03",
             "scanned_books": [
-                {"title": "Dune (First Edition)", "authors": ["Frank Herbert"], "raw_spine_text": "DUNE HERBERT"}
+                {
+                    "title": "Dune (First Edition)",
+                    "authors": ["Frank Herbert"],
+                    "raw_spine_text": "DUNE HERBERT",
+                }
             ],
         },
     )
@@ -166,4 +243,3 @@ def test_shelf_audit_api_endpoint(settings):
     assert len(hist) >= 1
     assert hist[0]["section"] == "Sci-Fi / Fantasy"
     assert hist[0]["shelf"] == "B-03"
-

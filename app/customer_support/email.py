@@ -19,10 +19,7 @@ class CustomerResponse:
             raise ValueError("response ID and valid recipient are required")
         if not self.subject.strip() or not self.body.strip():
             raise ValueError("subject and body are required")
-        if any(
-            term in self.body.lower()
-            for term in ("send password", "credit card number", "full card")
-        ):
+        if any(term in self.body.lower() for term in ("send password", "credit card number", "full card")):
             raise ValueError("response requests prohibited sensitive credentials")
 
 

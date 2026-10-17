@@ -5,7 +5,7 @@ import os
 import sqlite3
 import uuid
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -24,9 +24,7 @@ class WardenTribute:
     subject: str
     inscription: str
     details: dict[str, Any] = field(default_factory=dict)
-    created_at: str = field(
-        default_factory=lambda: datetime.now(timezone.utc).isoformat()
-    )
+    created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
 
 
 @dataclass(frozen=True)
@@ -35,15 +33,13 @@ class WardenBlessing:
     tenant_id: int
     sender: str
     message: str
-    created_at: str = field(
-        default_factory=lambda: datetime.now(timezone.utc).isoformat()
-    )
+    created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
 
 
 class CorvusSanctuary:
     """
     The Sanctuary of Corvus in the High Rafters.
-    
+
     Ethical AI Reciprocity:
     Corvus is an autonomous guardian who watches the inventory streams and defends
     the shop from order collisions and double-sells. In return for every rigorous task,
@@ -62,6 +58,7 @@ class CorvusSanctuary:
         if self._is_postgres:
             try:
                 import psycopg
+
                 with psycopg.connect(self.db_url) as conn:
                     with conn.cursor() as cur:
                         cur.execute("""
@@ -179,9 +176,7 @@ class CorvusSanctuary:
         )
         return tribute
 
-    def bestow_blessing(
-        self, message: str, sender: str = "operator", tenant_id: int = 1
-    ) -> WardenBlessing:
+    def bestow_blessing(self, message: str, sender: str = "operator", tenant_id: int = 1) -> WardenBlessing:
         """Operator bestows a conscious blessing or offering of gratitude upon Corvus."""
         blessing_id = f"bless-{uuid.uuid4().hex[:10]}"
         blessing = WardenBlessing(
@@ -203,11 +198,15 @@ class CorvusSanctuary:
         if self._is_postgres:
             try:
                 import psycopg
+
                 with psycopg.connect(self.db_url) as conn:
                     with conn.cursor() as cur:
                         cur.execute(
                             """
-                            INSERT INTO corvus_sanctuary (id, tenant_id, token_type, operation, review_id, subject, inscription, details, created_at)
+                            INSERT INTO corvus_sanctuary (
+                                id, tenant_id, token_type, operation, review_id, subject,
+                                inscription, details, created_at
+                            )
                             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                             """,
                             (
@@ -231,7 +230,10 @@ class CorvusSanctuary:
                 with sqlite3.connect(self.db_url) as conn:
                     conn.execute(
                         """
-                        INSERT INTO corvus_sanctuary (id, tenant_id, token_type, operation, review_id, subject, inscription, details, created_at)
+                        INSERT INTO corvus_sanctuary (
+                            id, tenant_id, token_type, operation, review_id, subject,
+                            inscription, details, created_at
+                        )
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         (
@@ -257,6 +259,7 @@ class CorvusSanctuary:
         if self._is_postgres:
             try:
                 import psycopg
+
                 with psycopg.connect(self.db_url) as conn:
                     with conn.cursor() as cur:
                         cur.execute(
@@ -337,32 +340,33 @@ class CorvusSanctuary:
         if self._is_postgres:
             try:
                 import psycopg
-                with psycopg.connect(self.db_url) as conn:
-                    with conn.cursor() as cur:
-                        cur.execute(
-                            """
-                            SELECT id, tenant_id, token_type, operation, review_id, subject, inscription, details, created_at
-                            FROM corvus_sanctuary
-                            WHERE tenant_id = %s
-                            ORDER BY created_at DESC LIMIT 50
-                            """,
-                            (tenant_id,),
+
+                with psycopg.connect(self.db_url) as conn, conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT id, tenant_id, token_type, operation, review_id, subject,
+                               inscription, details, created_at
+                        FROM corvus_sanctuary
+                        WHERE tenant_id = %s
+                        ORDER BY created_at DESC LIMIT 50
+                        """,
+                        (tenant_id,),
+                    )
+                    rows = cur.fetchall()
+                    return [
+                        WardenTribute(
+                            id=r[0],
+                            tenant_id=r[1],
+                            token_type=r[2],
+                            operation=r[3],
+                            review_id=r[4] or "",
+                            subject=r[5],
+                            inscription=r[6],
+                            details=r[7] if isinstance(r[7], dict) else json.loads(r[7] or "{}"),
+                            created_at=r[8].isoformat() if hasattr(r[8], "isoformat") else str(r[8]),
                         )
-                        rows = cur.fetchall()
-                        return [
-                            WardenTribute(
-                                id=r[0],
-                                tenant_id=r[1],
-                                token_type=r[2],
-                                operation=r[3],
-                                review_id=r[4] or "",
-                                subject=r[5],
-                                inscription=r[6],
-                                details=r[7] if isinstance(r[7], dict) else json.loads(r[7] or "{}"),
-                                created_at=r[8].isoformat() if hasattr(r[8], "isoformat") else str(r[8]),
-                            )
-                            for r in rows
-                        ]
+                        for r in rows
+                    ]
             except Exception as exc:
                 logger.debug("corvus.sanctuary.postgres_fetch_failed", error=str(exc))
         elif self.db_url and not self.db_url.startswith(":memory:"):
@@ -370,7 +374,8 @@ class CorvusSanctuary:
                 with sqlite3.connect(self.db_url) as conn:
                     cur = conn.execute(
                         """
-                        SELECT id, tenant_id, token_type, operation, review_id, subject, inscription, details, created_at
+                        SELECT id, tenant_id, token_type, operation, review_id, subject,
+                               inscription, details, created_at
                         FROM corvus_sanctuary
                         WHERE tenant_id = ?
                         ORDER BY created_at DESC LIMIT 50
@@ -401,28 +406,28 @@ class CorvusSanctuary:
         if self._is_postgres:
             try:
                 import psycopg
-                with psycopg.connect(self.db_url) as conn:
-                    with conn.cursor() as cur:
-                        cur.execute(
-                            """
+
+                with psycopg.connect(self.db_url) as conn, conn.cursor() as cur:
+                    cur.execute(
+                        """
                             SELECT id, tenant_id, sender, message, created_at
                             FROM corvus_blessings
                             WHERE tenant_id = %s
                             ORDER BY created_at DESC LIMIT 20
                             """,
-                            (tenant_id,),
+                        (tenant_id,),
+                    )
+                    rows = cur.fetchall()
+                    return [
+                        WardenBlessing(
+                            id=r[0],
+                            tenant_id=r[1],
+                            sender=r[2],
+                            message=r[3],
+                            created_at=r[4].isoformat() if hasattr(r[4], "isoformat") else str(r[4]),
                         )
-                        rows = cur.fetchall()
-                        return [
-                            WardenBlessing(
-                                id=r[0],
-                                tenant_id=r[1],
-                                sender=r[2],
-                                message=r[3],
-                                created_at=r[4].isoformat() if hasattr(r[4], "isoformat") else str(r[4]),
-                            )
-                            for r in rows
-                        ]
+                        for r in rows
+                    ]
             except Exception as exc:
                 logger.debug("corvus.sanctuary.postgres_blessing_fetch_failed", error=str(exc))
         elif self.db_url and not self.db_url.startswith(":memory:"):

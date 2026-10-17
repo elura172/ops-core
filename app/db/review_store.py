@@ -11,7 +11,13 @@ from typing import Any
 
 from app.domain.audit import AuditEvent
 from app.observability.logging import get_logger
-from app.review.queue import AlreadyExecuted, ReviewItem, ReviewStatus, _validate_claim
+from app.review.queue import (
+    AlreadyExecuted,
+    ReviewItem,
+    ReviewStatus,
+    _merge_payload,
+    _validate_claim,
+)
 
 logger = get_logger("review_store")
 
@@ -78,9 +84,7 @@ class SQLiteReviewStore:
     def __init__(self, path: str | Path) -> None:
         if str(path) == ":memory:":
             logger.warning("reviews.memory_database", detail="approvals will not survive restart")
-        self.connection = sqlite3.connect(
-            str(path), check_same_thread=False, isolation_level=None, timeout=30
-        )
+        self.connection = sqlite3.connect(str(path), check_same_thread=False, isolation_level=None, timeout=30)
         self.connection.row_factory = sqlite3.Row
         self._lock = threading.RLock()
         self.connection.execute("PRAGMA busy_timeout = 30000")
@@ -123,7 +127,8 @@ class SQLiteReviewStore:
             raise ValueError("new review items must be pending")
         with self._transaction() as connection:
             existing = connection.execute(
-                "SELECT 1 FROM reviews WHERE review_id = ? AND tenant_id = ?", (item.review_id, tenant_id)
+                "SELECT 1 FROM reviews WHERE review_id = ? AND tenant_id = ?",
+                (item.review_id, tenant_id),
             ).fetchone()
             if existing:
                 raise ValueError("review_id already exists")
@@ -146,7 +151,8 @@ class SQLiteReviewStore:
         # same lock; sqlite3 connections are not safe for concurrent use.
         with self._lock:
             row = self.connection.execute(
-                "SELECT * FROM reviews WHERE review_id = ? AND tenant_id = ?", (review_id, tenant_id)
+                "SELECT * FROM reviews WHERE review_id = ? AND tenant_id = ?",
+                (review_id, tenant_id),
             ).fetchone()
         return _row_to_item(row) if row else None
 
@@ -164,7 +170,14 @@ class SQLiteReviewStore:
         return self.list_items(pending_only=True, tenant_id=tenant_id)
 
     def decide(
-        self, review_id: str, *, approve: bool, reviewer: str, reason: str = "", payload_update: dict[str, Any] | None = None, tenant_id: int = 1
+        self,
+        review_id: str,
+        *,
+        approve: bool,
+        reviewer: str,
+        reason: str = "",
+        payload_update: dict[str, Any] | None = None,
+        tenant_id: int = 1,
     ) -> ReviewItem:
         if not reviewer.strip():
             raise ValueError("reviewer is required")
@@ -220,8 +233,7 @@ class SQLiteReviewStore:
             item = self._fetch(connection, review_id, tenant_id)
             _validate_claim(item)
             cursor = connection.execute(
-                "UPDATE reviews SET status = ?, executed_by = ?, executed_at = ? "
-                "WHERE review_id = ? AND status = ?",
+                "UPDATE reviews SET status = ?, executed_by = ?, executed_at = ? WHERE review_id = ? AND status = ?",
                 (
                     ReviewStatus.EXECUTING.value,
                     actor,
@@ -386,15 +398,14 @@ class SQLiteReviewStore:
     def get_tenant_analytics(self, tenant_id: int) -> dict[str, Any]:
         with self._lock:
             rows = self.connection.execute(
-                "SELECT operation, payload, status FROM reviews WHERE tenant_id = ?",
-                (tenant_id,)
+                "SELECT operation, payload, status FROM reviews WHERE tenant_id = ?", (tenant_id,)
             ).fetchall()
-            
+
         total_actions = 0
         syncs = 0
         contentions_prevented = 0
         revenue_protected_cad = 0.0
-        
+
         for row in rows:
             if row["status"] in ("APPROVED", "EXECUTING", "EXECUTED"):
                 total_actions += 1
@@ -407,19 +418,19 @@ class SQLiteReviewStore:
                         payload = json.loads(row["payload"])
                         loser = payload.get("loser_claim", {})
                         winner = payload.get("winner_claim", {})
-                        # Consider the protected revenue as the value of the winner that wasn't oversold, 
-                        # plus the loser if an alternate was found. Let's just sum the winner's value as a baseline 
+                        # Consider the protected revenue as the value of the winner that wasn't oversold,
+                        # plus the loser if an alternate was found. Let's just sum the winner's value as a baseline
                         # for "revenue protected from collision refund".
                         val = float(winner.get("price_cad", loser.get("price_cad", 0)))
                         revenue_protected_cad += val
                     except Exception:
                         pass
-                        
+
         return {
             "total_automated_actions": total_actions,
             "inventory_syncs": syncs,
             "collisions_prevented": contentions_prevented,
-            "revenue_protected_cad": round(revenue_protected_cad, 2)
+            "revenue_protected_cad": round(revenue_protected_cad, 2),
         }
 
     def close(self) -> None:

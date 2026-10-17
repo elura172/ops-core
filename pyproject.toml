@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "ops-core"
 version = "0.1.0"
-description = "Dry-run-first commerce operations core: TikTok Shop and Amazon private label"
+description = "Dry-run-first operations core for independent used and antiquarian booksellers"
 requires-python = ">=3.11"
 dependencies = [
     "bcrypt>=5.0.0",
@@ -30,6 +30,7 @@ packages = { find = { include = ["app*"] } }
 
 [tool.setuptools.package-data]
 "app.web" = ["*.html", "*.css", "*.js"]
+"app.integrations" = ["*.sql"]
 
 [project.optional-dependencies]
 postgres = ["psycopg[binary,pool]>=3.2"]
@@ -53,8 +54,12 @@ python_version = "3.11"
 files = ["app"]
 strict = true
 
+[[tool.mypy.overrides]]
+module = ["shippo", "shippo.*"]
+ignore_missing_imports = true
+
 [tool.ruff]
-line-length = 100
+line-length = 120
 target-version = "py311"
 
 [tool.ruff.lint]
@@ -62,4 +67,9 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 
 [tool.ruff.lint.flake8-bugbear]
 # FastAPI resolves these per request; they are not shared mutable defaults.
-extend-immutable-calls = ["fastapi.Depends", "fastapi.Header", "fastapi.Query"]
+extend-immutable-calls = [
+    "fastapi.Depends",
+    "fastapi.File",
+    "fastapi.Header",
+    "fastapi.Query",
+]

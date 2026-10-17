@@ -32,9 +32,27 @@ class OperatorService:
         ]
 
     def decide(
-        self, review_id: str, approve: bool, reviewer: str, reason: str = "", payload_update: dict[str, Any] | None = None, tenant_id: int = 1
+        self,
+        review_id: str,
+        approve: bool,
+        reviewer: str,
+        reason: str = "",
+        payload_update: dict[str, Any] | None = None,
+        tenant_id: int = 1,
     ) -> dict[str, Any]:
-        item = self.reviews.decide(review_id, approve=approve, reviewer=reviewer, reason=reason, payload_update=payload_update, tenant_id=tenant_id)
+        existing = self.reviews.get(review_id, tenant_id=tenant_id)
+        if existing and existing.operation == "review_shelf_capture" and approve:
+            from app.domain.shelf_capture import validate_decisions
+
+            payload_update = validate_decisions(existing.payload, payload_update)
+        item = self.reviews.decide(
+            review_id,
+            approve=approve,
+            reviewer=reviewer,
+            reason=reason,
+            payload_update=payload_update,
+            tenant_id=tenant_id,
+        )
         logger.info(
             "review.decided",
             review_id=item.review_id,
@@ -61,15 +79,44 @@ class OperatorService:
     def propose(self, operation: str, payload: dict[str, Any], tenant_id: int = 1) -> dict[str, Any]:
         if operation not in self.executor.allowed_operations:
             raise ValueError(f"Operation '{operation}' is not supported.")
-        
+
+        ledger = getattr(self.executor, "stock_ledger", None)
+        if ledger and operation == "publish_custom_site":
+            service = getattr(self.executor, "custom_site_service", None)
+            connection = service.connections.get(payload.get("connection_id")) if service else None
+            if not connection or connection.tenant_id != tenant_id or not connection.enabled:
+                raise ValueError("Custom website is not connected to this workspace")
+            payload = {**payload, **ledger.prepare_publication(tenant_id, payload["sku"])}
+
+        if (
+            ledger
+            and operation == "sync_inventory"
+            and payload.get("source_channel") in ("square", "abebooks", "biblio", "ebay", "in_store")
+        ):
+            order_id = str(payload.get("order_id") or payload.get("event_id") or "")
+            if not order_id:
+                # Manual operator sales can use a unique review identity. Provider
+                # handlers supply a stable order ID so repeated notifications dedupe.
+                import uuid
+
+                order_id = "manual_" + uuid.uuid4().hex
+            outcome = ledger.observe_sale(tenant_id, payload["sku"], payload["source_channel"], order_id)
+            if outcome == "conflict":
+                operation = "review_stock_conflict"
+                payload = {
+                    **payload,
+                    "order_id": order_id,
+                    "reason": "A competing sale or hold claimed this copy. Stock is frozen for staff review.",
+                }
+
         import uuid
 
         from app.review.queue import ReviewItem
-        
+
         review_id = f"rev-{uuid.uuid4().hex[:12]}"
         item = ReviewItem(review_id=review_id, operation=operation, payload=payload)
         self.reviews.submit(item, tenant_id=tenant_id)
-        
+
         logger.info("review.proposed", review_id=item.review_id, operation=operation)
         return {
             "review_id": item.review_id,
@@ -77,8 +124,12 @@ class OperatorService:
             "status": item.status.value,
         }
 
-    def execute(self, review_id: str, actor: str, tenant_id: int = 1, credentials: dict[str, str] = None) -> dict[str, Any]:
-        outcome = self.executor.execute(self.reviews, review_id, actor=actor, tenant_id=tenant_id, credentials=credentials)
+    def execute(
+        self, review_id: str, actor: str, tenant_id: int = 1, credentials: dict[str, str] = None
+    ) -> dict[str, Any]:
+        outcome = self.executor.execute(
+            self.reviews, review_id, actor=actor, tenant_id=tenant_id, credentials=credentials
+        )
         item = outcome["item"]
         return {
             "review_id": item.review_id,

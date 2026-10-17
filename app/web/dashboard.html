@@ -3,7 +3,9 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Ops Core · Sovereign Antiquarian Review Desk</title>
+  <meta name="theme-color" content="#0B0A13">
+  <title>Ops Core · Your Bookshop Workspace</title>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;0,600;1,300;1,400;1,500&family=JetBrains+Mono:wght@300;400;500&family=Space+Grotesk:wght@300;400;500;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/dashboard/assets/dashboard.css">
   <script src="/dashboard/assets/dashboard.js" defer></script>
 </head>
@@ -11,24 +13,24 @@
   <header>
     <div class="brand-group">
       <a href="/dashboard" class="brand">◈ <span>OPS CORE</span></a>
-      <span class="caption">Your commerce, considered.</span>
+      <span class="caption">Your books, connected.</span>
     </div>
     <div class="header-right">
       <span id="identity" class="identity-badge"></span>
-      <button id="logout" hidden class="ghost-sm">Disconnect</button>
+      <button id="logout" hidden class="ghost-sm">Log out</button>
     </div>
   </header>
 
   <main>
     <section class="intro">
       <div class="intro-left">
-        <p class="eyebrow">THE OPERATOR DESK</p>
-        <h1>Good work.<br>Ready for your word.</h1>
-        <p class="intro-sub">See what’s proposed. Make the decision. Follow the result.</p>
+        <p class="eyebrow">YOUR BOOKSHOP</p>
+        <h1>Your bookshop.<br>All in one place.</h1>
+        <p class="intro-sub">Manage books for your own website, marketplaces, and shop. Review changes before they run.</p>
       </div>
-      <div class="intro-status" id="intro-status-card">
-        <span class="pulse-indicator"></span>
-        <span id="intro-status-text">Corvus Autonomous Agent · Active</span>
+      <div class="intro-status" id="intro-status-card" role="note">
+        <span class="approval-indicator" aria-hidden="true">✓</span>
+        <span id="intro-status-text">You approve changes</span>
       </div>
     </section>
 
@@ -38,33 +40,24 @@
     <section id="login-section" class="panel login">
       <div id="login-panel">
         <p class="eyebrow">WELCOME BACK</p>
-        <h2>Open your review desk</h2>
+        <h2>Log in to your workspace</h2>
         <form id="form-login">
           <label for="login-email">Email</label>
-          <input id="login-email" type="email" required autocomplete="email" spellcheck="false" placeholder="operator@opscore.io">
+          <input id="login-email" type="email" required autocomplete="email" spellcheck="false" placeholder="you@store.com">
           
           <label for="login-password">Password</label>
           <input id="login-password" type="password" required autocomplete="current-password" placeholder="••••••••">
           
-          <button type="submit" class="primary full-width">Login →</button>
+          <button type="submit" class="primary full-width">Log in</button>
         </form>
 
-        <div class="demo-card">
-          <div class="demo-header">
-            <strong>Demo Workspace</strong>
-            <button type="button" id="btn-fill-demo" class="demo-btn">1-Click Demo Login</button>
-          </div>
-          <div class="demo-creds">
-            Email: <span>operator@opscore.io</span><br>
-            Password: <span>Antiquarian-Vault-2026!</span>
-          </div>
-        </div>
         <p class="muted text-center" style="margin-top: 14px;">Don't have an account? <a href="#" id="show-signup">Create one</a>.</p>
       </div>
       
       <div id="signup-panel" hidden>
         <p class="eyebrow">JOIN OPS CORE</p>
         <h2>Create a Workspace</h2>
+        <p class="muted signup-note">Create an account, then choose a subscription to open your workspace.</p>
         <form id="form-signup">
           <label for="signup-store">Store Name</label>
           <input id="signup-store" type="text" required autocomplete="organization" spellcheck="false" placeholder="Blackwood Books Antiquarian">
@@ -75,36 +68,36 @@
           <label for="signup-password">Password</label>
           <input id="signup-password" type="password" required autocomplete="new-password">
           
-          <button type="submit" class="primary full-width">Create Account →</button>
+          <button type="submit" class="primary full-width">Create Account</button>
         </form>
-        <p class="muted text-center" style="margin-top: 14px;">Already have a workspace? <a href="#" id="show-login">Login</a>.</p>
+        <p class="muted text-center" style="margin-top: 14px;">Already have a workspace? <a href="#" id="show-login">Log in</a>.</p>
       </div>
     </section>
     
     <!-- BILLING ACCESS REQUIRED -->
     <section id="billing-section" class="panel billing" hidden>
       <div id="billing-panel">
-        <p class="eyebrow">PREMIUM ACCESS REQUIRED</p>
-        <h2>Subscribe to Corvus AI</h2>
-        <p class="muted" style="margin-bottom: 24px;">Your tenant requires an active subscription to run the Corvus agent and manage the review queue.</p>
-        <button id="btn-subscribe" class="primary" style="padding: 12px 24px; font-size: 15px;">Subscribe Now ($49/mo) →</button>
+        <p class="eyebrow">SUBSCRIPTION REQUIRED</p>
+        <h2>Open your workspace</h2>
+        <p class="muted" style="margin-bottom: 24px;">Choose a subscription to manage your books and review changes.</p>
+        <button id="btn-subscribe" class="primary">Choose a subscription</button>
       </div>
     </section>
 
     <!-- ONBOARDING -->
     <section id="onboarding-section" class="panel detail onboarding-panel" hidden>
       <div class="onboarding-content">
-        <p class="eyebrow">WELCOME TO CORVUS</p>
-        <h2>Connect Your First Channel</h2>
-        <p class="muted">Corvus needs an API connection to start protecting your inventory. Let's connect your first marketplace.</p>
+        <p class="eyebrow">GET CONNECTED</p>
+        <h2>Connect your first shop</h2>
+        <p class="muted">Connect your own bookshop website, a marketplace, or your shop’s till.</p>
         
         <form id="form-onboarding">
           <div>
-            <label for="onboarding-provider">Marketplace / POS</label>
+            <label for="onboarding-provider">Website, marketplace, or till</label>
             <select id="onboarding-provider" required style="width: 100%;">
               <option value="" disabled selected>Select channel...</option>
-              <option value="shopify">Shopify</option>
-              <option value="amazon">Amazon SP-API</option>
+              <option value="shopify">Your website / bookshop (Shopify)</option>
+              <option value="amazon">Amazon</option>
               <option value="tiktok">TikTok Shop</option>
               <option value="square">Square POS</option>
             </select>
@@ -113,10 +106,10 @@
           <div>
             <label for="onboarding-key">API Key</label>
             <input id="onboarding-key" type="password" required autocomplete="off" spellcheck="false" placeholder="sec_key_••••••••" style="width: 100%;">
-            <p class="hint">Your key will be encrypted at rest in the Sovereign Vault.</p>
+            <p class="hint">Your saved key is encrypted.</p>
           </div>
           
-          <button type="submit" class="primary">Securely Connect Channel →</button>
+          <button type="submit" class="primary">Connect shop</button>
         </form>
       </div>
     </section>
@@ -126,19 +119,19 @@
       <!-- PRIMARY WORKSPACE NAVIGATION -->
       <nav class="workspace-nav" aria-label="Workspace views">
         <div class="nav-tabs">
-          <button type="button" id="tab-queue" class="nav-tab active">
+          <button type="button" id="tab-queue" class="nav-tab active" aria-current="page">
             <span class="tab-icon">📥</span>
             <span class="tab-label">Review Desk</span>
             <span id="tab-queue-badge" class="tab-count"></span>
           </button>
           <button type="button" id="tab-bookshelf" class="nav-tab">
             <span class="tab-icon">📚</span>
-            <span class="tab-label">Bookshelf Inventory</span>
+            <span class="tab-label">Inventory</span>
           </button>
           <button type="button" id="tab-collectors" class="nav-tab">
             <span class="tab-icon">📇</span>
             <span class="tab-label">Collectors & Wants</span>
-            <span id="tab-holds-badge" class="tab-count" style="display:none; background: #e0a82e; color: #1a1610; font-weight: bold; border-radius: 10px; padding: 2px 7px; font-size: 11px;">0</span>
+            <span id="tab-holds-badge" class="tab-count badge-holds" style="display:none;">0</span>
           </button>
           <button type="button" id="tab-intake" class="nav-tab">
             <span class="tab-icon">📷</span>
@@ -146,11 +139,11 @@
           </button>
           <button type="button" id="tab-settings" class="nav-tab">
             <span class="tab-icon">🛡️</span>
-            <span class="tab-label">Guardian & Sync</span>
+            <span class="tab-label">Shops & stock</span>
           </button>
           <button type="button" id="tab-analytics" class="nav-tab">
             <span class="tab-icon">📊</span>
-            <span class="tab-label">Value Delivered</span>
+            <span class="tab-label">Activity</span>
           </button>
         </div>
         
@@ -161,7 +154,7 @@
         </div>
       </nav>
 
-      <!-- VIEW 1: THE OPERATOR DESK (REVIEW QUEUE & DETAIL) -->
+      <!-- VIEW 1: YOUR BOOKSHOP (REVIEW QUEUE & DETAIL) -->
       <div id="view-desk" class="desk">
         <!-- LEFT: TRIAGE LEDGER -->
         <section class="panel queue" id="queue-panel">
@@ -199,8 +192,8 @@
         <section id="queue-detail-panel" class="panel detail" aria-label="Action preview">
           <div id="detail">
             <p class="eyebrow">ACTION PREVIEW</p>
-            <h2>A moment of attention.</h2>
-            <p class="muted">Select an action to read its contents before making a decision.</p>
+            <h2>Choose an action</h2>
+            <p class="muted">Choose an action to review and approve or reject it.</p>
           </div>
         </section>
       </div>
@@ -209,13 +202,13 @@
       <section id="bookshelf-panel" class="panel bookshelf-panel" hidden>
         <div class="panel-header bookshelf-header-row">
           <div>
-            <p class="eyebrow">ACTIVE CATALOG & LOCATIONS</p>
-            <h2>Inventory Bookshelf</h2>
-            <p class="muted">Cataloged volumes active across physical shelves and connected digital marketplaces.</p>
+            <p class="eyebrow">YOUR CATALOGUE</p>
+            <h2>Book inventory</h2>
+            <p class="muted">Find books across your shelves, website, and connected marketplaces.</p>
           </div>
           <div class="bookshelf-toolbar-actions">
-            <button type="button" id="btn-open-vision-intake" class="primary-sm" style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); border-color: #059669; color: #fff; font-weight: 600;" title="AI Vision Intake Studio: Snap 3 photos (Cover, Title Page, Copyright) for instant Gemini Vision cataloging">
-              <span>✨ AI Vision Intake</span>
+            <button type="button" id="btn-open-vision-intake" class="primary-sm vision-cta" title="Add a book from photos of its cover, title page, and copyright page">
+              <span>✨ Add from photos</span>
             </button>
             <button type="button" id="btn-sync-square-all" class="ghost-sm" title="Push all active catalog books into Square POS">
               <span>📲 Sync Square POS</span>
@@ -303,9 +296,9 @@
       <section id="collectors-panel" class="panel collectors-panel" hidden>
         <div class="panel-header">
           <div>
-            <p class="eyebrow">CLIENT RELATIONSHIPS & COURTESY EMBARGOES</p>
-            <h2>Collector CRM & Want Lists</h2>
-            <p class="muted">Manage antiquarian collectors, search active wants, and process 48-hour priority courtesy holds before public marketplace listing.</p>
+            <p class="eyebrow">COLLECTORS & HOLDS</p>
+            <h2>Collectors & want lists</h2>
+            <p class="muted">Keep collector details and want lists. Hold matching books for 48 hours before offering them for general sale.</p>
           </div>
           <div class="header-actions">
             <button type="button" id="btn-new-collector" class="primary" style="padding: 8px 14px; font-size: 13px;">+ New Collector</button>
@@ -318,7 +311,7 @@
         <div class="collector-section-block">
           <div class="collector-section-header">
             <div class="title-with-badge">
-              <h3>⏱️ Priority Courtesy Holds (48h Embargo)</h3>
+              <h3>⏱️ Collector holds (48 hours)</h3>
               <span id="holds-active-count-chip" class="pill-badge pill-gold">0 Active Holds</span>
             </div>
             <p class="muted text-sm">Books held for collectors skip automatic eBay, AbeBooks, and floor listings for 48 hours.</p>
@@ -330,7 +323,7 @@
         <div class="collector-section-block" style="margin-top: 2rem;">
           <div class="collector-section-header">
             <div class="title-with-badge">
-              <h3>👥 Collector Profiles & Archetypes</h3>
+              <h3>👥 Collectors</h3>
             </div>
             <div class="search-input-wrap">
               <input id="collector-search-input" type="search" placeholder="Search collectors by name, phone, or notes...">
@@ -343,7 +336,7 @@
         <div class="collector-section-block" style="margin-top: 2rem;">
           <div class="collector-section-header">
             <div class="title-with-badge">
-              <h3>📖 Active Antiquarian Wants</h3>
+              <h3>📖 Books wanted</h3>
               <span id="wants-count-chip" class="pill-badge">0 Active</span>
             </div>
           </div>
@@ -355,9 +348,9 @@
       <section id="intake-panel" class="panel intake-panel" hidden>
         <div class="panel-header">
           <div>
-            <p class="eyebrow">VISION-ASSISTED CATALOGING</p>
-            <h2>Stack Intake Studio</h2>
-            <p class="muted">Snap or upload a photo of a stack or shelf of books. Corvus Vision isolates each spine, extracts bibliographic metadata, and prices each volume.</p>
+            <p class="eyebrow">ADD BOOKS FROM PHOTOS</p>
+            <h2>Photo intake</h2>
+            <p class="muted">Upload photos of books, stacks, or shelves. Review draft book details and suggested prices before adding them.</p>
           </div>
         </div>
 
@@ -366,11 +359,11 @@
             <!-- LOCATION ASSIGNMENT FOR INTAKE -->
             <div class="intake-location-bar">
               <div class="intake-loc-field">
-                <label for="intake-section">Assign Section</label>
+                <label for="intake-section">Section</label>
                 <input id="intake-section" type="text" placeholder="e.g. Sci-Fi / Fantasy" value="General">
               </div>
               <div class="intake-loc-field">
-                <label for="intake-shelf">Assign Shelf</label>
+                <label for="intake-shelf">Shelf</label>
                 <input id="intake-shelf" type="text" placeholder="e.g. B-03" value="">
               </div>
             </div>
@@ -378,22 +371,22 @@
             <!-- INTAKE MODE CHOOSER -->
             <div class="intake-mode-bar">
               <label class="mode-pill active" id="mode-pill-stack">
-                <input type="radio" name="intake-mode-choice" value="multi_stack" checked>
-                <span class="mode-pill-title">📚 Multi-Stack / Shelves</span>
-                <span class="mode-pill-desc">Multiple photos of stacks/shelves. Auto-deduplicates overlapping spines.</span>
+                <input type="radio" name="intake-mode-choice" value="shelf_capture" checked>
+                <span class="mode-pill-title">📚 One shelf, several photos</span>
+                <span class="mode-pill-desc">Aim for 20–30 readable spines per photo; add close-ups that overlap by a few books. Review overlaps before adding books.</span>
               </label>
               <label class="mode-pill" id="mode-pill-angle">
                 <input type="radio" name="intake-mode-choice" value="multi_angle_single_book">
-                <span class="mode-pill-title">🔍 Single Volume Multi-Angle</span>
-                <span class="mode-pill-desc">Spine + Cover + Copyright page merged into 1 enriched collectible record.</span>
+                <span class="mode-pill-title">🔍 One book, several views</span>
+                <span class="mode-pill-desc">Combine the spine, cover, and copyright page into one book record.</span>
               </label>
             </div>
 
             <label class="camera-snap-cta">
               <input type="file" id="camera-file" accept="image/*,.heic,.heif,.jpg,.jpeg,.png,.webp" multiple hidden>
               <span class="snap-icon">📷</span>
-              <span class="snap-title">Snap / Select Photos</span>
-              <span class="snap-sub">Choose 1 or more photos or use camera (supports multi-selection)</span>
+              <span class="snap-title">Take or choose photos</span>
+              <span class="snap-sub">For shelf capture, aim for 20–30 spines per photo. Include a wide view for context and overlapping close-ups for readable titles.</span>
             </label>
 
             <!-- STAGED PHOTOS TRAY -->
@@ -446,27 +439,27 @@
       <section id="settings-panel" class="panel settings-panel" hidden>
         <div class="panel-header">
           <div>
-            <p class="eyebrow">CHANNELS & VAULT</p>
-            <h2>Channel Guardian & Workspace</h2>
-            <p class="muted">Manage marketplace credentials and execute manual cross-channel inventory delistings.</p>
+            <p class="eyebrow">SHOP CONNECTIONS</p>
+            <h2>Shops & stock</h2>
+            <p class="muted">Connect your own bookshop website and marketplaces. Update listings when a book sells.</p>
           </div>
         </div>
         
         <div class="settings-grid">
           <div class="settings-col">
-            <h3>Connected Integrations</h3>
-            <p class="muted">Real-time inventory sync guards these channels.</p>
+            <h3>Connected shops</h3>
+            <p class="muted">Your saved website, marketplace, and till connections.</p>
             <ul id="connected-integrations-list" class="integrations-list">
               <li class="muted">Loading...</li>
             </ul>
 
-            <h3 style="margin-top: 2rem;">Add New Integration</h3>
+            <h3 style="margin-top: 2rem;">Connect a shop</h3>
             <form id="form-integration" class="standard-form">
               <label for="integration-provider">Provider</label>
               <select id="integration-provider" required>
                 <option value="" disabled selected>Select channel...</option>
-                <option value="shopify">Shopify</option>
-                <option value="amazon">Amazon SP-API</option>
+                <option value="shopify">Your website / bookshop (Shopify)</option>
+                <option value="amazon">Amazon</option>
                 <option value="tiktok">TikTok Shop</option>
                 <option value="square">Square POS</option>
                 <option value="abebooks">AbeBooks</option>
@@ -476,48 +469,48 @@
               <label for="integration-key">API Key / Token</label>
               <input id="integration-key" type="password" required autocomplete="off" spellcheck="false" placeholder="sec_key_••••••••">
               
-              <button type="submit" class="primary">Save Integration</button>
+              <button type="submit" class="primary">Save connection</button>
             </form>
           </div>
 
           <div class="settings-col">
-            <h3>Manual Cross-Channel Sync</h3>
-            <p class="muted">Sold a book in-store or over the phone? Submit a sync proposal to delist it across all connected channels.</p>
+            <h3>Record a sale</h3>
+            <p class="muted">Sold a book in the shop or by phone? Prepare a stock update to remove it from your other connected shops.</p>
             
             <form id="propose-sync" class="standard-form">
-              <label for="sync-sku">Sold SKU</label>
+              <label for="sync-sku">Book SKU</label>
               <input id="sync-sku" type="text" required placeholder="BK-1234ABCD" autocomplete="off" spellcheck="false">
               
-              <label for="sync-channel">Source Channel</label>
+              <label for="sync-channel">Where it sold</label>
               <select id="sync-channel" required>
                 <option value="" disabled selected>Select channel...</option>
                 <option value="in_store">In-Store / POS</option>
                 <option value="abebooks">AbeBooks</option>
                 <option value="biblio">Biblio</option>
                 <option value="alibris">Alibris</option>
-                <option value="amazon_spapi">Amazon SP-API</option>
+                <option value="amazon_spapi">Amazon</option>
                 <option value="ebay">eBay</option>
               </select>
               
-              <button type="submit" class="primary">Propose Sync Action</button>
+              <button type="submit" class="primary">Prepare stock update</button>
             </form>
 
-            <div class="cron-status-card" style="margin-top: 2rem; padding: 1.25rem; background: var(--bg-surface-soft, rgba(255,255,255,0.03)); border: 1px solid var(--border-subtle, rgba(255,255,255,0.1)); border-radius: 8px;">
+            <div class="cron-status-card">
               <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
                 <h4 style="margin: 0; font-size: 0.95rem; color: var(--text-bright); display: flex; align-items: center; gap: 0.5rem;">
-                  <span>⚡ Background Pulse & Reconciliation</span>
+                  <span>⚡ Check orders & stock</span>
                 </h4>
-                <span class="badge" style="background: rgba(34, 197, 94, 0.15); color: #4ade80; border: 1px solid rgba(34, 197, 94, 0.3); font-size: 0.72rem; padding: 2px 8px; border-radius: 9999px;">Vercel Cron Active</span>
+                <span class="badge badge-live">Daily schedule</span>
               </div>
               <p class="muted" style="font-size: 0.82rem; margin-bottom: 0.85rem; line-height: 1.4;">
-                Autonomous pulse running daily on Vercel Cron (<code>0 4 * * *</code>) and on-demand. Ingests orders from Biblio & AbeBooks, cross-checks against 48h Collector Courtesy Holds, and executes Corvus Warden auto-delist cascades across all active channels.
+                Check Biblio and AbeBooks orders against collector holds and stock in connected shops. Run a check now or use the daily schedule.
               </p>
               <div style="display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
                 <button type="button" id="btn-trigger-pulse" class="primary-sm" style="flex: 1;">
-                  <span>⚡ Trigger Reconciliation Pulse</span>
+                  <span>⚡ Check orders now</span>
                 </button>
                 <button type="button" id="btn-trigger-demo-pulse" class="ghost-sm" title="Simulate incoming order test pulse" style="white-space: nowrap;">
-                  <span>🧪 Ingest Demo Order</span>
+                  <span>🧪 Try a sample order</span>
                 </button>
               </div>
               <div id="pulse-result-log" style="margin-top: 0.75rem; font-size: 0.8rem; font-family: monospace; display: none; padding: 0.6rem; border-radius: 4px; background: rgba(0,0,0,0.3); border: 1px solid var(--border-subtle, rgba(255,255,255,0.08)); color: var(--text-muted); word-break: break-all;"></div>
@@ -530,32 +523,32 @@
       <section id="analytics-panel" class="panel analytics-panel" hidden>
         <div class="panel-header">
           <div>
-            <p class="eyebrow">AUTONOMOUS AUDIT</p>
-            <h2>Corvus Value Delivered</h2>
-            <p class="muted">A real-time ledger of actions Corvus has managed, prevented, and protected.</p>
+            <p class="eyebrow">WORKSPACE ACTIVITY</p>
+            <h2>Activity overview</h2>
+            <p class="muted">See completed changes, stock updates, and sale conflicts handled.</p>
           </div>
         </div>
 
         <div class="stats-grid">
           <div class="stat-card">
-            <h3 class="stat-label">Total Automated Actions</h3>
+            <h3 class="stat-label">Completed actions</h3>
             <p id="stat-total" class="stat-value">0</p>
-            <p class="stat-hint">Approved and executed proposals</p>
+            <p class="stat-hint">Approved changes that have run</p>
           </div>
           <div class="stat-card">
-            <h3 class="stat-label">Inventory Syncs</h3>
+            <h3 class="stat-label">Stock updates</h3>
             <p id="stat-syncs" class="stat-value">0</p>
-            <p class="stat-hint">Multi-channel stock adjustments</p>
+            <p class="stat-hint">Updates across connected shops</p>
           </div>
           <div class="stat-card">
-            <h3 class="stat-label">Collisions Prevented</h3>
+            <h3 class="stat-label">Sale conflicts handled</h3>
             <p id="stat-collisions" class="stat-value">0</p>
-            <p class="stat-hint">Double-selling events eliminated</p>
+            <p class="stat-hint">Competing sales reviewed</p>
           </div>
           <div class="stat-card highlight">
             <h3 class="stat-label">Revenue Protected</h3>
             <p id="stat-revenue" class="stat-value highlight-val">$0.00</p>
-            <p class="stat-hint">CAD across antiquarian sales</p>
+            <p class="stat-hint">Sales value in CAD</p>
           </div>
         </div>
       </section>
@@ -567,11 +560,11 @@
         <div class="vision-modal-header">
           <div>
             <div class="vision-eyebrow">
-              <span class="vision-tag">✨ GEMINI MULTI-ANGLE VISION 2.0</span>
-              <span class="vision-pulse-badge">BIBLIOGRAPHIC OCR & PRICING</span>
+              <span class="vision-tag">✨ PHOTO INTAKE</span>
+              <span class="vision-pulse-badge">BOOK DETAILS & PRICES</span>
             </div>
-            <h3>Antiquarian Book Vision Intake</h3>
-            <p class="muted">Capture 3 key angles (Cover, Title Page, Copyright/Colophon) or upload stack photos for instant cataloging, issue-point detection, and barcode generation.</p>
+            <h3>Add books from photos</h3>
+            <p class="muted">Photograph the cover, title page, and copyright page, or upload a stack photo. Review the suggested details and price.</p>
           </div>
           <button type="button" id="btn-close-vision-modal" class="ghost-sm close-modal-btn" title="Close Intake Studio">✕</button>
         </div>
@@ -580,11 +573,11 @@
         <div class="vision-mode-tabs">
           <button type="button" class="vision-mode-btn active" id="vmode-3angle">
             <span class="vmode-icon">📖</span>
-            <span class="vmode-text"><strong>3-Angle Single Volume</strong><small>Cover + Title Page + Copyright Page (Antiquarian / Collectibles)</small></span>
+            <span class="vmode-text"><strong>One book, three photos</strong><small>Cover, title page, and copyright page</small></span>
           </button>
           <button type="button" class="vision-mode-btn" id="vmode-stack">
             <span class="vmode-icon">📚</span>
-            <span class="vmode-text"><strong>Stack / Shelf Batch</strong><small>Multiple books in 1 or more photos (Rapid Spines)</small></span>
+            <span class="vmode-text"><strong>One shelf, several photos</strong><small>Wide views and close-ups, with copy-count review</small></span>
           </button>
         </div>
 
@@ -684,7 +677,7 @@
             <input type="file" id="vstack-files" accept="image/*" multiple hidden>
             <span class="vstack-icon">📚</span>
             <strong>Drop or select 1 to 10 photos of stacks/shelves</strong>
-            <span class="muted">Corvus Vision will isolate every individual spine across all photos.</span>
+            <span class="muted">Book spines will be read across your photos.</span>
           </label>
           <div id="vstack-thumbs" class="vstack-thumbs-row"></div>
         </div>
@@ -692,11 +685,11 @@
         <!-- LOCATION METADATA & OPTIONS -->
         <div class="vision-intake-options">
           <div class="voption-field">
-            <label for="vopt-section">Assign Section</label>
+            <label for="vopt-section">Section</label>
             <input type="text" id="vopt-section" value="General" placeholder="e.g. Rare Books / Sci-Fi">
           </div>
           <div class="voption-field">
-            <label for="vopt-shelf">Assign Shelf</label>
+            <label for="vopt-shelf">Shelf</label>
             <input type="text" id="vopt-shelf" value="" placeholder="e.g. Vault-01">
           </div>
           <div class="voption-toggle">
@@ -712,7 +705,7 @@
           <div class="vision-spinner"></div>
           <div class="vision-progress-info">
             <h4 id="vision-progress-title">Analyzing Bibliographic Typography...</h4>
-            <p id="vision-progress-step" class="muted">Extracting spine, title page & copyright numberline via Gemini Vision.</p>
+            <p id="vision-progress-step" class="muted">Reading the spine, title page, and copyright details.</p>
           </div>
         </div>
 
@@ -727,7 +720,7 @@
           <div style="flex: 1;"></div>
           <button type="button" id="btn-cancel-vision" class="ghost">Cancel</button>
           <button type="button" id="btn-run-vision-intake" class="primary" disabled>
-            <span>⚡ Run Gemini Vision & Catalog</span>
+            <span>⚡ Read photos & prepare books</span>
           </button>
         </div>
       </div>

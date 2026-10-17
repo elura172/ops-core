@@ -278,9 +278,7 @@ def test_errors_do_not_leak_the_api_key(monkeypatch):
 # --- transport --------------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    "base_url", ["http://api.example.test/v1", "https://user:pw@api.openai.com/v1"]
-)
+@pytest.mark.parametrize("base_url", ["http://api.example.test/v1", "https://user:pw@api.openai.com/v1"])
 def test_unsafe_base_urls_are_refused(base_url):
     with pytest.raises(ValueError):
         OpenAIResponsesCopyProvider("key", base_url=base_url)

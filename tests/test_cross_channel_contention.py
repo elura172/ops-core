@@ -5,14 +5,9 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from unittest.mock import MagicMock
 
-import pytest
-
-from app.agents.corvus import CorvusWarden
 from app.domain.audit import AuditLog
-from app.publish.books import AbeBooksListingAdapter, EbayListingAdapter
 from app.publish.inventory_sync import MultiChannelInventorySync
 from app.publish.order_contention import (
-    ContentionArbiter,
     ContentionOutcome,
     OrderClaim,
     OrderContentionManager,
@@ -115,6 +110,7 @@ def test_chronological_first_come_first_served():
 
 def test_substitute_inventory_resolves_contention():
     """When a duplicate copy exists in catalog, both orders are fulfilled."""
+
     class MockSubstituteLocator:
         def find_substitute(self, sku: str) -> str | None:
             if sku == "BK-TOLKIEN-1":

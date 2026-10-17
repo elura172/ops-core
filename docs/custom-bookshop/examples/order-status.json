@@ -1,0 +1,15 @@
+{
+  "event_id": "06ea03d0-1f98-4bb0-861e-ce4ffab19e01",
+  "order_id": "web_order_example_001",
+  "status": "processing",
+  "channel_results": [
+    {
+      "channel": "custom_site",
+      "status": "succeeded"
+    },
+    {
+      "channel": "ebay",
+      "status": "pending"
+    }
+  ]
+}

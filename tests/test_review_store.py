@@ -166,7 +166,7 @@ def test_delete_and_clear_proposals(store):
     store.submit(ReviewItem("del-1", "update_inventory", {"sku": "A"}))
     store.submit(ReviewItem("del-2", "update_inventory", {"sku": "B"}))
     store.submit(ReviewItem("del-3", "update_inventory", {"sku": "C"}))
-    
+
     # del-2 rejected
     store.decide("del-2", approve=False, reviewer="ada")
     # del-3 approved, claimed, executed

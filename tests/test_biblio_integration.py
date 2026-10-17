@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-import json
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
-from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 from starlette.testclient import TestClient
@@ -16,7 +14,7 @@ from app.auth import create_access_token
 from app.config import Settings
 from app.db.inventory import InventoryItem, SQLiteInventoryStore
 from app.db.review_store import SQLiteReviewStore
-from app.db.want_list import Collector, CollectorHold, SQLiteWantListStore, WantItem
+from app.db.want_list import Collector, CollectorHold, SQLiteWantListStore
 from app.publish.books import BiblioListingAdapter
 from app.review.executor import ApprovedActionExecutor
 
@@ -116,25 +114,29 @@ def test_biblio_service_contention_with_active_collector_hold(biblio_env):
 
     now = datetime.now(UTC)
     # Seed an active 48-hour courtesy hold for a patron
-    collector = want_store.create_collector(Collector(
-        id="col-77",
-        tenant_id=1,
-        name="Lord Ravenscroft",
-        email="ravenscroft@antiquarian.org",
-    ))
-    hold = want_store.create_hold(CollectorHold(
-        id="hold-99",
-        tenant_id=1,
-        sku="BK-DUNE-1965",
-        want_item_id="want-1",
-        collector_id="col-77",
-        collector_name="Lord Ravenscroft",
-        book_title="Dune (First Edition, 1965)",
-        price_cad=Decimal("180.00"),
-        held_at=now,
-        expires_at=now + timedelta(hours=48),
-        status="active",
-    ))
+    want_store.create_collector(
+        Collector(
+            id="col-77",
+            tenant_id=1,
+            name="Lord Ravenscroft",
+            email="ravenscroft@antiquarian.org",
+        )
+    )
+    want_store.create_hold(
+        CollectorHold(
+            id="hold-99",
+            tenant_id=1,
+            sku="BK-DUNE-1965",
+            want_item_id="want-1",
+            collector_id="col-77",
+            collector_name="Lord Ravenscroft",
+            book_title="Dune (First Edition, 1965)",
+            price_cad=Decimal("180.00"),
+            held_at=now,
+            expires_at=now + timedelta(hours=48),
+            status="active",
+        )
+    )
 
     # An online buyer purchases the same volume on Biblio
     incoming_order = {
@@ -173,22 +175,35 @@ def test_resolve_contention_approve_fulfills_and_releases_hold(biblio_env):
     now = datetime.now(UTC)
     # Add book to inventory
     inv_store.add(
-        InventoryItem("BK-RARE-1", "Rare Grimoire", ["Hermes"], "hardcover", "Fine", Decimal("500"), Decimal("600"), "active", now, now),
+        InventoryItem(
+            "BK-RARE-1",
+            "Rare Grimoire",
+            ["Hermes"],
+            "hardcover",
+            "Fine",
+            Decimal("500"),
+            Decimal("600"),
+            "active",
+            now,
+            now,
+        ),
         tenant_id=1,
     )
     # Add active hold
-    want_store.create_hold(CollectorHold(
-        id="hold-grimoire",
-        tenant_id=1,
-        sku="BK-RARE-1",
-        want_item_id="w-1",
-        collector_id="c-1",
-        collector_name="Count Cagliostro",
-        book_title="Rare Grimoire",
-        held_at=now,
-        expires_at=now + timedelta(hours=48),
-        status="active",
-    ))
+    want_store.create_hold(
+        CollectorHold(
+            id="hold-grimoire",
+            tenant_id=1,
+            sku="BK-RARE-1",
+            want_item_id="w-1",
+            collector_id="c-1",
+            collector_name="Count Cagliostro",
+            book_title="Rare Grimoire",
+            held_at=now,
+            expires_at=now + timedelta(hours=48),
+            status="active",
+        )
+    )
 
     # Submit contention proposal
     proposed = operator.propose(
@@ -205,7 +220,13 @@ def test_resolve_contention_approve_fulfills_and_releases_hold(biblio_env):
     rev_id = proposed["review_id"]
 
     # 1. Operator decides to approve (sell to online buyer and release hold)
-    dec = operator.decide(rev_id, approve=True, reviewer="head_clerk", reason="Buyer paid full listing price", tenant_id=1)
+    dec = operator.decide(
+        rev_id,
+        approve=True,
+        reviewer="head_clerk",
+        reason="Buyer paid full listing price",
+        tenant_id=1,
+    )
     assert dec["status"] == "APPROVED"
 
     # 2. Operator executes
@@ -227,7 +248,9 @@ def test_resolve_contention_approve_fulfills_and_releases_hold(biblio_env):
 def test_reject_contention_cancels_biblio_order(biblio_env):
     client = biblio_env["client"]
     operator = biblio_env["operator"]
-    admin_headers = {"Authorization": f"Bearer {create_access_token({'sub': 'admin@example.com', 'tenant_id': 1, 'role': 'admin'})}"}
+    admin_headers = {
+        "Authorization": f"Bearer {create_access_token({'sub': 'admin@example.com', 'tenant_id': 1, 'role': 'admin'})}"
+    }
 
     # Propose contention
     proposed = operator.propose(
@@ -263,7 +286,9 @@ def test_reject_contention_cancels_biblio_order(biblio_env):
 
 def test_http_sync_biblio_orders_endpoint(biblio_env):
     client = biblio_env["client"]
-    admin_headers = {"Authorization": f"Bearer {create_access_token({'sub': 'admin@example.com', 'tenant_id': 1, 'role': 'admin'})}"}
+    admin_headers = {
+        "Authorization": f"Bearer {create_access_token({'sub': 'admin@example.com', 'tenant_id': 1, 'role': 'admin'})}"
+    }
 
     # 1. Standard sync with no orders
     res = client.post("/inventory/biblio/sync-orders", headers=admin_headers)
@@ -290,7 +315,11 @@ def test_http_webhook_biblio_endpoint(biblio_env):
         "items": [{"sku": "BK-TEST-WH", "price": "45.00"}],
     }
 
-    res = client.post("/webhooks/biblio", json=webhook_payload)
+    res = client.post(
+        "/webhooks/biblio",
+        json=webhook_payload,
+        headers={"Authorization": "Bearer " + create_access_token({"sub": "test", "tenant_id": 1, "role": "admin"})},
+    )
     assert res.status_code == 200
     data = res.json()
     assert data["status"] == "processed"

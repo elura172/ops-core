@@ -10,9 +10,7 @@ class SandboxTransport:
 
     requests: list[dict[str, Any]] = field(default_factory=list)
 
-    def post(
-        self, path: str, params: dict[str, str], body: dict[str, Any], signature: str
-    ) -> dict[str, Any]:
+    def post(self, path: str, params: dict[str, str], body: dict[str, Any], signature: str) -> dict[str, Any]:
         request = {
             "method": "POST",
             "path": path,

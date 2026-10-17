@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from app.api.security import TokenRegistry
 from app.ops.launch import LaunchChecklist
@@ -12,6 +12,33 @@ _FALSEY = {"0", "false", "no", "off"}
 
 def _default_db(name: str) -> str:
     return f"/tmp/{name}" if os.getenv("VERCEL") else name
+
+
+def _database_settings() -> dict[str, str]:
+    stores = {
+        "order_db": ("ORDER_DB", "orders.db"),
+        "review_db": ("REVIEW_DB", "reviews.db"),
+        "user_db": ("USER_DB", "users.db"),
+        "inventory_db": ("INVENTORY_DB", "inventory.db"),
+        "want_list_db": ("WANT_LIST_DB", "wants.db"),
+    }
+    shared_dsn = os.getenv("POSTGRES_URL", "").strip()
+    targets = {
+        field: os.getenv(env_name, "").strip() or shared_dsn or _default_db(filename)
+        for field, (env_name, filename) in stores.items()
+    }
+    if os.getenv("VERCEL"):
+        sqlite_stores = [
+            stores[field][0]
+            for field, target in targets.items()
+            if not target.startswith(("postgres://", "postgresql://"))
+        ]
+        if sqlite_stores:
+            raise RuntimeError(
+                "Vercel deployments require durable PostgreSQL for every store; "
+                "configure POSTGRES_URL or each store URL (SQLite fallback: " + ", ".join(sqlite_stores) + ")"
+            )
+    return targets
 
 
 def _flag(name: str, default: str = "false") -> bool:
@@ -46,11 +73,18 @@ class Settings:
     webhook_secret: str
     tokens: TokenRegistry
     shippo_api_key: str = ""
+    amazon_scraper_api_key: str = ""
+    amazon_sp_api_client_id: str = field(default="", repr=False)
+    amazon_sp_api_client_secret: str = field(default="", repr=False)
+    amazon_sp_api_refresh_token: str = field(default="", repr=False)
+    amazon_sp_api_seller_id: str = ""
+    amazon_sp_api_marketplace_id: str = "A2EUQ1WTGCTBG2"
     shopify_store_url: str = ""
     shopify_access_token: str = ""
     square_webhook_secret: str = ""
     stripe_secret_key: str = ""
     stripe_webhook_secret: str = ""
+    stripe_price_id: str = ""
     ebay_client_id: str = ""
     ebay_client_secret: str = ""
     ebay_access_token: str = ""
@@ -62,6 +96,7 @@ class Settings:
     biblio_dealer_id: str = ""
     gemini_api_key: str = ""
     cron_secret: str = ""
+    custom_site_connections: str = field(default="", repr=False)
     order_db: str = "orders.db"
     review_db: str = "reviews.db"
     user_db: str = "users.db"
@@ -109,6 +144,7 @@ class Settings:
         tokens = TokenRegistry.from_env(os.getenv("OPS_TOKENS", ""))
         if not dry_run and not tokens.configured:
             raise RuntimeError("live mode requires OPS_TOKENS to be configured")
+        database_settings = _database_settings()
         return cls(
             tts_app_key=required("TTS_APP_KEY"),
             tts_app_secret=required("TTS_APP_SECRET"),
@@ -116,11 +152,18 @@ class Settings:
             tts_shop_id=required("TTS_SHOP_ID"),
             webhook_secret=required("TTS_WEBHOOK_SECRET"),
             shippo_api_key=os.getenv("SHIPPO_API_KEY", ""),
+            amazon_scraper_api_key=os.getenv("AMAZON_SCRAPER_API_KEY", "").strip(),
+            amazon_sp_api_client_id=os.getenv("AMAZON_SP_API_CLIENT_ID", "").strip(),
+            amazon_sp_api_client_secret=os.getenv("AMAZON_SP_API_CLIENT_SECRET", "").strip(),
+            amazon_sp_api_refresh_token=os.getenv("AMAZON_SP_API_REFRESH_TOKEN", "").strip(),
+            amazon_sp_api_seller_id=os.getenv("AMAZON_SP_API_SELLER_ID", "").strip(),
+            amazon_sp_api_marketplace_id=os.getenv("AMAZON_SP_API_MARKETPLACE_ID", "A2EUQ1WTGCTBG2").strip(),
             shopify_store_url=os.getenv("SHOPIFY_STORE_URL", ""),
             shopify_access_token=os.getenv("SHOPIFY_ACCESS_TOKEN", ""),
             square_webhook_secret=os.getenv("SQUARE_WEBHOOK_SECRET", ""),
             stripe_secret_key=os.getenv("STRIPE_SECRET_KEY", ""),
             stripe_webhook_secret=os.getenv("STRIPE_WEBHOOK_SECRET", ""),
+            stripe_price_id=os.getenv("STRIPE_PRICE_ID", "").strip(),
             ebay_client_id=os.getenv("EBAY_CLIENT_ID", ""),
             ebay_client_secret=os.getenv("EBAY_CLIENT_SECRET", ""),
             ebay_access_token=os.getenv("EBAY_ACCESS_TOKEN", ""),
@@ -132,12 +175,9 @@ class Settings:
             biblio_dealer_id=os.getenv("BIBLIO_DEALER_ID", ""),
             gemini_api_key=os.getenv("GEMINI_API_KEY", "") or os.getenv("GOOGLE_API_KEY", ""),
             cron_secret=os.getenv("CRON_SECRET", ""),
+            custom_site_connections=os.getenv("CUSTOM_SITE_CONNECTIONS", ""),
             tokens=tokens,
-            order_db=os.getenv("ORDER_DB", os.getenv("POSTGRES_URL", _default_db("orders.db"))).strip() or os.getenv("POSTGRES_URL", _default_db("orders.db")),
-            review_db=os.getenv("REVIEW_DB", os.getenv("POSTGRES_URL", _default_db("reviews.db"))).strip() or os.getenv("POSTGRES_URL", _default_db("reviews.db")),
-            user_db=os.getenv("USER_DB", os.getenv("POSTGRES_URL", _default_db("users.db"))).strip() or os.getenv("POSTGRES_URL", _default_db("users.db")),
-            inventory_db=os.getenv("INVENTORY_DB", os.getenv("POSTGRES_URL", _default_db("inventory.db"))).strip() or os.getenv("POSTGRES_URL", _default_db("inventory.db")),
-            want_list_db=os.getenv("WANT_LIST_DB", os.getenv("POSTGRES_URL", _default_db("wants.db"))).strip() or os.getenv("POSTGRES_URL", _default_db("wants.db")),
+            **database_settings,
             dry_run=dry_run,
             live_enabled=_flag("LIVE_ENABLED"),
             signing_verified=_flag("LAUNCH_SIGNING_VERIFIED"),
@@ -155,6 +195,7 @@ class Settings:
         """
         if not _flag("DRY_RUN", "true"):
             return cls.from_env()
+        database_settings = _database_settings()
         return cls(
             tts_app_key=os.getenv("TTS_APP_KEY", ""),
             tts_app_secret=os.getenv("TTS_APP_SECRET", ""),
@@ -162,11 +203,18 @@ class Settings:
             tts_shop_id=os.getenv("TTS_SHOP_ID", ""),
             webhook_secret=os.getenv("TTS_WEBHOOK_SECRET", ""),
             shippo_api_key=os.getenv("SHIPPO_API_KEY", ""),
+            amazon_scraper_api_key=os.getenv("AMAZON_SCRAPER_API_KEY", "").strip(),
+            amazon_sp_api_client_id=os.getenv("AMAZON_SP_API_CLIENT_ID", "").strip(),
+            amazon_sp_api_client_secret=os.getenv("AMAZON_SP_API_CLIENT_SECRET", "").strip(),
+            amazon_sp_api_refresh_token=os.getenv("AMAZON_SP_API_REFRESH_TOKEN", "").strip(),
+            amazon_sp_api_seller_id=os.getenv("AMAZON_SP_API_SELLER_ID", "").strip(),
+            amazon_sp_api_marketplace_id=os.getenv("AMAZON_SP_API_MARKETPLACE_ID", "A2EUQ1WTGCTBG2").strip(),
             shopify_store_url=os.getenv("SHOPIFY_STORE_URL", ""),
             shopify_access_token=os.getenv("SHOPIFY_ACCESS_TOKEN", ""),
             square_webhook_secret=os.getenv("SQUARE_WEBHOOK_SECRET", ""),
             stripe_secret_key=os.getenv("STRIPE_SECRET_KEY", ""),
             stripe_webhook_secret=os.getenv("STRIPE_WEBHOOK_SECRET", ""),
+            stripe_price_id=os.getenv("STRIPE_PRICE_ID", "").strip(),
             ebay_client_id=os.getenv("EBAY_CLIENT_ID", ""),
             ebay_client_secret=os.getenv("EBAY_CLIENT_SECRET", ""),
             ebay_access_token=os.getenv("EBAY_ACCESS_TOKEN", ""),
@@ -178,15 +226,9 @@ class Settings:
             biblio_dealer_id=os.getenv("BIBLIO_DEALER_ID", ""),
             gemini_api_key=os.getenv("GEMINI_API_KEY", "") or os.getenv("GOOGLE_API_KEY", ""),
             cron_secret=os.getenv("CRON_SECRET", ""),
-            tokens=TokenRegistry.from_env(
-                os.getenv("OPS_TOKENS", "").strip()
-                or "10a4c7c9fc5206d6f36dc6944a81bb6f4a3cb0e25014ae3b12e6c3e52712292a:admin:admin"
-            ),
-            order_db=os.getenv("ORDER_DB", os.getenv("POSTGRES_URL", _default_db("orders.db"))).strip() or os.getenv("POSTGRES_URL", _default_db("orders.db")),
-            review_db=os.getenv("REVIEW_DB", os.getenv("POSTGRES_URL", _default_db("reviews.db"))).strip() or os.getenv("POSTGRES_URL", _default_db("reviews.db")),
-            user_db=os.getenv("USER_DB", os.getenv("POSTGRES_URL", _default_db("users.db"))).strip() or os.getenv("POSTGRES_URL", _default_db("users.db")),
-            inventory_db=os.getenv("INVENTORY_DB", os.getenv("POSTGRES_URL", _default_db("inventory.db"))).strip() or os.getenv("POSTGRES_URL", _default_db("inventory.db")),
-            want_list_db=os.getenv("WANT_LIST_DB", os.getenv("POSTGRES_URL", _default_db("wants.db"))).strip() or os.getenv("POSTGRES_URL", _default_db("wants.db")),
+            custom_site_connections=os.getenv("CUSTOM_SITE_CONNECTIONS", ""),
+            tokens=TokenRegistry.from_env(os.getenv("OPS_TOKENS", "").strip()),
+            **database_settings,
             dry_run=True,
             live_enabled=_flag("LIVE_ENABLED"),
             signing_verified=_flag("LAUNCH_SIGNING_VERIFIED"),

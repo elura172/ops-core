@@ -139,9 +139,7 @@ class OpenAIResponsesCopyProvider(CopyProvider):
                 raise TransientProviderError(f"provider returned HTTP {exc.code}") from exc
             raise TerminalProviderError(f"provider returned HTTP {exc.code}") from exc
         except (TimeoutError, URLError) as exc:
-            raise TransientProviderError(
-                f"provider request failed: {exc.__class__.__name__}"
-            ) from exc
+            raise TransientProviderError(f"provider request failed: {exc.__class__.__name__}") from exc
         except json.JSONDecodeError as exc:
             raise TerminalProviderError("provider returned a non-JSON body") from exc
         if not isinstance(payload, dict):

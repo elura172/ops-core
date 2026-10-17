@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pytest
+from fastapi.testclient import TestClient
 
 from app.api.http import create_app
 from app.api.operator import OperatorService
@@ -13,7 +14,6 @@ from app.domain.issue_points import (
 from app.domain.order_store import OrderStore
 from app.review.executor import ApprovedActionExecutor
 from app.review.queue import ReviewItem, ReviewQueue
-from fastapi.testclient import TestClient
 
 
 @pytest.fixture
@@ -187,6 +187,7 @@ def test_bce_disqualification_via_missing_flap_price():
 
 def test_api_intake_with_true_first_edition_issue_point_elevation(dashboard_client):
     from unittest.mock import patch
+
     from tests.test_dashboard import REVIEWER_TOKEN, auth
 
     reviewer = auth(REVIEWER_TOKEN)

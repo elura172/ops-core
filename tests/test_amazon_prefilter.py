@@ -53,8 +53,7 @@ def test_dominant_brands_are_unwinnable():
 
 def test_large_multipacks_compete_on_price_not_product():
     assert "commodity_multipack" in codes(
-        candidate("Gel Pens 60 Count Assorted")
-        and prefilter(candidate("Gel Pens 60 Count Assorted"))
+        candidate("Gel Pens 60 Count Assorted") and prefilter(candidate("Gel Pens 60 Count Assorted"))
     )
     assert "commodity_multipack" not in codes(prefilter(candidate("Gel Pens 6 Count Assorted")))
 
@@ -63,9 +62,7 @@ def test_keyword_stuffed_titles_flag_softly_rather_than_reject():
     """Amazon titles are stuffed for search reach. A garden spade whose title ends
     'Kids Sand Beach Shovels' is not a children's product, and rejecting it
     outright would discard a legitimate candidate."""
-    findings = prefilter(
-        candidate("Garden Shovel for Digging, 31 inch Mini Spade, Camping, Kids Sand Beach Shovels")
-    )
+    findings = prefilter(candidate("Garden Shovel for Digging, 31 inch Mini Spade, Camping, Kids Sand Beach Shovels"))
     assert [f.code for f in findings] == ["kids_or_baby"]
     assert findings[0].soft is True
 
@@ -147,9 +144,7 @@ def test_brand_matching_needs_a_word_boundary_too():
     assert "dominant_brand" in codes(prefilter(candidate("3M Command Hooks Large", price="19.99")))
     # "bic" must not fire on "fabric" or "bicycle".
     assert "dominant_brand" not in codes(prefilter(candidate("Fabric Storage Bins", price="19.99")))
-    assert "dominant_brand" not in codes(
-        prefilter(candidate("Bicycle Repair Stand", price="49.99"))
-    )
+    assert "dominant_brand" not in codes(prefilter(candidate("Bicycle Repair Stand", price="49.99")))
 
 
 def test_plural_titles_still_match_singular_keywords():

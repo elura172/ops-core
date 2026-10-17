@@ -7,9 +7,7 @@ from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 from app.growth.models import Campaign, CreativePerformance
 
 
-def campaign_url(
-    destination: str, *, source: str, medium: str, campaign: str, creative: str
-) -> str:
+def campaign_url(destination: str, *, source: str, medium: str, campaign: str, creative: str) -> str:
     parsed = urlparse(destination)
     query = dict(parse_qsl(parsed.query))
     query.update(
@@ -23,9 +21,7 @@ def campaign_url(
     return urlunparse(parsed._replace(query=urlencode(query)))
 
 
-def rank_creatives(
-    performance: Iterable[CreativePerformance], min_conversions: int = 1
-) -> list[CreativePerformance]:
+def rank_creatives(performance: Iterable[CreativePerformance], min_conversions: int = 1) -> list[CreativePerformance]:
     return sorted(
         (item for item in performance if item.conversions >= min_conversions),
         key=lambda item: (item.roas, item.ctr),
@@ -36,7 +32,5 @@ def rank_creatives(
 def can_spend(current_spend: Decimal, campaign: Campaign, proposed_spend: Decimal) -> bool:
     """Budget guardrail; callers must persist spend atomically."""
     return bool(
-        current_spend >= 0
-        and proposed_spend >= 0
-        and current_spend + proposed_spend <= campaign.total_budget_gbp
+        current_spend >= 0 and proposed_spend >= 0 and current_spend + proposed_spend <= campaign.total_budget_gbp
     )

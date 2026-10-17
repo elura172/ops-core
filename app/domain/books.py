@@ -69,9 +69,7 @@ class SpineExtractionItem:
             title=str(data.get("title", "")).strip(),
             subtitle=str(data["subtitle"]).strip() if data.get("subtitle") else None,
             authors=tuple(str(a).strip() for a in data.get("authors", []) if str(a).strip()),
-            publisher_imprint=str(data["publisher_imprint"]).strip()
-            if data.get("publisher_imprint")
-            else None,
+            publisher_imprint=str(data["publisher_imprint"]).strip() if data.get("publisher_imprint") else None,
             format=BookFormat.from_str(str(data.get("format", "unknown"))),
             visible_condition_cues=tuple(
                 str(c).strip() for c in data.get("visible_condition_cues", []) if str(c).strip()
@@ -113,11 +111,7 @@ class BookStackExtraction:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> BookStackExtraction:
-        items = tuple(
-            SpineExtractionItem.from_dict(b)
-            for b in data.get("books", [])
-            if isinstance(b, dict)
-        )
+        items = tuple(SpineExtractionItem.from_dict(b) for b in data.get("books", []) if isinstance(b, dict))
         return cls(
             books=items,
             orientation=str(data.get("orientation", "horizontal_stack")),
@@ -245,5 +239,3 @@ class BookValuation:
             "pricing_rationale": self.pricing_rationale,
             "comps": [c.to_dict() for c in self.comps],
         }
-
-

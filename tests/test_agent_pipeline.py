@@ -86,9 +86,7 @@ def test_enabling_publishing_lets_the_same_approval_through():
     run(orchestrator, AgentRole.PUBLISH, "prepare_publish", PUBLISH_INPUT)
     store.decide("p-1", approve=True, reviewer="ada")
 
-    enabled = ApprovedActionExecutor(
-        Client(), publish_gate=PublishGate(DryRunPublisher(), enabled=True)
-    )
+    enabled = ApprovedActionExecutor(Client(), publish_gate=PublishGate(DryRunPublisher(), enabled=True))
     assert enabled.execute(store, "p-1", actor="grace")["result"]["dry_run"] is True
     assert store.get("p-1").status is ReviewStatus.EXECUTED
 
@@ -146,9 +144,7 @@ def test_rejected_response_is_never_sent():
 
 def test_malformed_publish_payload_fails_the_item_rather_than_publishing():
     store = ReviewQueue()
-    executor = ApprovedActionExecutor(
-        Client(), publish_gate=PublishGate(DryRunPublisher(), enabled=True)
-    )
+    executor = ApprovedActionExecutor(Client(), publish_gate=PublishGate(DryRunPublisher(), enabled=True))
     from app.review.queue import ReviewItem
 
     store.submit(ReviewItem("p-2", "publish", {"publish_id": "p-2"}))

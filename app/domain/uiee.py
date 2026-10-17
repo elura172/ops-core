@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import Any
 
 from app.db.inventory import InventoryItem
 
@@ -10,10 +9,11 @@ from app.db.inventory import InventoryItem
 @dataclass
 class UIEERecord:
     """Represents a single record in the Universal Information Exchange Environment (UIEE) format.
-    
-    UIEE is the global standard plain-text exchange format for antiquarian, 
+
+    UIEE is the global standard plain-text exchange format for antiquarian,
     used, and out-of-print books used by AbeBooks, Biblio, Alibris, and ILAB.
     """
+
     sku: str
     title: str
     author: str
@@ -49,9 +49,9 @@ class UIEERecord:
             lines.append(f"ED|{self.edition}")
         if self.isbn:
             lines.append(f"IS|{self.isbn}")
-        
+
         lines.append(f"PR|{self.price_cad:.2f}")
-        
+
         if self.section:
             lines.append(f"KW|{self.section}")
         if self.shelf:
@@ -60,7 +60,7 @@ class UIEERecord:
             # Clean newlines from description in single-line tag
             clean_desc = " ".join(self.description.splitlines())
             lines.append(f"DE|{clean_desc}")
-            
+
         lines.append(f"SY|{self.status}")
         return "\n".join(lines)
 
@@ -104,7 +104,7 @@ class UIEEExporter:
         section_filter: str | None = None,
     ) -> str:
         """Exports a list of InventoryItems into a standard multi-record UIEE document.
-        
+
         Records in UIEE are separated by a blank line or record terminator.
         """
         filtered = items

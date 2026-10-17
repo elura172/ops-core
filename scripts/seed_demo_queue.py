@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+
 from app.db.factory import open_review_store
 from app.review.queue import ReviewItem, ReviewStatus
+
 
 def seed() -> None:
     store = open_review_store("reviews.db")
@@ -15,7 +17,10 @@ def seed() -> None:
             "sku": "BK-DUNE-1965",
             "action": "cancel_loser_marketplace_order",
             "cancellation_reason": "OUT_OF_STOCK",
-            "reason": "Simultaneous collision (35ms delta). Amazon prioritized over eBay due to critical seller cancellation SLA. Value $950 CAD held for human consultation.",
+            "reason": (
+                "Simultaneous collision (35ms delta). Amazon prioritized over eBay due to "
+                "critical seller cancellation SLA. Value $950 CAD held for human consultation."
+            ),
             "winner_order_id": "AMZ-112-984210",
             "winner_channel": "amazon",
             "loser_order_id": "EBAY-29482103",
@@ -55,14 +60,18 @@ def seed() -> None:
                     "match_score": 0.94,
                     "primary_isbn": "0441569560",
                 },
-                "triage_reason": "Single high-confidence antiquarian match confirmed via OpenLibrary / AbeBooks catalog.",
+                "triage_reason": (
+                    "Single high-confidence antiquarian match confirmed via OpenLibrary / AbeBooks catalog."
+                ),
             },
             "valuation": {
                 "condition_grade": "Very Good",
                 "channel_strategy": "multi_channel_antiquarian",
                 "in_store_price_cad": "40.00",
                 "online_price_cad": "45.00",
-                "pricing_rationale": "Collectible 1984 first trade paperback edition. Moderate spine shelfwear, clean text block.",
+                "pricing_rationale": (
+                    "Collectible 1984 first trade paperback edition. Moderate spine shelfwear, clean text block."
+                ),
             },
         },
         status=ReviewStatus.PENDING,
@@ -78,9 +87,7 @@ def seed() -> None:
             "order_id": "ORD-TOLKIEN-99",
             "source_channel": "amazon_spapi",
             "preferred_provider": "Canada Post",
-            "line_items": [
-                {"sku": "BK-LOTR-SET", "quantity": 1, "title": "The Lord of the Rings (3 Vols)"}
-            ],
+            "line_items": [{"sku": "BK-LOTR-SET", "quantity": 1, "title": "The Lord of the Rings (3 Vols)"}],
             "shipping_address": {
                 "name": "Eowyn of Rohan",
                 "line1": "144 Meduseld Way",
@@ -128,6 +135,7 @@ def seed() -> None:
         )
 
     print("Successfully seeded 4 demo review items into reviews.db!")
+
 
 if __name__ == "__main__":
     seed()

@@ -111,9 +111,7 @@ def test_failed_attempts_still_consume_quota(store, monkeypatch):
 def test_bad_key_is_terminal_not_retried(store, monkeypatch):
     from urllib.error import HTTPError
 
-    monkeypatch.setattr(
-        "app.amazon.scraper.urlopen", _raise(HTTPError("u", 401, "unauthorized", {}, None))
-    )
+    monkeypatch.setattr("app.amazon.scraper.urlopen", _raise(HTTPError("u", 401, "unauthorized", {}, None)))
     with pytest.raises(TerminalScraperError):
         client(store).fetch("B0DJHFR2GT")
     assert store.requests_this_month() == 1

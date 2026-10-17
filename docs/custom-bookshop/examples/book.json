@@ -1,0 +1,30 @@
+{
+  "schema_version": "1.0",
+  "sku": "BK-EXAMPLE-001",
+  "revision": 12,
+  "updated_at": "2026-10-16T16:00:00Z",
+  "publication": "published",
+  "availability": "available",
+  "quantity": 1,
+  "title": "Example Book \u2014 replace with reviewed title",
+  "authors": [
+    "Example Author"
+  ],
+  "subtitle": null,
+  "isbn": null,
+  "publisher": null,
+  "publication_year": null,
+  "edition": null,
+  "format": "trade_paperback",
+  "condition": "Good",
+  "condition_notes": "Example only: light rubbing to covers.",
+  "description": "Fictional catalogue record for integration testing.",
+  "price": {
+    "amount": "24.00",
+    "currency": "CAD"
+  },
+  "images": [],
+  "tags": [
+    "Fiction"
+  ]
+}

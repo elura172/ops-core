@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
-from typing import Any
-from unittest.mock import MagicMock, patch
 
 import pytest
 from starlette.testclient import TestClient
@@ -16,9 +14,8 @@ from app.config import Settings
 from app.db.inventory import InventoryItem, SQLiteInventoryStore
 from app.db.review_store import SQLiteReviewStore
 from app.db.users import SQLiteUserStore
-from app.db.want_list import Collector, CollectorHold, SQLiteWantListStore, WantItem
+from app.db.want_list import Collector, CollectorHold, SQLiteWantListStore
 from app.review.executor import ApprovedActionExecutor
-from app.vault import encrypt_credential
 
 
 @pytest.fixture
@@ -157,26 +154,30 @@ def test_reconciliation_service_collision_with_collector_hold(recon_env):
 
     # Place an active 48-hour courtesy hold for a patron
     now = datetime.now(UTC)
-    want_store.create_collector(Collector(
-        id="col-77",
-        tenant_id=1,
-        name="Baron Harkonnen",
-        email="baron@arrakis.com",
-        phone="555-0199",
-    ))
-    want_store.create_hold(CollectorHold(
-        id="hold-99",
-        tenant_id=1,
-        sku="BK-DUNE-1965",
-        want_item_id="want-1",
-        collector_id="col-77",
-        collector_name="Baron Harkonnen",
-        book_title="Dune (First Edition)",
-        price_cad=Decimal("180.00"),
-        held_at=now,
-        expires_at=now + timedelta(hours=48),
-        status="active",
-    ))
+    want_store.create_collector(
+        Collector(
+            id="col-77",
+            tenant_id=1,
+            name="Baron Harkonnen",
+            email="baron@arrakis.com",
+            phone="555-0199",
+        )
+    )
+    want_store.create_hold(
+        CollectorHold(
+            id="hold-99",
+            tenant_id=1,
+            sku="BK-DUNE-1965",
+            want_item_id="want-1",
+            collector_id="col-77",
+            collector_name="Baron Harkonnen",
+            book_title="Dune (First Edition)",
+            price_cad=Decimal("180.00"),
+            held_at=now,
+            expires_at=now + timedelta(hours=48),
+            status="active",
+        )
+    )
 
     # Run cycle with demo order
     result = service.run_reconciliation_cycle(demo_sample=True, force_tenant_id=1)
@@ -247,13 +248,13 @@ def test_cron_endpoint_auth_enforcement(recon_env):
     )
     assert res_valid_post.status_code == 200
 
-    # 5. Accept with operator admin JWT
+    # 5. Reject an operator JWT; the cron endpoint accepts only CRON_SECRET.
     jwt_token = create_access_token({"sub": "operator@opscore.io", "tenant_id": 1, "role": "admin"})
     res_jwt = client.get(
         "/api/cron/sync",
         headers={"Authorization": f"Bearer {jwt_token}"},
     )
-    assert res_jwt.status_code == 200
+    assert res_jwt.status_code == 401
 
 
 def test_cron_endpoint_with_demo_query(recon_env):

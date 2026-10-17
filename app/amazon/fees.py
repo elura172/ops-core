@@ -125,11 +125,7 @@ class LandedCost:
     def total(self) -> Decimal:
         duties = self.dutiable_value * (self.duty_rate + self.tariff_rate)
         return _money(
-            self.fob_unit_cost
-            + self.freight_per_unit
-            + duties
-            + self.prep_per_unit
-            + self.inspection_per_unit
+            self.fob_unit_cost + self.freight_per_unit + duties + self.prep_per_unit + self.inspection_per_unit
         )
 
 
@@ -146,11 +142,7 @@ class UnitEconomics:
     @property
     def total_cost(self) -> Decimal:
         return _money(
-            self.landed_cost
-            + self.referral_fee
-            + self.fulfilment_fee
-            + self.storage_fee
-            + self.returns_reserve
+            self.landed_cost + self.referral_fee + self.fulfilment_fee + self.storage_fee + self.returns_reserve
         )
 
     @property

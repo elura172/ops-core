@@ -95,9 +95,7 @@ class PricingModel:
     def deduction_rate(self) -> Decimal:
         """Fraction of the listed price that never reaches contribution margin."""
         vat_share = self.vat_rate / (Decimal("1") + self.vat_rate)
-        return (
-            vat_share + self.commission_rate + self.transaction_fee_rate + self.refund_reserve_rate
-        )
+        return vat_share + self.commission_rate + self.transaction_fee_rate + self.refund_reserve_rate
 
 
 def target_price(

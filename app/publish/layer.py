@@ -31,9 +31,7 @@ class DryRunPublisher:
             raise ValueError("resource type is not allowlisted")
         if not request.publish_id or not request.resource_id:
             raise ValueError("publish and resource IDs are required")
-        return PublishResult(
-            request.publish_id, f"dry-run://{request.resource_type}/{request.resource_id}", True
-        )
+        return PublishResult(request.publish_id, f"dry-run://{request.resource_type}/{request.resource_id}", True)
 
 
 class PublishGate:

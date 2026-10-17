@@ -12,14 +12,16 @@ def sign_square(url: str, body: bytes, secret: str) -> str:
     expected = hmac.new(secret.encode("utf-8"), content, hashlib.sha256).digest()
     return base64.b64encode(expected).decode("utf-8")
 
+
 def test_verify_square_signature():
     secret = "test_secret"
     url = "https://example.com/webhooks/square"
     body = b'{"type":"order.created"}'
-    
+
     signature = sign_square(url, body, secret)
     assert verify_square_signature(url, body, signature, secret) is True
     assert verify_square_signature(url, body, "bad_signature", secret) is False
+
 
 def test_handle_square_webhook_invalid_signature():
     operator = MagicMock()
@@ -28,10 +30,11 @@ def test_handle_square_webhook_invalid_signature():
         body=b'{"type":"order.created"}',
         signature="bad_signature",
         secret="test_secret",
-        operator=operator
+        operator=operator,
     )
     assert result["status"] == 401
     operator.propose.assert_not_called()
+
 
 def test_handle_square_webhook_ignored_event():
     operator = MagicMock()
@@ -39,56 +42,73 @@ def test_handle_square_webhook_ignored_event():
     url = "https://example.com/webhooks/square"
     body = b'{"type":"payment.updated"}'
     signature = sign_square(url, body, secret)
-    
+
     result = handle_square_webhook(url, body, signature, secret, operator)
     assert result["status"] == 200
     assert "ignored event type" in result["message"]
     operator.propose.assert_not_called()
 
+
 def test_handle_square_webhook_valid_order():
     operator = MagicMock()
     operator.propose.return_value = {"review_id": "r-123"}
-    
+
     secret = "test_secret"
     url = "https://example.com/webhooks/square"
-    
+
     payload = {
         "type": "order.created",
         "data": {
             "object": {
                 "order": {
-                    "state": "OPEN",
+                    "state": "COMPLETED",
+                    "id": "square-test-order",
                     "line_items": [
                         {"note": "BK-XYZ"},
                         {"catalog_object_id": "sq-cat-BK-ABC"},
-                        {"catalog_object_id": "#item-BK-DEF"}
-                    ]
+                        {"catalog_object_id": "#item-BK-DEF"},
+                    ],
                 }
             }
-        }
+        },
     }
     body = json.dumps(payload).encode("utf-8")
     signature = sign_square(url, body, secret)
-    
+
     result = handle_square_webhook(url, body, signature, secret, operator, tenant_id=1)
     assert result["status"] == 200
     assert result["processed_skus"] == ["BK-XYZ", "BK-ABC", "BK-DEF"]
-    
+
     assert operator.propose.call_count == 3
-    
+
     operator.propose.assert_any_call(
         operation="sync_inventory",
-        payload={"sku": "BK-XYZ", "source_channel": "square", "tenant_id": 1},
+        payload={
+            "sku": "BK-XYZ",
+            "source_channel": "square",
+            "tenant_id": 1,
+            "order_id": "square-test-order",
+        },
         tenant_id=1,
     )
     operator.propose.assert_any_call(
         operation="sync_inventory",
-        payload={"sku": "BK-ABC", "source_channel": "square", "tenant_id": 1},
+        payload={
+            "sku": "BK-ABC",
+            "source_channel": "square",
+            "tenant_id": 1,
+            "order_id": "square-test-order",
+        },
         tenant_id=1,
     )
     operator.propose.assert_any_call(
         operation="sync_inventory",
-        payload={"sku": "BK-DEF", "source_channel": "square", "tenant_id": 1},
+        payload={
+            "sku": "BK-DEF",
+            "source_channel": "square",
+            "tenant_id": 1,
+            "order_id": "square-test-order",
+        },
         tenant_id=1,
     )
 
@@ -96,6 +116,7 @@ def test_handle_square_webhook_valid_order():
 def test_square_sync_delists_online_and_local_inventory():
     from datetime import UTC, datetime
     from decimal import Decimal
+
     from app.db.inventory import InventoryItem, SQLiteInventoryStore
     from app.review.executor import ApprovedActionExecutor
 
@@ -122,11 +143,13 @@ def test_square_sync_delists_online_and_local_inventory():
     executor = ApprovedActionExecutor(client=None, inventory_store=store)
 
     # Simulate Square sale sync_inventory
-    result = executor._sync_inventory({
-        "sku": "BK-SQUARE-SOLD-1",
-        "source_channel": "square",
-        "tenant_id": 1,
-    })
+    result = executor._sync_inventory(
+        {
+            "sku": "BK-SQUARE-SOLD-1",
+            "source_channel": "square",
+            "tenant_id": 1,
+        }
+    )
 
     assert result["sku"] == "BK-SQUARE-SOLD-1"
     # Online marketplaces delisted
@@ -149,6 +172,7 @@ def test_square_sync_delists_online_and_local_inventory():
 def test_online_sync_delists_square_and_local_inventory():
     from datetime import UTC, datetime
     from decimal import Decimal
+
     from app.db.inventory import InventoryItem, SQLiteInventoryStore
     from app.review.executor import ApprovedActionExecutor
 
@@ -173,11 +197,13 @@ def test_online_sync_delists_square_and_local_inventory():
     executor = ApprovedActionExecutor(client=None, inventory_store=store)
 
     # Sale on Amazon SP-API
-    result = executor._sync_inventory({
-        "sku": "BK-ONLINE-SOLD-1",
-        "source_channel": "amazon_spapi",
-        "tenant_id": 1,
-    })
+    result = executor._sync_inventory(
+        {
+            "sku": "BK-ONLINE-SOLD-1",
+            "source_channel": "amazon_spapi",
+            "tenant_id": 1,
+        }
+    )
 
     assert result["sku"] == "BK-ONLINE-SOLD-1"
     sync_res = result["sync_results"]
@@ -190,6 +216,7 @@ def test_online_sync_delists_square_and_local_inventory():
 def test_square_webhook_to_corvus_auto_execution_delists_store():
     from datetime import UTC, datetime
     from decimal import Decimal
+
     from app.api.operator import OperatorService
     from app.db.inventory import InventoryItem, SQLiteInventoryStore
     from app.review.executor import ApprovedActionExecutor
@@ -229,12 +256,11 @@ def test_square_webhook_to_corvus_auto_execution_delists_store():
             "object": {
                 "order": {
                     "state": "COMPLETED",
-                    "line_items": [
-                        {"note": "BK-SQUARE-E2E-1"}
-                    ]
+                    "id": "square-e2e-order",
+                    "line_items": [{"note": "BK-SQUARE-E2E-1"}],
                 }
             }
-        }
+        },
     }
     body = json.dumps(payload).encode("utf-8")
     signature = sign_square(url, body, secret)
@@ -266,5 +292,3 @@ def test_square_webhook_to_corvus_auto_execution_delists_store():
     assert review.result["inventory_store"] == "delisted"
     assert review.result["sync_results"]["abebooks"] == "delisted"
     assert review.result["sync_results"]["amazon_spapi"] == "delisted"
-
-

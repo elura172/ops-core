@@ -9,9 +9,7 @@ from app.publish.layer import PublishRequest
 from app.review.queue import ReviewItem, ReviewQueue
 
 
-def register_publish_and_support_agents(
-    orchestrator: AgentOrchestrator, reviews: ReviewQueue
-) -> None:
+def register_publish_and_support_agents(orchestrator: AgentOrchestrator, reviews: ReviewQueue) -> None:
     """Register draft-only handlers; outputs become human-review items."""
 
     def prepare_publish(data: dict[str, Any]) -> dict[str, Any]:

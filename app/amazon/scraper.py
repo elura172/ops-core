@@ -168,15 +168,11 @@ class SnapshotStore:
                 "WHERE asin = ? AND category_rank IS NOT NULL ORDER BY observed_on",
                 (asin,),
             ).fetchall()
-        return tuple(
-            RankPoint(date.fromisoformat(r["observed_on"]), int(r["category_rank"])) for r in rows
-        )
+        return tuple(RankPoint(date.fromisoformat(r["observed_on"]), int(r["category_rank"])) for r in rows)
 
     def tracked_asins(self) -> list[str]:
         with self._lock:
-            rows = self.connection.execute(
-                "SELECT DISTINCT asin FROM product_snapshots ORDER BY asin"
-            ).fetchall()
+            rows = self.connection.execute("SELECT DISTINCT asin FROM product_snapshots ORDER BY asin").fetchall()
         return [r["asin"] for r in rows]
 
     def close(self) -> None:
@@ -403,13 +399,9 @@ class AmazonScraperClient:
         if not self.api_key:
             raise ValueError("api_key is required")
         if not self.live:
-            raise PermissionError(
-                "client is in dry-run; construct with live=True to spend the allowance"
-            )
+            raise PermissionError("client is in dry-run; construct with live=True to spend the allowance")
         if self.remaining <= 0:
-            raise RequestBudgetExceeded(
-                f"monthly allowance of {self.monthly_budget} requests is spent"
-            )
+            raise RequestBudgetExceeded(f"monthly allowance of {self.monthly_budget} requests is spent")
         # Logged before the call: a request that fails still consumed quota.
         self.store.log_request(label, "attempted")
 
@@ -418,9 +410,7 @@ class AmazonScraperClient:
         self._spend(f"search:{term}")
         payload = self._get(term, SEARCH_URL)
         results = to_search_results(payload)
-        logger.info(
-            "amazon.search.completed", term=term, results=len(results), remaining=self.remaining
-        )
+        logger.info("amazon.search.completed", term=term, results=len(results), remaining=self.remaining)
         return results
 
     def fetch(self, asin: str) -> Snapshot:

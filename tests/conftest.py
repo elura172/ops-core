@@ -8,6 +8,12 @@ import pytest
 from app.api.security import TokenRegistry, hash_token
 from app.config import Settings
 
+
+def pytest_configure(config: pytest.Config) -> None:
+    # Isolated deterministic signing material for the test process only.
+    os.environ.setdefault("JWT_SECRET_KEY", "test-only-jwt-signing-secret-material-32-bytes-minimum")
+
+
 #: A live Postgres for the tests that prove multi-process behavior, e.g.
 #:   OPS_TEST_POSTGRES_DSN=postgresql://ops@127.0.0.1:54329/ops_core_test
 #: Postgres-backed tests skip when it is unset, so the default run stays

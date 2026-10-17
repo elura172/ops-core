@@ -112,9 +112,50 @@ def test_gemini_provider_parses_valid_response():
         assert book.format == BookFormat.TRADE_PAPERBACK
 
 
+def test_compact_shelf_extraction_uses_small_schema_and_maps_records():
+    provider = GeminiBookVisionProvider(api_key="fake-key")
+    payload = {
+        "candidates": [
+            {
+                "content": {
+                    "parts": [
+                        {
+                            "text": json.dumps(
+                                {
+                                    "b": [
+                                        {
+                                            "n": 1,
+                                            "x": [10, 20, 300, 400],
+                                            "t": "Example Book",
+                                            "a": ["A. Writer"],
+                                            "f": "unknown",
+                                            "q": "medium",
+                                        }
+                                    ],
+                                    "u": 2,
+                                }
+                            )
+                        }
+                    ]
+                }
+            }
+        ]
+    }
+    with patch.object(provider, "_post_with_retry", return_value=payload) as post:
+        result = provider.extract_shelf_stack(b"fake-jpeg")
+    body = post.call_args.args[1]
+    assert body["generationConfig"]["response_schema"]["properties"].keys() == {"b", "u"}
+    assert len(result.books) == 1
+    assert result.books[0].title == "Example Book"
+    assert result.books[0].box_2d == (10, 20, 300, 400)
+    assert result.unidentified_spines_count == 2
+
+
 def test_prepare_vision_image_magic_bytes_and_resizing():
     import io
+
     from PIL import Image
+
     from app.ai.book_vision import prepare_vision_image
 
     # Create large image
@@ -154,7 +195,10 @@ def test_gemini_provider_strips_markdown_code_fences():
                 "content": {
                     "parts": [
                         {
-                            "text": "```json\n{\"books\": [], \"orientation\": \"horizontal_stack\", \"unidentified_spines_count\": 0}\n```"
+                            "text": (
+                                '```json\n{"books": [], "orientation": "horizontal_stack", '
+                                '"unidentified_spines_count": 0}\n```'
+                            )
                         }
                     ]
                 }
@@ -170,6 +214,7 @@ def test_gemini_provider_strips_markdown_code_fences():
 
 def test_author_inference_in_system_prompt():
     from app.ai.book_vision import BOOK_STACK_SYSTEM_PROMPT
+
     assert "AUTHOR INFERENCE" in BOOK_STACK_SYSTEM_PROMPT
     assert "TOTAL CONSECRATION" in BOOK_STACK_SYSTEM_PROMPT
     assert "St. Louis de Montfort" in BOOK_STACK_SYSTEM_PROMPT
@@ -198,7 +243,7 @@ def test_undercount_expansion_retry():
                                         }
                                     ],
                                     "orientation": "horizontal_stack",
-                                    "unidentified_spines_count": 0,
+                                    "unidentified_spines_count": 1,
                                 }
                             )
                         }
@@ -249,11 +294,8 @@ def test_undercount_expansion_retry():
     }
 
     provider = GeminiBookVisionProvider(api_key="fake-key")
-    with patch.object(
-        provider, "_post_with_retry", side_effect=[payload_one_book, payload_multi_books]
-    ):
+    with patch.object(provider, "_post_with_retry", side_effect=[payload_one_book, payload_multi_books]):
         result = provider.extract_stack(b"fake-bytes")
         assert len(result.books) == 2
         assert result.books[0].title == "Book 1"
         assert result.books[1].title == "Book 2"
-

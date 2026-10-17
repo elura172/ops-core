@@ -9,6 +9,7 @@ opens so a half-migrated database refuses to serve.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from app.review.queue import ReviewStore
@@ -55,13 +56,16 @@ def open_order_repository(order_db: str) -> Any:
 
     return SQLiteOrderRepository(order_db)
 
+
 def open_inventory_store(db_url: str) -> Any:
     if is_postgres_dsn(db_url):
         from app.db.inventory import PostgresInventoryStore
+
         migrate_once(db_url)
         return PostgresInventoryStore(db_url)
-    
+
     from app.db.inventory import SQLiteInventoryStore
+
     return SQLiteInventoryStore(db_url)
 
 

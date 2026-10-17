@@ -18,12 +18,9 @@ Usage:
 
 from __future__ import annotations
 
-import sys
 import threading
-import time
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
-from typing import Any
 
 from app.agents.corvus import CorvusWarden
 from app.api.operator import OperatorService
@@ -37,7 +34,6 @@ from app.publish.books import (
 )
 from app.publish.inventory_sync import MultiChannelInventorySync
 from app.publish.order_contention import (
-    ContentionArbiter,
     ContentionOutcome,
     OrderClaim,
     OrderContentionManager,
@@ -129,8 +125,8 @@ def run_scenario_one(env: SimulatedEnvironment) -> None:
 
     subheader("Step 1: Ingesting Amazon Order (Timestamp 0.000s)")
     res_amz = env.manager.process_order_claim(claim_amazon)
-    print(f"  {GREEN}✔ ALLOCATED{RESET}: Order {claim_amazon.order_id} claimed BK-DUNE-1965")
-    print(f"  Broadcast: Delisting BK-DUNE-1965 on eBay, AbeBooks, Biblio, Alibris...\n")
+    print(f"  {GREEN}✔ {res_amz.outcome.value.upper()}{RESET}: Order {claim_amazon.order_id} claimed BK-DUNE-1965")
+    print("  Broadcast: Delisting BK-DUNE-1965 on eBay, AbeBooks, Biblio, Alibris...\n")
 
     subheader("Step 2: Ingesting eBay Order (Timestamp +0.035s — before eBay delist took effect)")
     res_ebay = env.manager.process_order_claim(claim_ebay)
@@ -151,9 +147,12 @@ def run_scenario_one(env: SimulatedEnvironment) -> None:
 
     print(f"  Status in Operator Desk: {YELLOW}{detail['status']}{RESET}")
     print(
-        f"  {BOLD}Corvus Decision:{RESET} Refused to auto-cancel! Price is ${detail['payload']['loser_claim']['price_cad']} CAD (> $200 threshold)."
+        f"  {BOLD}Corvus Decision:{RESET} Refused to auto-cancel! Price is "
+        f"${detail['payload']['loser_claim']['price_cad']} CAD (> $200 threshold)."
     )
-    print(f"  {CYAN}Result:{RESET} Held safely in the dashboard queue for senior bookseller consultation with the buyer.")
+    print(
+        f"  {CYAN}Result:{RESET} Held safely in the dashboard queue for senior bookseller consultation with the buyer."
+    )
 
 
 def run_scenario_two(env: SimulatedEnvironment) -> None:
@@ -192,8 +191,8 @@ def run_scenario_two(env: SimulatedEnvironment) -> None:
     print(f"  Arbiter Rule: {res_pos.reason}\n")
 
     subheader("Step 3: Corvus Warden Evaluates the Collision")
-    print(f"  ⚡ Corvus woke instantly on webhook proposal, approved, and executed!")
-    
+    print("  ⚡ Corvus woke instantly on webhook proposal, approved, and executed!")
+
     reviews = env.operator.list_reviews(pending_only=False)
     contention_item = [r for r in reviews if r["operation"] == "resolve_order_contention"][-1]
     detail = env.operator.review_detail(contention_item["review_id"])
@@ -244,7 +243,10 @@ def run_scenario_three(env: SimulatedEnvironment) -> None:
 def run_scenario_four(env: SimulatedEnvironment) -> None:
     header("SCENARIO 4: High-Concurrency Stress Crucible (8 Concurrent Channels Racing)")
     print(f"{DIM}Item: SKU BK-SIGNED-MONOGRAPH (1-of-1 Signed Joyce Ulysses, $180 CAD){RESET}")
-    print(f"{DIM}8 worker threads simulating 8 channels synchronize on a barrier and claim at the exact microsecond.{RESET}\n")
+    print(
+        f"{DIM}8 worker threads simulating 8 channels synchronize on a barrier and claim "
+        f"at the exact microsecond.{RESET}\n"
+    )
 
     sku = "BK-SIGNED-MONOGRAPH"
     channels = [
@@ -288,10 +290,13 @@ def run_scenario_four(env: SimulatedEnvironment) -> None:
 
     final_owner = env.manager.get_allocation(sku)
     print(f"\n  Final Vault Owner: {GREEN}{final_owner.order_id} on {final_owner.channel.upper()}{RESET}")
-    
+
     # Square POS has priority weight 1000 so if it raced, it preempted or held!
     assert final_owner.channel == "square"
-    print(f"  {CYAN}Integrity Check:{RESET} Exactly 1 allocation in vault. 7 contention events handled safely without deadlock.")
+    print(
+        f"  {CYAN}Integrity Check:{RESET} Exactly 1 allocation in vault. "
+        "7 contention events handled safely without deadlock."
+    )
 
 
 def main() -> None:
@@ -307,9 +312,7 @@ def main() -> None:
     print(f"{RESET}")
     print(f"Starting Multi-Marketplace Order Contention Simulation at {datetime.now(UTC).isoformat()}...\n")
 
-    env = SimulatedEnvironment(
-        extra_stock={"BK-LOTR-SET": ["BK-LOTR-SET-COPY2"]}
-    )
+    env = SimulatedEnvironment(extra_stock={"BK-LOTR-SET": ["BK-LOTR-SET-COPY2"]})
 
     run_scenario_one(env)
     run_scenario_two(env)

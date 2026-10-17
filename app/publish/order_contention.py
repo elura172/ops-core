@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import logging
 import threading
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -124,9 +123,17 @@ class ContentionArbiter:
         a_is_pos = self._is_physical_pos(claim_a.channel)
         b_is_pos = self._is_physical_pos(claim_b.channel)
         if a_is_pos and not b_is_pos:
-            return claim_a, claim_b, f"Physical POS ({claim_a.channel}) takes absolute precedence over remote order ({claim_b.channel})."
+            return (
+                claim_a,
+                claim_b,
+                f"Physical POS ({claim_a.channel}) takes absolute precedence over remote order ({claim_b.channel}).",
+            )
         if b_is_pos and not a_is_pos:
-            return claim_b, claim_a, f"Physical POS ({claim_b.channel}) takes absolute precedence over remote order ({claim_a.channel})."
+            return (
+                claim_b,
+                claim_a,
+                f"Physical POS ({claim_b.channel}) takes absolute precedence over remote order ({claim_a.channel}).",
+            )
 
         # 2. Chronological check
         t_a = claim_a.ordered_at if claim_a.ordered_at.tzinfo else claim_a.ordered_at.replace(tzinfo=UTC)
@@ -136,10 +143,20 @@ class ContentionArbiter:
         if abs(diff_seconds) > self.time_threshold:
             if diff_seconds > 0:
                 # A was ordered earlier
-                return claim_a, claim_b, f"Order {claim_a.order_id} placed {abs(diff_seconds):.1f}s earlier on {claim_a.channel} (FCFS priority)."
+                return (
+                    claim_a,
+                    claim_b,
+                    f"Order {claim_a.order_id} placed {abs(diff_seconds):.1f}s earlier "
+                    f"on {claim_a.channel} (FCFS priority).",
+                )
             else:
                 # B was ordered earlier
-                return claim_b, claim_a, f"Order {claim_b.order_id} placed {abs(diff_seconds):.1f}s earlier on {claim_b.channel} (FCFS priority)."
+                return (
+                    claim_b,
+                    claim_a,
+                    f"Order {claim_b.order_id} placed {abs(diff_seconds):.1f}s earlier "
+                    f"on {claim_b.channel} (FCFS priority).",
+                )
 
         # 3. Channel SLA Priority weighting (simultaneous window)
         w_a = self.weights.get(claim_a.channel, 0)
@@ -148,13 +165,15 @@ class ContentionArbiter:
             return (
                 claim_a,
                 claim_b,
-                f"Simultaneous sale detected ({abs(diff_seconds):.2f}s delta). {claim_a.channel} prioritized over {claim_b.channel} due to critical seller cancellation SLA.",
+                f"Simultaneous sale detected ({abs(diff_seconds):.2f}s delta). {claim_a.channel} "
+                f"prioritized over {claim_b.channel} due to critical seller cancellation SLA.",
             )
         elif w_b > w_a:
             return (
                 claim_b,
                 claim_a,
-                f"Simultaneous sale detected ({abs(diff_seconds):.2f}s delta). {claim_b.channel} prioritized over {claim_a.channel} due to critical seller cancellation SLA.",
+                f"Simultaneous sale detected ({abs(diff_seconds):.2f}s delta). {claim_b.channel} "
+                f"prioritized over {claim_a.channel} due to critical seller cancellation SLA.",
             )
 
         # 4. Price tie-breaker
@@ -162,13 +181,15 @@ class ContentionArbiter:
             return (
                 claim_a,
                 claim_b,
-                f"Tied channel priority; {claim_a.order_id} prioritized by higher sale price (${claim_a.price_cad} vs ${claim_b.price_cad}).",
+                f"Tied channel priority; {claim_a.order_id} prioritized by higher sale price "
+                f"(${claim_a.price_cad} vs ${claim_b.price_cad}).",
             )
         elif claim_b.price_cad > claim_a.price_cad:
             return (
                 claim_b,
                 claim_a,
-                f"Tied channel priority; {claim_b.order_id} prioritized by higher sale price (${claim_b.price_cad} vs ${claim_a.price_cad}).",
+                f"Tied channel priority; {claim_b.order_id} prioritized by higher sale price "
+                f"(${claim_b.price_cad} vs ${claim_a.price_cad}).",
             )
 
         # 5. Deterministic lexicographical tie-break
@@ -350,6 +371,7 @@ class OrderContentionManager:
         # Trigger Corvus to triage newly proposed contention item if available
         try:
             from app.agents.corvus import CorvusWarden
+
             warden = CorvusWarden(self.operator)
             warden.wake_and_triage()
         except Exception as exc:

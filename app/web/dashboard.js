@@ -2,7 +2,7 @@
 const $ = id => document.getElementById(id);
 let checkedItems = new Set();
 let token = "", session = null, items = [], selected = null, generation = 0, selection = 0, busy = false;
-const labels = {intake_book:"Intake Book", create_product_draft:"Create product draft", update_inventory:"Update stock", update_prices:"Update prices", publish:"Publish content", send_customer_response:"Send customer response", sync_inventory:"Cross-Channel Sync", fulfill_order:"Fulfill Order", resolve_order_contention:"Resolve Contention", contention_hold_vs_marketplace:"Patron Hold Collision (Biblio)"};
+const labels = {review_shelf_capture:"Review shelf capture", publish_custom_site:"Publish to own website", review_stock_conflict:"Review competing stock claims", intake_book:"Intake Book", create_product_draft:"Create product draft", update_inventory:"Update stock", update_prices:"Update prices", publish:"Publish content", send_customer_response:"Send customer response", sync_inventory:"Update connected shops", fulfill_order:"Fulfill Order", resolve_order_contention:"Resolve sale conflict", contention_hold_vs_marketplace:"Collector hold vs. Biblio sale"};
 const human = text => String(text).replaceAll("_", " ");
 function formatError(detail) {
   if (typeof detail === "string") return detail;
@@ -19,6 +19,47 @@ function node(tag, text, className) {
   if (text !== undefined) element.textContent = text;
   if (className) element.className = className;
   return element;
+}
+function focusDialog(dialog, label, close) {
+  const previousFocus = document.activeElement;
+  dialog.setAttribute("role", "dialog");
+  dialog.setAttribute("aria-modal", "true");
+  dialog.setAttribute("aria-label", label);
+  const controls = () => [...dialog.querySelectorAll("button, input, select, textarea, a[href], [tabindex='0']")]
+    .filter(el => !el.disabled && el.getClientRects().length > 0);
+  function onKeydown(event) {
+    if (!dialog.isConnected || dialog.getClientRects().length === 0) return;
+    if (event.key === "Escape") {
+      event.preventDefault();
+      close();
+    } else if (event.key === "Tab") {
+      const elements = controls();
+      const first = elements[0], last = elements[elements.length - 1];
+      if (!dialog.contains(document.activeElement)) {
+        event.preventDefault();
+        (event.shiftKey ? last : first)?.focus();
+      } else if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last?.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first?.focus();
+      }
+    }
+  }
+  function onFocusin(event) {
+    if (dialog.isConnected && dialog.getClientRects().length > 0 && !dialog.contains(event.target)) {
+      controls()[0]?.focus();
+    }
+  }
+  document.addEventListener("keydown", onKeydown);
+  document.addEventListener("focusin", onFocusin);
+  controls()[0]?.focus();
+  return () => {
+    document.removeEventListener("keydown", onKeydown);
+    document.removeEventListener("focusin", onFocusin);
+    if (previousFocus?.isConnected) previousFocus.focus();
+  };
 }
 function message(text) { $("message").textContent = text; }
 function disconnect() {
@@ -51,7 +92,7 @@ function renderBatchDetail() {
   if (checkedItems.size === 0) {
     if (selected) select(selected);
     else {
-      $("detail").replaceChildren(node("h2", "A moment of attention."),node("p", "Select an action to read its contents before making a decision."));
+      $("detail").replaceChildren(node("h2", "Choose an action"),node("p", "Choose an action to review and approve or reject it."));
     }
     return;
   }
@@ -277,10 +318,139 @@ function fields(parent, data) {
   }
   parent.append(dl);
 }
+function shelfImage(data, alt, className) {
+  if (typeof data !== "string" || !data.startsWith("data:image/jpeg;base64,")) return null;
+  const img = node("img", undefined, className); img.src = data; img.alt = alt; img.loading = "lazy";
+  return img;
+}
+function renderShelfDraft(item) {
+  const detail = $("detail"), p = item.payload;
+  detail.replaceChildren(node("p", "SHELF CAPTURE", "eyebrow"), node("h2", "Check the physical copies"));
+  detail.append(node("p", "Compare the photos. Sightings of the same physical book belong to one copy. Two books with the same title can be separate copies.", "muted"));
+  if (p.failed_images?.length || p.unidentified_spines) {
+    detail.append(node("p", `${p.failed_images?.length || 0} photo(s) failed; ${p.unidentified_spines || 0} unreadable spine(s) were reported. This draft may be incomplete.`, "shelf-warning"));
+  }
+  for (const warning of p.dense_photo_warnings || []) {
+    detail.append(node("p", `Photo ${warning.image_index + 1} (${warning.filename}): ${warning.message}`, "shelf-warning"));
+  }
+  for (const photo of p.photos || []) {
+    const image = shelfImage(photo.preview, `Photo ${photo.image_index + 1}: ${photo.filename}`, "shelf-source-photo");
+    if (!image) continue;
+    const source = node("details"); source.append(node("summary", `View photo ${photo.image_index + 1}: ${photo.filename}`), image); detail.append(source);
+  }
+  const pending = item.status === "PENDING" && session.permissions.includes("review:decide");
+  const observations = p.observations || [], selectors = new Map();
+  const groups = p.copy_count_confirmed ? p.copy_groups : p.suggested_groups;
+  const assigned = new Map();
+  for (const group of groups || []) for (const id of group) assigned.set(id, group[0]);
+  for (const id of p.excluded_observations || []) assigned.set(id, "skip");
+  const list = node("div", undefined, "shelf-observations");
+  for (const sighting of observations) {
+    const card = node("article", undefined, "shelf-observation");
+    const crop = shelfImage(sighting.crop, `Book sighting ${sighting.id}: ${sighting.title}`, "shelf-spine-crop");
+    if (crop) card.append(crop);
+    const content = node("div", undefined, "shelf-observation-content");
+    content.append(node("h3", sighting.title || "Unreadable title"));
+    content.append(node("p", `${sighting.id} · Photo ${sighting.source_image_index + 1} · ${sighting.source_filename}`, "muted"));
+    const readings = [sighting.authors?.join(", "), sighting.publisher_imprint, sighting.format, sighting.edition_or_series_markers?.join("; ")].filter(Boolean);
+    if (readings.length) content.append(node("p", readings.join(" · "), "muted"));
+    const label = node("label", "Physical copy");
+    const select = node("select"); select.id = `copy-${sighting.id}`; label.htmlFor = select.id;
+    for (const optionSighting of observations) {
+      const option = node("option", optionSighting.id === sighting.id
+        ? `Separate copy (${sighting.id})`
+        : `Same copy as ${optionSighting.id} — ${optionSighting.title}`);
+      option.value = optionSighting.id; select.append(option);
+    }
+    const skip = node("option", "Exclude — not a book"); skip.value = "skip"; select.append(skip);
+    select.value = assigned.get(sighting.id) || sighting.id; select.disabled = !pending;
+    selectors.set(sighting.id, select);
+    content.append(label, select); card.append(content); list.append(card);
+  }
+  detail.append(list);
+  const hints = p.overlap_hints?.length || 0;
+  detail.append(node("p", `${hints} overlap suggestion(s) use photo position and neighbouring titles. ${p.possible_overlap_count || 0} other possible overlap(s) need your judgement. Suggestions are not proof of identity.`, "muted"));
+  if (p.possible_overlaps?.length) {
+    const ambiguity = node("details"); ambiguity.append(node("summary", "Possible overlaps to check"));
+    for (const pair of p.possible_overlaps.slice(0, 50)) ambiguity.append(node("p", `${pair.left} ↔ ${pair.right}: ${pair.reason}`, "muted"));
+    detail.append(ambiguity);
+  }
+  function decisions() {
+    const resolved = new Map(), excluded = [];
+    function root(id, seen = new Set()) {
+      if (seen.has(id)) throw new Error("Copy choices form a loop. Choose one separate copy as the reference.");
+      seen.add(id);
+      const target = selectors.get(id)?.value;
+      if (target === "skip") return "skip";
+      if (!target || !selectors.has(target)) throw new Error("Choose a known book sighting.");
+      return target === id ? id : root(target, seen);
+    }
+    for (const sighting of observations) {
+      const target = root(sighting.id);
+      if (target === "skip") {
+        if (selectors.get(sighting.id).value !== "skip") throw new Error("A copy cannot refer to an excluded sighting.");
+        excluded.push(sighting.id); continue;
+      }
+      if (!resolved.has(target)) resolved.set(target, []);
+      resolved.get(target).push(sighting.id);
+    }
+    const result = [];
+    for (const [primary, members] of resolved) {
+      const photos = members.map(id => observations.find(o => o.id === id).source_image_index);
+      if (new Set(photos).size !== photos.length) throw new Error("Two spines in one photo are separate physical copies.");
+      result.push([primary, ...members.filter(id => id !== primary)]);
+    }
+    return {copy_groups: result, excluded_observations: excluded, copy_count_confirmed: true};
+  }
+  const count = node("p", undefined, "shelf-copy-count"); count.setAttribute("aria-live", "polite"); detail.append(count);
+  if (pending) {
+    const reset = node("button", "Treat every sighting as a separate copy", "ghost-sm");
+    const checkLabel = node("label", undefined, "shelf-confirm");
+    const confirmed = node("input"); confirmed.type = "checkbox";
+    checkLabel.append(confirmed, node("span", "I checked the overlaps and confirmed the physical copy count."));
+    const approve = node("button", "Approve copy groups", "primary");
+    function update() {
+      try { const choice = decisions(); count.textContent = `${choice.copy_groups.length} physical copies · ${choice.excluded_observations.length} excluded sightings`; approve.disabled = !confirmed.checked; }
+      catch (err) { count.textContent = err.message; approve.disabled = true; }
+    }
+    for (const select of selectors.values()) select.onchange = () => { confirmed.checked = false; update(); };
+    confirmed.onchange = update;
+    reset.onclick = () => { for (const [id, select] of selectors) select.value = id; confirmed.checked = false; update(); };
+    approve.onclick = () => {
+      try { mutate(item, "decision", {approve: true, reason: "Physical copies checked against source photos", payload_update: decisions()}); }
+      catch (err) { message(err.message); }
+    };
+    const reject = node("button", "Reject draft"); reject.onclick = () => mutate(item, "decision", {approve: false});
+    const actions = node("div", undefined, "actions"); actions.append(approve, reject);
+    detail.append(reset, checkLabel, actions); update();
+  } else {
+    count.textContent = `${p.copy_groups?.length || 0} confirmed physical copies`;
+    if (item.status === "APPROVED" && session.permissions.includes("review:execute")) {
+      detail.append(node("p", "This creates individual book reviews. Inventory and publishing stay unchanged until those reviews are approved and executed.", "muted"));
+      const execute = node("button", "Create book reviews", "primary"); execute.onclick = () => mutate(item, "execute"); detail.append(execute);
+    }
+    if (item.result?.review_ids) {
+      detail.append(node("p", `${item.result.copy_count} book reviews created. Review their details and prices next.`));
+      for (const id of item.result.review_ids) { const open = node("button", id, "ghost-sm"); open.onclick = () => select(id); detail.append(open); }
+    }
+    if (item.failure) detail.append(node("p", `Needs reconciliation: ${item.failure}`, "shelf-warning"));
+  }
+}
+
 function renderDetail(item) {
+  if (item.operation === "review_shelf_capture") return renderShelfDraft(item);
   const detail = $("detail"); detail.replaceChildren();
   detail.append(node("p", "ACTION PREVIEW", "eyebrow"), node("h2", labels[item.operation] || human(item.operation)), node("span", human(item.status), `badge ${item.status.toLowerCase()}`));
   
+  if (item.payload.shelf_evidence) {
+    const evidence = node("details"); evidence.append(node("summary", "Source photos for this copy"));
+    for (const sighting of item.payload.shelf_evidence.observations || []) {
+      evidence.append(node("p", `${sighting.id}: ${sighting.source_filename} · ${sighting.title}`));
+      const crop = shelfImage(sighting.crop, `Source sighting ${sighting.id}`, "shelf-spine-crop");
+      if (crop) evidence.append(crop);
+    }
+    detail.append(evidence);
+  }
   if (item.operation === "intake_book" && item.payload.valuation) {
     const val = item.payload.valuation;
     const ext = item.payload.extraction;
@@ -744,7 +914,7 @@ async function refresh() {
       }
     }).catch(() => {});
     if (selected && items.some(i=>i.review_id === selected)) await select(selected);
-    else { selected = null; $("detail").replaceChildren(node("h2", "A moment of attention."),node("p", "Select an action to read its contents before making a decision.")); }
+    else { selected = null; $("detail").replaceChildren(node("h2", "Choose an action"),node("p", "Choose an action to review and approve or reject it.")); }
   } catch(error) {
     if (epoch === generation) {
       items = []; selected = null; selection++;
@@ -777,14 +947,6 @@ async function mutate(item, action, body) {
 
 $("show-signup").onclick = (e) => { e.preventDefault(); $("login-panel").hidden = true; $("signup-panel").hidden = false; };
 $("show-login").onclick = (e) => { e.preventDefault(); $("signup-panel").hidden = true; $("login-panel").hidden = false; };
-if ($("btn-fill-demo")) {
-  $("btn-fill-demo").onclick = () => {
-    $("login-email").value = "operator@opscore.io";
-    $("login-password").value = "Antiquarian-Vault-2026!";
-    handleAuth("/auth/login", {email: "operator@opscore.io", password: "Antiquarian-Vault-2026!"}, $("btn-fill-demo"));
-  };
-}
-
 async function handleAuth(path, body, button) {
   const epoch = ++generation;
   button.disabled = true; message("");
@@ -806,7 +968,7 @@ async function handleAuth(path, body, button) {
     if (epoch !== generation) return;
     session = {name: identity.sub, permissions: ["review:read", "review:decide", "review:execute"]}; 
     $("identity").textContent = identity.sub;
-    $("mode").textContent = "MULTI-TENANT";
+    $("mode").textContent = "WORKSPACE";
     $("mode").className = `badge live`;
     $("login-section").hidden = true;
     $("logout").hidden = false;
@@ -832,7 +994,7 @@ async function handleAuth(path, body, button) {
           } catch(e) {
             message(e.message);
             $("btn-subscribe").disabled = false;
-            $("btn-subscribe").textContent = "Subscribe Now ($49/mo) →";
+            $("btn-subscribe").textContent = "Choose a subscription";
           }
         };
     } else {
@@ -882,7 +1044,7 @@ if ($("form-onboarding")) {
         method: "POST",
         body: JSON.stringify({ provider: provider, api_key: key })
       });
-      message(`Connected ${provider} successfully! Welcome to Corvus.`);
+      message(`Saved your ${provider} connection.`);
       $("onboarding-key").value = "";
       $("onboarding-section").hidden = true;
       $("workspace").hidden = false;
@@ -1031,16 +1193,16 @@ async function prepareImageFile(file) {
   }
 }
 
-let currentIntakeMode = "multi_stack";
+let currentIntakeMode = "shelf_capture";
 const modePillStack = $("mode-pill-stack");
 const modePillAngle = $("mode-pill-angle");
 
 function setIntakeMode(mode) {
   currentIntakeMode = mode;
   if (modePillStack) {
-    modePillStack.classList.toggle("active", mode === "multi_stack");
+    modePillStack.classList.toggle("active", mode === "shelf_capture");
     const radio = modePillStack.querySelector("input");
-    if (radio) radio.checked = mode === "multi_stack";
+    if (radio) radio.checked = mode === "shelf_capture";
   }
   if (modePillAngle) {
     modePillAngle.classList.toggle("active", mode === "multi_angle_single_book");
@@ -1049,7 +1211,7 @@ function setIntakeMode(mode) {
   }
 }
 
-if (modePillStack) modePillStack.onclick = () => setIntakeMode("multi_stack");
+if (modePillStack) modePillStack.onclick = () => setIntakeMode("shelf_capture");
 if (modePillAngle) modePillAngle.onclick = () => setIntakeMode("multi_angle_single_book");
 
 let stagedPhotos = [];
@@ -1176,7 +1338,7 @@ async function executeBatchIntake() {
   }
 
   try {
-    statusEl.textContent = `Optimizing ${stagedPhotos.length} photo${stagedPhotos.length > 1 ? "s" : ""} for Gemini Vision...`;
+    statusEl.textContent = `Optimizing ${stagedPhotos.length} photo${stagedPhotos.length > 1 ? "s" : ""} for review...`;
 
     const preparedFiles = [];
     for (let i = 0; i < stagedPhotos.length; i++) {
@@ -1197,7 +1359,7 @@ async function executeBatchIntake() {
     if ($("intake-shelf")) formData.append("shelf", $("intake-shelf").value.trim() || "");
 
     statusEl.textContent = currentIntakeMode === "multi_angle_single_book"
-      ? `Synthesizing multi-angle views with Gemini Vision...`
+      ? `Reading your book photos...`
       : `Analyzing ${preparedFiles.length} stack photos & deduplicating cross-image spines...`;
 
     const epoch = generation;
@@ -1222,6 +1384,17 @@ async function executeBatchIntake() {
       throw new Error(errDetail);
     }
 
+    if (body.shelf_draft) {
+      stagedPhotos = []; renderStagedTray();
+      const densityNotice = body.shelf_draft.dense_photo_warning_count
+        ? ` ${body.shelf_draft.dense_photo_warning_count} photo(s) need extra review; closer views of 20–30 spines are recommended.`
+        : "";
+      statusEl.textContent = `${body.shelf_draft.observation_count} sightings from ${body.successful_images} photos.${densityNotice} Check the suggested physical copies on the Review Desk.`;
+      if (summaryBox) { summaryBox.hidden = false; summaryBox.replaceChildren(node("p", statusEl.textContent)); }
+      message("Shelf draft ready. Confirm overlaps before creating book reviews.");
+      await refresh(); switchTab("queue"); await select(body.shelf_draft.review_id);
+      return;
+    }
     // Reset staged photos
     stagedPhotos = [];
     renderStagedTray();
@@ -1278,7 +1451,7 @@ async function executeBatchIntake() {
     }
 
     message(currentIntakeMode === "multi_angle_single_book"
-      ? `Multi-angle volume successfully synthesized and queued for review!`
+      ? `Book details are ready for review.`
       : `Batch cataloged ${processedCount} volumes (${dupCount} overlapping duplicates suppressed).`
     );
     refresh();
@@ -2210,7 +2383,7 @@ async function showShelfAuditModal() {
     if (!file) return;
     const sec = secInput.value.trim() || "General";
     const sh = shelfInput.value.trim();
-    statusP.textContent = `Analyzing shelf spines with Corvus Vision...`;
+    statusP.textContent = `Reading book spines...`;
     fileInput.disabled = true;
 
     try {
@@ -2493,8 +2666,10 @@ function switchTab(active) {
 
   for (const [key, btn] of Object.entries(tabs)) {
     if (btn) {
-      if (key === active) btn.className = "nav-tab active";
-      else btn.className = "nav-tab";
+      const isActive = key === active;
+      btn.className = isActive ? "nav-tab active" : "nav-tab";
+      if (isActive) btn.setAttribute("aria-current", "page");
+      else btn.removeAttribute("aria-current");
     }
   }
 
@@ -2602,7 +2777,7 @@ async function triggerReconciliationPulse(demo = false) {
   if (demoBtn) demoBtn.disabled = true;
   if (logEl) {
     logEl.style.display = "block";
-    logEl.textContent = `Pulse initiated (demo=${demo})... Polling channels & consulting Corvus Warden.`;
+    logEl.textContent = `${demo ? "Checking a sample order" : "Checking orders and stock"}...`;
     logEl.style.color = "var(--text-muted)";
   }
 
@@ -2866,17 +3041,15 @@ async function loadSettings() {
   const list = $("connected-integrations-list");
   try {
     const integrations = await api("/integrations");
+    const providers = Array.isArray(integrations.connected_providers)
+      ? integrations.connected_providers
+      : Object.entries(integrations).filter(([, active]) => active === true).map(([provider]) => provider);
     list.replaceChildren();
-    if (Object.keys(integrations).length === 0) {
+    if (providers.length === 0) {
       list.append(node("li", "No integrations connected yet.", "muted"));
     } else {
-      for (const [provider, active] of Object.entries(integrations)) {
-        if (active) {
-          const li = node("li", `✓ ${provider.toUpperCase()}`);
-          li.style.color = "green";
-          li.style.fontWeight = "bold";
-          list.append(li);
-        }
+      for (const provider of providers) {
+        list.append(node("li", `✓ ${provider.toUpperCase()}`, "integration-connected"));
       }
     }
   } catch(e) {
@@ -2969,7 +3142,7 @@ function renderHolds(holds) {
     empty.style.gridColumn = "1 / -1";
     empty.innerHTML = `
       <p style="margin: 0; font-size: 14px;"><strong>No active courtesy holds.</strong></p>
-      <p style="margin: 4px 0 0; font-size: 12px;">When newly photographed or cataloged books match an active collector want, they are intercepted here under a 48-hour marketplace embargo.</p>
+      <p style="margin: 4px 0 0; font-size: 12px;">Books that match a collector’s want list appear here on hold for 48 hours before general sale.</p>
     `;
     container.append(empty);
     return;
@@ -3172,11 +3345,14 @@ function renderWants(wants) {
 function showNewCollectorModal() {
   const overlay = node("div", undefined, "sanctuary-modal-overlay");
   const modal = node("div", undefined, "audit-modal");
+  let releaseFocus = () => {};
+  const close = () => { overlay.remove(); releaseFocus(); };
 
   const header = node("div", undefined, "sanctuary-header");
-  header.append(node("h3", "📇 Register New Collector"));
+  header.append(node("h3", "📇 Add collector"));
   const closeBtn = node("button", "✕", "ghost-sm");
-  closeBtn.onclick = () => overlay.remove();
+  closeBtn.setAttribute("aria-label", "Close collector form");
+  closeBtn.onclick = close;
   header.append(closeBtn);
   modal.append(header);
 
@@ -3184,29 +3360,29 @@ function showNewCollectorModal() {
   form.innerHTML = `
     <div>
       <label for="new-col-name">Collector Full Name *</label>
-      <input id="new-col-name" type="text" required placeholder="e.g. Dr. Arthur Pendelton" style="width: 100%;">
+      <input id="new-col-name" type="text" required placeholder="e.g. Dr. Arthur Pendelton">
     </div>
-    <div style="display: flex; gap: 12px; margin-top: 12px;">
-      <div style="flex: 1;">
+    <div>
+      <div>
         <label for="new-col-email">Email Address</label>
-        <input id="new-col-email" type="email" placeholder="collector@domain.com" style="width: 100%;">
+        <input id="new-col-email" type="email" placeholder="collector@domain.com">
       </div>
-      <div style="flex: 1;">
+      <div>
         <label for="new-col-phone">Phone Number</label>
-        <input id="new-col-phone" type="tel" placeholder="(613) 555-0144" style="width: 100%;">
+        <input id="new-col-phone" type="tel" placeholder="(613) 555-0144">
       </div>
     </div>
-    <div style="margin-top: 12px;">
+    <div>
       <label for="new-col-notes">Collecting Interests & Profile Notes</label>
-      <textarea id="new-col-notes" rows="3" placeholder="e.g. Early Canadian literature, Hugh MacLennan first editions, fine bindings..." style="width: 100%;"></textarea>
+      <textarea id="new-col-notes" rows="3" placeholder="e.g. Early Canadian literature, Hugh MacLennan first editions, fine bindings..."></textarea>
     </div>
-    <div style="margin-top: 18px; display: flex; justify-content: flex-end; gap: 8px;">
+    <div>
       <button type="button" class="ghost-sm" id="modal-col-cancel">Cancel</button>
-      <button type="submit" class="primary">Save Collector Profile →</button>
+      <button type="submit" class="primary">Save collector</button>
     </div>
   `;
 
-  form.querySelector("#modal-col-cancel").onclick = () => overlay.remove();
+  form.querySelector("#modal-col-cancel").onclick = close;
   form.onsubmit = async (e) => {
     e.preventDefault();
     const name = form.querySelector("#new-col-name").value.trim();
@@ -3220,7 +3396,7 @@ function showNewCollectorModal() {
         body: JSON.stringify({ name, email, phone, notes }),
       });
       message(`Collector '${name}' registered successfully.`);
-      overlay.remove();
+      close();
       loadCollectorsView();
     } catch (err) {
       alert(`Error creating collector: ${err.message}`);
@@ -3230,16 +3406,20 @@ function showNewCollectorModal() {
   modal.append(form);
   overlay.append(modal);
   document.body.append(overlay);
+  releaseFocus = focusDialog(modal, "Register new collector", close);
 }
 
 function showNewWantModal(defaultCollectorId = "") {
   const overlay = node("div", undefined, "sanctuary-modal-overlay");
   const modal = node("div", undefined, "audit-modal");
+  let releaseFocus = () => {};
+  const close = () => { overlay.remove(); releaseFocus(); };
 
   const header = node("div", undefined, "sanctuary-header");
-  header.append(node("h3", "📖 Register Antiquarian Want"));
+  header.append(node("h3", "📖 Add a wanted book"));
   const closeBtn = node("button", "✕", "ghost-sm");
-  closeBtn.onclick = () => overlay.remove();
+  closeBtn.setAttribute("aria-label", "Close want form");
+  closeBtn.onclick = close;
   header.append(closeBtn);
   modal.append(header);
 
@@ -3251,29 +3431,29 @@ function showNewWantModal(defaultCollectorId = "") {
   form.innerHTML = `
     <div>
       <label for="want-col-select">Select Collector *</label>
-      <select id="want-col-select" required style="width: 100%;">
+      <select id="want-col-select" required>
         <option value="" disabled ${!defaultCollectorId ? "selected" : ""}>Select collector...</option>
         ${colOptions}
       </select>
     </div>
-    <div style="display: flex; gap: 12px; margin-top: 12px;">
-      <div style="flex: 2;">
+    <div>
+      <div>
         <label for="want-title">Book Title *</label>
-        <input id="want-title" type="text" required placeholder="e.g. Two Solitudes" style="width: 100%;">
+        <input id="want-title" type="text" required placeholder="e.g. Two Solitudes">
       </div>
-      <div style="flex: 1;">
+      <div>
         <label for="want-author">Author</label>
-        <input id="want-author" type="text" placeholder="e.g. Hugh MacLennan" style="width: 100%;">
+        <input id="want-author" type="text" placeholder="e.g. Hugh MacLennan">
       </div>
     </div>
-    <div style="display: flex; gap: 12px; margin-top: 12px;">
-      <div style="flex: 1;">
+    <div>
+      <div>
         <label for="want-max-price">Max Budget (CAD $)</label>
-        <input id="want-max-price" type="number" step="0.50" placeholder="e.g. 175.00" style="width: 100%;">
+        <input id="want-max-price" type="number" step="0.50" placeholder="e.g. 175.00">
       </div>
-      <div style="flex: 1;">
+      <div>
         <label for="want-condition">Minimum Condition</label>
-        <select id="want-condition" style="width: 100%;">
+        <select id="want-condition">
           <option value="">Any Condition</option>
           <option value="Fair">Fair or better</option>
           <option value="Good" selected>Good or better</option>
@@ -3282,9 +3462,9 @@ function showNewWantModal(defaultCollectorId = "") {
           <option value="Fine">Fine or As New</option>
         </select>
       </div>
-      <div style="flex: 1;">
+      <div>
         <label for="want-binding">Binding</label>
-        <select id="want-binding" style="width: 100%;">
+        <select id="want-binding">
           <option value="">Any Binding</option>
           <option value="Hardcover" selected>Hardcover</option>
           <option value="Paperback">Paperback</option>
@@ -3292,17 +3472,17 @@ function showNewWantModal(defaultCollectorId = "") {
         </select>
       </div>
     </div>
-    <div style="margin-top: 12px;">
+    <div>
       <label for="want-keywords">Edition Details / Provenance Requirements</label>
-      <textarea id="want-keywords" rows="2" placeholder="e.g. Collins 1945 first edition in original jacket preferred..." style="width: 100%;"></textarea>
+      <textarea id="want-keywords" rows="2" placeholder="e.g. Collins 1945 first edition in original jacket preferred..."></textarea>
     </div>
-    <div style="margin-top: 18px; display: flex; justify-content: flex-end; gap: 8px;">
+    <div>
       <button type="button" class="ghost-sm" id="modal-want-cancel">Cancel</button>
-      <button type="submit" class="primary">Record Active Want →</button>
+      <button type="submit" class="primary">Save wanted book</button>
     </div>
   `;
 
-  form.querySelector("#modal-want-cancel").onclick = () => overlay.remove();
+  form.querySelector("#modal-want-cancel").onclick = close;
   form.onsubmit = async (e) => {
     e.preventDefault();
     const collectorId = form.querySelector("#want-col-select").value;
@@ -3326,7 +3506,7 @@ function showNewWantModal(defaultCollectorId = "") {
         }),
       });
       message(`Want for '${title}' added to collector want list.`);
-      overlay.remove();
+      close();
       loadCollectorsView();
     } catch (err) {
       alert(`Error creating want: ${err.message}`);
@@ -3336,6 +3516,7 @@ function showNewWantModal(defaultCollectorId = "") {
   modal.append(form);
   overlay.append(modal);
   document.body.append(overlay);
+  releaseFocus = focusDialog(modal, "Register antiquarian want", close);
 }
 
 if ($("btn-new-collector")) $("btn-new-collector").onclick = () => showNewCollectorModal();
@@ -3569,6 +3750,7 @@ function initVisionIntake() {
     updateRunButtonState();
   }
 
+  let releaseVisionFocus = () => {};
   function openModal() {
     modal.hidden = false;
     if ($("vision-progress-card")) $("vision-progress-card").hidden = true;
@@ -3577,11 +3759,13 @@ function initVisionIntake() {
       $("vision-result-card").replaceChildren();
     }
     updateRunButtonState();
+    releaseVisionFocus = focusDialog(modal.querySelector(".vision-intake-modal"), "Antiquarian book vision intake", closeModal);
   }
 
   function closeModal() {
     stopVisionCamera();
     modal.hidden = true;
+    releaseVisionFocus();
   }
 
   openBtn.onclick = openModal;
@@ -3595,6 +3779,7 @@ function initVisionIntake() {
   if (mode3AngleBtn && modeStackBtn) {
     mode3AngleBtn.onclick = () => {
       visionMode = "3angle";
+      if ($("vopt-auto-register")) $("vopt-auto-register").disabled = false;
       mode3AngleBtn.classList.add("active");
       modeStackBtn.classList.remove("active");
       if ($("vslots-3angle-container")) $("vslots-3angle-container").hidden = false;
@@ -3604,6 +3789,7 @@ function initVisionIntake() {
 
     modeStackBtn.onclick = () => {
       visionMode = "stack";
+      if ($("vopt-auto-register")) { $("vopt-auto-register").checked = false; $("vopt-auto-register").disabled = true; }
       modeStackBtn.classList.add("active");
       mode3AngleBtn.classList.remove("active");
       if ($("vslots-3angle-container")) $("vslots-3angle-container").hidden = true;
@@ -3789,6 +3975,11 @@ function initVisionIntake() {
 
   // Render Extraction Result Preview Card
   function renderVisionResultCard(data) {
+    if (data.shelf_draft) {
+      const result = $("vision-result-card");
+      if (result) { result.hidden = false; result.replaceChildren(node("p", "Shelf draft ready. Check physical copies on the Review Desk.")); }
+      return;
+    }
     const card = $("vision-result-card");
     if (!card) return;
     card.hidden = false;
@@ -4001,7 +4192,7 @@ function initVisionIntake() {
     sampleBtn.onclick = async () => {
       sampleBtn.disabled = true;
       const prevHtml = sampleBtn.innerHTML;
-      sampleBtn.innerHTML = `<span>⏳ Simulating 3-Angle Gemini Extraction...</span>`;
+      sampleBtn.innerHTML = `<span>⏳ Preparing sample book details...</span>`;
 
       // Fill visual slot previews
       try {
@@ -4072,7 +4263,7 @@ function initVisionIntake() {
 
       runBtn.disabled = true;
       const prevRunHtml = runBtn.innerHTML;
-      runBtn.innerHTML = `<span>⏳ Processing with Gemini Vision...</span>`;
+      runBtn.innerHTML = `<span>⏳ Reading photos...</span>`;
 
       const progressCard = $("vision-progress-card");
       if (progressCard) {
@@ -4084,8 +4275,8 @@ function initVisionIntake() {
         if ($("vision-progress-step")) {
           $("vision-progress-step").textContent =
             visionMode === "3angle"
-              ? "Gemini Vision synthesizing cover, title page & copyright numberline..."
-              : `Gemini Vision detecting every visible spine across ${filesToUpload.length} photo(s)...`;
+              ? "Reading the cover, title page, and copyright details..."
+              : `Reading book spines across ${filesToUpload.length} photo(s)...`;
         }
       }
       if ($("vision-result-card")) $("vision-result-card").hidden = true;
@@ -4100,7 +4291,7 @@ function initVisionIntake() {
             formData.append("files", file);
           }
         }
-        formData.append("intake_mode", visionMode === "3angle" ? "multi_angle_single_book" : "multi_stack");
+        formData.append("intake_mode", visionMode === "3angle" ? "multi_angle_single_book" : "shelf_capture");
         formData.append("section", $("vopt-section") ? $("vopt-section").value.trim() || "General" : "General");
         formData.append("shelf", $("vopt-shelf") ? $("vopt-shelf").value.trim() || "" : "");
         formData.append("auto_register", $("vopt-auto-register") ? $("vopt-auto-register").checked : true);
@@ -4125,6 +4316,11 @@ function initVisionIntake() {
 
         if (progressCard) progressCard.hidden = true;
         renderVisionResultCard(data);
+        if (data.shelf_draft) {
+          closeModal(); await refresh(); switchTab("queue"); await select(data.shelf_draft.review_id);
+          message("Shelf draft ready. Confirm overlaps before creating book reviews.");
+          return;
+        }
 
         message(
           data.auto_register
@@ -4135,7 +4331,7 @@ function initVisionIntake() {
         refresh();
       } catch (err) {
         if (progressCard) progressCard.hidden = true;
-        alert(`Gemini Vision Intake failed: ${err.message}`);
+        alert(`Could not read photos: ${err.message}`);
       } finally {
         runBtn.disabled = false;
         runBtn.innerHTML = prevRunHtml;

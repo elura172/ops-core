@@ -48,11 +48,7 @@ MAX_SELLERS = 8
 
 def triage(result: SearchResult) -> list[str]:
     """Reasons this row is not worth a product request. Empty means look closer."""
-    reasons = [
-        f.message
-        for f in prefilter(QuickCandidate(result.asin, result.title, result.price))
-        if not f.soft
-    ]
+    reasons = [f.message for f in prefilter(QuickCandidate(result.asin, result.title, result.price)) if not f.soft]
     if result.is_sponsored:
         reasons.append("sponsored placement — not an organic demand signal")
     if result.reviews_count < MIN_REVIEWS:
@@ -100,9 +96,7 @@ def main() -> int:
 
         survivors = [(r, triage(r)) for r in results]
         passed = [r for r, reasons in survivors if not reasons]
-        print(
-            f"\n  {BOLD}{term}{RESET}  {DIM}{len(results)} found, {len(passed)} worth a look{RESET}"
-        )
+        print(f"\n  {BOLD}{term}{RESET}  {DIM}{len(results)} found, {len(passed)} worth a look{RESET}")
         for result in passed:
             volume = f"{result.monthly_sales:,}/mo" if result.monthly_sales else "—"
             print(

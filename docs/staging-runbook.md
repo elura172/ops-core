@@ -95,15 +95,18 @@ export TTS_WEBHOOK_SECRET="<staging-webhook-hmac-key>"
    export DRY_RUN=true
    export LIVE_ENABLED=false
    export PUBLISH_ENABLED=false
-   export POSTGRES_DSN="postgresql://ops:<secret-password>@127.0.0.1:5432/ops_core_staging"
-   export ORDER_DB="$POSTGRES_DSN"
-   export REVIEW_DB="$POSTGRES_DSN"
+   export POSTGRES_URL="postgresql://ops:<secret-password>@127.0.0.1:5432/ops_core_staging"
+   export ORDER_DB="$POSTGRES_URL"
+   export REVIEW_DB="$POSTGRES_URL"
+   export USER_DB="$POSTGRES_URL"
+   export INVENTORY_DB="$POSTGRES_URL"
+   export WANT_LIST_DB="$POSTGRES_URL"
    ```
 
 3. **Apply Forward Migrations**:
    Migrations are automatically discovered and applied in an advisory lock on boot, or applied directly:
    ```bash
-   python -c "from app.db.migrate import migrate; migrate('$POSTGRES_DSN')"
+   python -c "from app.db.migrate import migrate; migrate('$POSTGRES_URL')"
    ```
    *Verified Applied*:
    - `0001_reviews_and_audit`
@@ -210,9 +213,7 @@ Alerts fire once on the rising edge; unchanged counters do not repeatedly page.
 To exercise the standard workflow:
 1. **Submit Review Item**:
    ```python
-   store.submit(
-       ReviewItem("review-01", "create_product_draft", {"title": "Linen Towel", "sku": "LIN-01"})
-   )
+   store.submit(ReviewItem("review-01", "create_product_draft", {"title": "Linen Towel", "sku": "LIN-01"}))
    ```
 2. **Inspect via Operator Desk**:
    Navigate to `http://127.0.0.1:8000/dashboard` or call `GET /reviews/review-01`.

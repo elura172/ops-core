@@ -58,9 +58,14 @@ def handle_order_webhook(
         logger.error("webhook.persist_failed", exc_info=True, order_id=order_id, event_id=event_id)
         return WebhookResult(500, {"accepted": False, "error": "event could not be persisted"})
 
-    if operator and outcome.applied and outcome.status in (
-        OrderStatus.PAID,
-        OrderStatus.FULFILLMENT_PENDING,
+    if (
+        operator
+        and outcome.applied
+        and outcome.status
+        in (
+            OrderStatus.PAID,
+            OrderStatus.FULFILLMENT_PENDING,
+        )
     ):
         try:
             operator.propose(

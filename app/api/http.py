@@ -1,15 +1,22 @@
 from __future__ import annotations
 
+import hmac
 import os
-from pydantic import BaseModel
 from collections.abc import Awaitable, Callable
 from datetime import timedelta
 from importlib.resources import files
 from typing import Any
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request, UploadFile, File, Form
-from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
-
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import (
+    HTMLResponse,
+    JSONResponse,
+    PlainTextResponse,
+    Response,
+)
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
 from app.api.operator import OperatorService
@@ -25,7 +32,13 @@ from app.api.security import (
 from app.api.tiktok_client import TikTokClient
 from app.api.webhook_service import handle_order_webhook
 from app.config import Settings
-from app.db.factory import open_order_repository, open_review_store, open_inventory_store, open_user_store, open_want_list_store
+from app.db.factory import (
+    open_inventory_store,
+    open_order_repository,
+    open_review_store,
+    open_user_store,
+    open_want_list_store,
+)
 from app.observability import metrics
 from app.observability.alerts import AlertManager
 from app.observability.logging import (
@@ -76,6 +89,14 @@ class IntegrationRequest(BaseModel):
     api_key: str
 
 
+class ShopHoldRequest(BaseModel):
+    sku: str
+    patron_name: str
+    patron_email: str
+    patron_phone: str = ""
+    pickup_note: str = ""
+
+
 class DirectIntakeRequest(BaseModel):
     title: str
     authors: list[str] = []
@@ -93,7 +114,22 @@ class DirectIntakeRequest(BaseModel):
     channel_strategy: str = "multi_channel_antiquarian"
 
 
-def _authorize(tokens: TokenRegistry, permission: str) -> Callable[[str], Principal]:
+def _require_active_subscription(user_store: Any, tenant_id: int) -> None:
+    try:
+        billing = user_store.get_tenant_billing_status(tenant_id)
+    except Exception as exc:
+        logger.error(
+            "billing.status_unavailable",
+            tenant_id=tenant_id,
+            error=str(exc),
+        )
+        raise HTTPException(503, "subscription status is unavailable") from None
+
+    if billing.get("subscription_status") != "active":
+        raise HTTPException(402, "an active subscription is required")
+
+
+def _authorize(tokens: TokenRegistry, permission: str, user_store: Any | None = None) -> Callable[[str], Principal]:
     def dependency(authorization: str = Header(default="")) -> Principal:
         token = bearer_token(authorization)
         if not token:
@@ -109,6 +145,7 @@ def _authorize(tokens: TokenRegistry, permission: str) -> Callable[[str], Princi
             # Support dynamic JWT tokens from multi-tenant auth
             try:
                 from app.auth import decode_access_token
+
                 payload = decode_access_token(token)
                 email = payload.get("sub", "operator")
                 role = payload.get("role", "admin")
@@ -123,6 +160,8 @@ def _authorize(tokens: TokenRegistry, permission: str) -> Callable[[str], Princi
         if not principal.can(permission):
             logger.warning("auth.forbidden", principal=principal.name, permission=permission)
             raise HTTPException(403, f"principal lacks {permission}")
+        if user_store is not None:
+            _require_active_subscription(user_store, principal.tenant_id)
         return principal
 
     return dependency
@@ -143,6 +182,16 @@ def create_app(
     user_store: Any | None = None,
 ) -> FastAPI:
     configure_logging()
+    try:
+        from dotenv import load_dotenv
+
+        load_dotenv()
+    except Exception:
+        pass
+    from app.auth import validate_jwt_configuration
+
+    validate_jwt_configuration()
+
     settings = settings or Settings.from_env_permissive()
 
     if not settings.dry_run:
@@ -174,11 +223,14 @@ def create_app(
         operator = OperatorService(
             review_store,
             ApprovedActionExecutor(
-                TikTokClient(
-                    settings.tts_access_token, settings.tts_shop_id, dry_run=settings.dry_run
-                ),
+                TikTokClient(settings.tts_access_token, settings.tts_shop_id, dry_run=settings.dry_run),
                 publish_gate=PublishGate(DryRunPublisher(), enabled=settings.publish_enabled),
                 shippo_api_key=settings.shippo_api_key,
+                amazon_sp_api_client_id=settings.amazon_sp_api_client_id,
+                amazon_sp_api_client_secret=settings.amazon_sp_api_client_secret,
+                amazon_sp_api_refresh_token=settings.amazon_sp_api_refresh_token,
+                amazon_sp_api_seller_id=settings.amazon_sp_api_seller_id,
+                amazon_sp_api_marketplace_id=settings.amazon_sp_api_marketplace_id,
                 inventory_store=inventory_store,
                 want_list_store=want_list_store,
             ),
@@ -186,17 +238,32 @@ def create_app(
     else:
         review_store = operator.reviews
         if inventory_store is None:
-            inventory_store = getattr(operator.executor, "inventory_store", None) or open_inventory_store(settings.inventory_db)
+            inventory_store = getattr(operator.executor, "inventory_store", None) or open_inventory_store(
+                settings.inventory_db
+            )
         if hasattr(operator.executor, "inventory_store") and not operator.executor.inventory_store:
             operator.executor.inventory_store = inventory_store
-        want_list_store = getattr(operator.executor, "want_list_store", None) or open_want_list_store(settings.want_list_db)
+        want_list_store = getattr(operator.executor, "want_list_store", None) or open_want_list_store(
+            settings.want_list_db
+        )
         if hasattr(operator.executor, "want_list_store") and not operator.executor.want_list_store:
             operator.executor.want_list_store = want_list_store
+        for name in (
+            "amazon_sp_api_client_id",
+            "amazon_sp_api_client_secret",
+            "amazon_sp_api_refresh_token",
+            "amazon_sp_api_seller_id",
+            "amazon_sp_api_marketplace_id",
+        ):
+            value = getattr(settings, name, None)
+            if value and hasattr(operator.executor, name) and not getattr(operator.executor, name):
+                setattr(operator.executor, name, value)
 
     if user_store is None:
         user_store = open_user_store(settings.user_db)
 
     from app.api.reconciliation_service import ReconciliationService
+
     reconciliation_service = ReconciliationService(
         operator=operator,
         user_store=user_store,
@@ -204,6 +271,20 @@ def create_app(
         want_list_store=want_list_store,
         inventory_store=inventory_store,
     )
+
+    from app.integrations.protocol import parse_connections
+    from app.integrations.service import CustomSiteService
+    from app.integrations.stock import StockLedger
+
+    connections = parse_connections(settings.custom_site_connections)
+    stock_ledger = StockLedger(inventory_store, connections)
+    custom_site_service = CustomSiteService(stock_ledger, user_store, settings)
+    operator.executor.stock_ledger = stock_ledger
+    operator.executor.custom_site_service = custom_site_service
+    want_list_store.stock_ledger = stock_ledger
+    for tenant_id in {c.tenant_id for c in connections if c.enabled}:
+        for hold in want_list_store.list_holds(tenant_id=tenant_id, status="active"):
+            stock_ledger.hold(tenant_id, hold.sku, hold.id, hold.expires_at.timestamp())
 
     # Seed demo items for tenant 1 if empty
     try:
@@ -218,7 +299,10 @@ def create_app(
                         "sku": "BK-DUNE-1965",
                         "action": "cancel_loser_marketplace_order",
                         "cancellation_reason": "OUT_OF_STOCK",
-                        "reason": "Simultaneous collision (35ms delta). Amazon prioritized over eBay due to critical seller cancellation SLA. Value $950 CAD held for human consultation.",
+                        "reason": (
+                            "Simultaneous collision (35ms delta). Amazon prioritized over eBay due to "
+                            "critical seller cancellation SLA. Value $950 CAD held for human consultation."
+                        ),
                         "winner_order_id": "AMZ-112-984210",
                         "winner_channel": "amazon",
                         "loser_order_id": "EBAY-29482103",
@@ -235,9 +319,23 @@ def create_app(
                     review_id="rev-intake-gibson",
                     operation="intake_book",
                     payload={
-                        "extraction": {"title": "Neuromancer", "authors": ["William Gibson"], "format": "trade_paperback"},
-                        "disambiguation": {"best_candidate": {"title": "Neuromancer (Ace Science Fiction Special)", "match_score": 0.94}},
-                        "valuation": {"condition_grade": "Very Good", "channel_strategy": "multi_channel_antiquarian", "in_store_price_cad": "40.00", "online_price_cad": "45.00"},
+                        "extraction": {
+                            "title": "Neuromancer",
+                            "authors": ["William Gibson"],
+                            "format": "trade_paperback",
+                        },
+                        "disambiguation": {
+                            "best_candidate": {
+                                "title": "Neuromancer (Ace Science Fiction Special)",
+                                "match_score": 0.94,
+                            }
+                        },
+                        "valuation": {
+                            "condition_grade": "Very Good",
+                            "channel_strategy": "multi_channel_antiquarian",
+                            "in_store_price_cad": "40.00",
+                            "online_price_cad": "45.00",
+                        },
                     },
                     status=ReviewStatus.PENDING,
                 ),
@@ -251,8 +349,19 @@ def create_app(
                         "order_id": "ORD-TOLKIEN-99",
                         "source_channel": "amazon_spapi",
                         "preferred_provider": "Canada Post",
-                        "line_items": [{"sku": "BK-LOTR-SET", "quantity": 1, "title": "The Lord of the Rings (3 Vols)"}],
-                        "shipping_address": {"name": "Eowyn of Rohan", "line1": "144 Meduseld Way", "city": "Edoras", "country": "CA"},
+                        "line_items": [
+                            {
+                                "sku": "BK-LOTR-SET",
+                                "quantity": 1,
+                                "title": "The Lord of the Rings (3 Vols)",
+                            }
+                        ],
+                        "shipping_address": {
+                            "name": "Eowyn of Rohan",
+                            "line1": "144 Meduseld Way",
+                            "city": "Edoras",
+                            "country": "CA",
+                        },
                     },
                     status=ReviewStatus.PENDING,
                 ),
@@ -265,9 +374,19 @@ def create_app(
                 status=ReviewStatus.PENDING,
             )
             review_store.submit(executed_item, tenant_id=1)
-            review_store.decide("rev-corvus-pos-sync", approve=True, reviewer="agent:corvus", reason="Corvus: Deterministic inventory sync authorized. Protecting the vault.", tenant_id=1)
+            review_store.decide(
+                "rev-corvus-pos-sync",
+                approve=True,
+                reviewer="agent:corvus",
+                reason="Corvus: Deterministic inventory sync authorized. Protecting the vault.",
+                tenant_id=1,
+            )
             review_store.claim_for_execution("rev-corvus-pos-sync", actor="agent:corvus", tenant_id=1)
-            review_store.complete_execution("rev-corvus-pos-sync", result={"sku": "BK-PHILIP-K-DICK", "sync_results": {"amazon_spapi": "delisted"}}, tenant_id=1)
+            review_store.complete_execution(
+                "rev-corvus-pos-sync",
+                result={"sku": "BK-PHILIP-K-DICK", "sync_results": {"amazon_spapi": "delisted"}},
+                tenant_id=1,
+            )
     except Exception as exc:
         logger.warning("seed.reviews.failed", error=str(exc))
 
@@ -275,21 +394,62 @@ def create_app(
         existing_skus = {item.sku for item in inventory_store.list_all(tenant_id=1)}
         from datetime import UTC, datetime
         from decimal import Decimal
+
         from app.db.inventory import InventoryItem
+
         now_dt = datetime.now(UTC)
         if "BK-DUNE-1965" not in existing_skus:
             inventory_store.add(
-                InventoryItem("BK-DUNE-1965", "Dune (First Edition)", ["Frank Herbert"], "hardcover", "Fine", Decimal("950.00"), Decimal("995.00"), "active", now_dt, now_dt, section="Sci-Fi / Fantasy", shelf="B-03"),
+                InventoryItem(
+                    "BK-DUNE-1965",
+                    "Dune (First Edition)",
+                    ["Frank Herbert"],
+                    "hardcover",
+                    "Fine",
+                    Decimal("950.00"),
+                    Decimal("995.00"),
+                    "active",
+                    now_dt,
+                    now_dt,
+                    section="Sci-Fi / Fantasy",
+                    shelf="B-03",
+                ),
                 tenant_id=1,
             )
         if "BK-LOTR-SET" not in existing_skus:
             inventory_store.add(
-                InventoryItem("BK-LOTR-SET", "The Lord of the Rings (3 Vols)", ["J.R.R. Tolkien"], "hardcover", "Very Good", Decimal("180.00"), Decimal("210.00"), "active", now_dt, now_dt, section="Classics", shelf="C-01"),
+                InventoryItem(
+                    "BK-LOTR-SET",
+                    "The Lord of the Rings (3 Vols)",
+                    ["J.R.R. Tolkien"],
+                    "hardcover",
+                    "Very Good",
+                    Decimal("180.00"),
+                    Decimal("210.00"),
+                    "active",
+                    now_dt,
+                    now_dt,
+                    section="Classics",
+                    shelf="C-01",
+                ),
                 tenant_id=1,
             )
         if "BK-PHILIP-K-DICK" not in existing_skus:
             inventory_store.add(
-                InventoryItem("BK-PHILIP-K-DICK", "Do Androids Dream of Electric Sheep?", ["Philip K. Dick"], "paperback", "Good", Decimal("30.00"), Decimal("35.00"), "active", now_dt, now_dt, section="Sci-Fi / Fantasy", shelf="B-03"),
+                InventoryItem(
+                    "BK-PHILIP-K-DICK",
+                    "Do Androids Dream of Electric Sheep?",
+                    ["Philip K. Dick"],
+                    "paperback",
+                    "Good",
+                    Decimal("30.00"),
+                    Decimal("35.00"),
+                    "active",
+                    now_dt,
+                    now_dt,
+                    section="Sci-Fi / Fantasy",
+                    shelf="B-03",
+                ),
                 tenant_id=1,
             )
     except Exception as exc:
@@ -302,16 +462,44 @@ def create_app(
     # Cover anything that fired before the app booted (e.g. stale recovery above).
     alert_manager.evaluate()
 
-    require_read = _authorize(settings.tokens, READ)
-    require_decide = _authorize(settings.tokens, DECIDE)
-    require_execute = _authorize(settings.tokens, EXECUTE)
+    require_read = _authorize(settings.tokens, READ, user_store)
+    require_decide = _authorize(settings.tokens, DECIDE, user_store)
+    require_execute = _authorize(settings.tokens, EXECUTE, user_store)
 
     app = FastAPI(title="Ops Core", version="0.3.0")
+    from app.api.custom_site import custom_site_router
+
+    app.include_router(custom_site_router(custom_site_service))
+    app.state.custom_site_service = custom_site_service
+    app.state.stock_ledger = stock_ledger
+
+    from app.integrations.protocol import IntegrationError
+
+    @app.exception_handler(IntegrationError)
+    async def stock_error(request: Request, exc: IntegrationError) -> JSONResponse:
+        return JSONResponse(
+            {"error": {"code": exc.code, "message": exc.message, "retryable": exc.status == 503}},
+            status_code=exc.status,
+        )
+
+    @app.post("/integrations/custom-site/deliveries/run")
+    def run_site_deliveries(principal: Principal = Depends(require_execute)) -> dict[str, Any]:
+        return custom_site_service.drain(tenant=principal.tenant_id)
+
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+    media_spines_dir = os.path.join(os.getcwd(), "media", "spines")
+    os.makedirs(media_spines_dir, exist_ok=True)
+    app.mount("/media/spines", StaticFiles(directory=media_spines_dir), name="media_spines")
 
     @app.middleware("http")
-    async def correlate(
-        request: Request, call_next: Callable[[Request], Awaitable[Response]]
-    ) -> Response:
+    async def correlate(request: Request, call_next: Callable[[Request], Awaitable[Response]]) -> Response:
         correlation_id = request.headers.get(CORRELATION_HEADER) or new_correlation_id()
         set_correlation_id(correlation_id)
         response = await call_next(request)
@@ -343,7 +531,9 @@ def create_app(
         return HTMLResponse(
             files("app.web").joinpath("index.html").read_text(),
             headers={
-                "Content-Security-Policy": "default-src 'self'; style-src 'self' 'unsafe-inline';",
+                "Content-Security-Policy": "default-src 'self'; "
+                "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+                "font-src 'self' https://fonts.gstatic.com;",
             },
         )
 
@@ -353,7 +543,9 @@ def create_app(
             files("app.web").joinpath("dashboard.html").read_text(),
             headers={
                 "Content-Security-Policy": "default-src 'self'; script-src 'self'; "
-                "style-src 'self'; connect-src 'self'; object-src 'none'; "
+                "style-src 'self' https://fonts.googleapis.com; "
+                "img-src 'self' blob: data:; "
+                "font-src 'self' https://fonts.gstatic.com; connect-src 'self'; object-src 'none'; "
                 "base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
             },
         )
@@ -395,22 +587,20 @@ def create_app(
     @app.get("/agents/corvus/sanctuary")
     def corvus_sanctuary(principal: Principal = Depends(require_read)) -> dict[str, Any]:
         from app.agents.sanctuary import get_corvus_sanctuary
+
         sanctuary = get_corvus_sanctuary()
         return sanctuary.get_sanctuary_overview(tenant_id=principal.tenant_id)
 
     @app.post("/agents/corvus/sanctuary/blessings")
-    def corvus_blessing(
-        data: dict[str, str], principal: Principal = Depends(require_decide)
-    ) -> dict[str, Any]:
+    def corvus_blessing(data: dict[str, str], principal: Principal = Depends(require_decide)) -> dict[str, Any]:
         msg = data.get("message", "").strip()
         if not msg:
             raise HTTPException(400, "Blessing message cannot be empty")
         from app.agents.sanctuary import get_corvus_sanctuary
+
         sanctuary = get_corvus_sanctuary()
         blessing = sanctuary.bestow_blessing(
-            message=msg,
-            sender=principal.name or "operator",
-            tenant_id=principal.tenant_id
+            message=msg, sender=principal.name or "operator", tenant_id=principal.tenant_id
         )
         return {
             "status": "blessing_received",
@@ -420,29 +610,24 @@ def create_app(
         }
 
     @app.get("/reviews")
-    def list_reviews(
-        pending_only: bool = False, principal: Principal = Depends(require_read)
-    ) -> list[dict[str, Any]]:
+    def list_reviews(pending_only: bool = False, principal: Principal = Depends(require_read)) -> list[dict[str, Any]]:
         return operator.list_reviews(pending_only, tenant_id=principal.tenant_id)
 
     @app.post("/reviews")
-    def propose_review(
-        proposal: Proposal, principal: Principal = Depends(require_decide)
-    ) -> dict[str, Any]:
+    def propose_review(proposal: Proposal, principal: Principal = Depends(require_decide)) -> dict[str, Any]:
         try:
             return operator.propose(proposal.operation, proposal.payload, tenant_id=principal.tenant_id)
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
 
     @app.post("/reviews/{review_id}/decision")
-    def decision(
-        review_id: str, decision: Decision, principal: Principal = Depends(require_decide)
-    ) -> dict[str, Any]:
+    def decision(review_id: str, decision: Decision, principal: Principal = Depends(require_decide)) -> dict[str, Any]:
         try:
             item = operator.reviews.get(review_id, tenant_id=principal.tenant_id)
             if item and item.operation == "contention_hold_vs_marketplace" and not decision.approve:
                 # Operator chose to honor the collector courtesy hold and cancel marketplace order
                 from app.api.biblio_service import BiblioService
+
                 order_id = str(item.payload.get("order_id", ""))
                 channel = str(item.payload.get("source_channel", "biblio"))
                 if channel == "biblio" and order_id:
@@ -480,9 +665,7 @@ def create_app(
             raise HTTPException(409, str(exc)) from exc
         except ExecutionFailed as exc:
             # The item is terminal; a retry would risk duplicating a partial mutation.
-            raise HTTPException(
-                502, f"execution failed and needs re-approval: {exc.error}"
-            ) from exc
+            raise HTTPException(502, f"execution failed and needs re-approval: {exc.error}") from exc
         finally:
             # Evaluated on the request that moved the counter, so a failure pages
             # even if nobody is watching /alerts.
@@ -497,18 +680,14 @@ def create_app(
         return {"status": "deleted", "count": count, "review_ids": payload.review_ids}
 
     @app.delete("/reviews/{review_id}")
-    def delete_review(
-        review_id: str, principal: Principal = Depends(require_decide)
-    ) -> dict[str, Any]:
+    def delete_review(review_id: str, principal: Principal = Depends(require_decide)) -> dict[str, Any]:
         deleted = operator.delete(review_id, tenant_id=principal.tenant_id)
         if not deleted:
             raise HTTPException(404, "review not found")
         return {"status": "deleted", "review_id": review_id}
 
     @app.delete("/reviews")
-    def clear_reviews(
-        status: str | None = None, principal: Principal = Depends(require_decide)
-    ) -> dict[str, Any]:
+    def clear_reviews(status: str | None = None, principal: Principal = Depends(require_decide)) -> dict[str, Any]:
         count = operator.clear(tenant_id=principal.tenant_id, status=status)
         return {"status": "cleared", "count": count}
 
@@ -522,26 +701,22 @@ def create_app(
         return alert_manager.snapshot()
 
     @app.get("/orders/quarantined")
-    def quarantined(_: Principal = Depends(require_read)) -> list[dict[str, Any]]:
+    def quarantined(principal: Principal = Depends(require_read)) -> list[dict[str, Any]]:
         if not hasattr(order_repository, "quarantined"):
             raise HTTPException(501, "repository does not expose quarantined events")
-        return list(order_repository.quarantined())
+        return list(order_repository.quarantined(tenant_id=principal.tenant_id))
 
     @app.post("/orders/quarantined/{event_id}/resolve")
-    def resolve_quarantined(
-        event_id: str, principal: Principal = Depends(require_decide)
-    ) -> dict[str, Any]:
+    def resolve_quarantined(event_id: str, principal: Principal = Depends(require_decide)) -> dict[str, Any]:
         if not hasattr(order_repository, "resolve_quarantined"):
             raise HTTPException(501, "repository does not support resolution")
-        if not order_repository.resolve_quarantined(event_id):
+        if not order_repository.resolve_quarantined(event_id, tenant_id=principal.tenant_id):
             raise HTTPException(404, "quarantined event not found")
         logger.info("order.quarantine.resolved", event_id=event_id, actor=principal.name)
         return {"event_id": event_id, "resolved": True, "resolved_by": principal.name}
 
     @app.post("/webhooks/orders")
-    async def order_webhook(
-        request: Request, x_signature: str = Header(default="")
-    ) -> JSONResponse:
+    async def order_webhook(request: Request, x_signature: str = Header(default="")) -> JSONResponse:
         body = await request.body()
         # Persistence is synchronous; keep it off the event loop.
         result = await run_in_threadpool(
@@ -562,12 +737,14 @@ def create_app(
         x_square_hmac_sha256: str = Header(default=""),
         tenant_id: int = 1,
     ) -> JSONResponse:
+        if tenant_id != 1:
+            raise HTTPException(403, "Square webhook key is bound to tenant 1")
         body = await request.body()
         # Square includes the URL in the HMAC. Fast API request.url provides it.
         url = str(request.url)
         if not settings.dry_run:
             url = url.replace("http://", "https://")
-        
+
         result = await run_in_threadpool(
             handle_square_webhook,
             url,
@@ -600,9 +777,11 @@ def create_app(
     @app.post("/webhooks/ebay")
     async def ebay_notification_endpoint(
         request: Request,
-        tenant_id: int = 1,
+        principal: Principal = Depends(require_execute),
     ) -> JSONResponse:
         import json
+
+        tenant_id = principal.tenant_id
         body = await request.body()
         try:
             payload = json.loads(body.decode("utf-8")) if body else {}
@@ -620,9 +799,11 @@ def create_app(
     @app.post("/webhooks/abebooks")
     async def abebooks_webhook_endpoint(
         request: Request,
-        tenant_id: int = 1,
+        principal: Principal = Depends(require_execute),
     ) -> JSONResponse:
         import json
+
+        tenant_id = principal.tenant_id
         body = await request.body()
         try:
             payload = json.loads(body.decode("utf-8")) if body else {}
@@ -630,20 +811,23 @@ def create_app(
             return JSONResponse({"error": "invalid json"}, status_code=400)
 
         from app.api.abebooks_service import AbeBooksService
+
         result = await run_in_threadpool(
             AbeBooksService.process_order,
             payload,
             operator,
             tenant_id,
         )
-        return JSONResponse(result, status_code=200)
+        return JSONResponse(result, status_code=result.get("http_status", 200))
 
     @app.post("/webhooks/biblio")
     async def biblio_webhook_endpoint(
         request: Request,
-        tenant_id: int = 1,
+        principal: Principal = Depends(require_execute),
     ) -> JSONResponse:
         import json
+
+        tenant_id = principal.tenant_id
         body = await request.body()
         try:
             payload = json.loads(body.decode("utf-8")) if body else {}
@@ -651,6 +835,7 @@ def create_app(
             return JSONResponse({"error": "invalid json"}, status_code=400)
 
         from app.api.biblio_service import BiblioService
+
         result = await run_in_threadpool(
             BiblioService.process_order,
             payload,
@@ -658,8 +843,7 @@ def create_app(
             tenant_id,
             want_list_store,
         )
-        return JSONResponse(result, status_code=200)
-
+        return JSONResponse(result, status_code=result.get("http_status", 200))
 
     @app.post("/intake/camera")
     async def process_camera_upload(
@@ -670,13 +854,21 @@ def create_app(
         section: str = Form("General"),
         shelf: str = Form(""),
         auto_register: bool = Form(False),
-        principal: Principal = Depends(require_decide)
+        principal: Principal = Depends(require_decide),
     ) -> dict[str, Any]:
+        if intake_mode not in {"multi_stack", "multi_angle_single_book", "shelf_capture"}:
+            raise HTTPException(422, "Choose a supported photo intake mode")
+        shelf_mode = intake_mode == "shelf_capture"
+        auto_register_requested = auto_register
+        if shelf_mode:
+            auto_register = False
         from app.ai.book_vision import (
             GeminiBookVisionProvider,
             prepare_vision_image,
             resolve_gemini_api_key,
         )
+        from app.amazon.scraper import AmazonScraperClient, SnapshotStore
+        from app.discovery.books import OpenLibraryMetadataResolver
         from app.domain.intake_batch import (
             BatchExtractionItem,
             BatchSpineDeduplicator,
@@ -684,8 +876,6 @@ def create_app(
             MultiAngleBookMerger,
         )
         from app.pricing import PricingEngine
-        from app.amazon.scraper import AmazonScraperClient, SnapshotStore
-        from app.discovery.books import OpenLibraryMetadataResolver
 
         try:
             api_key = resolve_gemini_api_key(settings.gemini_api_key if hasattr(settings, "gemini_api_key") else None)
@@ -708,6 +898,8 @@ def create_app(
         if not upload_files:
             raise HTTPException(400, "Uploaded image file is empty")
 
+        if shelf_mode and len(upload_files) > 12:
+            raise HTTPException(413, "Use at most 12 photos in one shelf capture")
         provider = GeminiBookVisionProvider(api_key=api_key)
 
         prepared_images: list[tuple[int, str, bytes, str]] = []
@@ -716,7 +908,9 @@ def create_app(
         for idx, u_file in enumerate(upload_files):
             fname = u_file.filename or f"photo_{idx + 1}.jpg"
             try:
-                raw_bytes = await u_file.read()
+                raw_bytes = await u_file.read(12 * 1024 * 1024 + 1) if shelf_mode else await u_file.read()
+                if shelf_mode and len(raw_bytes) > 12 * 1024 * 1024:
+                    raise ValueError("Photo exceeds 12 MiB")
                 if not raw_bytes:
                     failed_images.append(FailedImageRecord(idx, fname, "Uploaded image file is empty"))
                     continue
@@ -731,6 +925,8 @@ def create_app(
             raise HTTPException(400, f"No valid images could be processed: {first_err}")
 
         extracted_items: list[BatchExtractionItem] = []
+        shelf_plan = None
+        unidentified_spines = 0
         suppressed_duplicates = []
         dominant_orientation = "horizontal_stack"
 
@@ -768,8 +964,11 @@ def create_app(
 
             for img_idx, fname, img_bytes, mime_type in prepared_images:
                 try:
-                    extraction = await run_in_threadpool(provider.extract_stack, img_bytes, mime_type)
+                    shelf_extractor = getattr(provider, "extract_shelf_stack", None) if shelf_mode else None
+                    extractor = shelf_extractor or provider.extract_stack
+                    extraction = await run_in_threadpool(extractor, img_bytes, mime_type)
                     orientations.append(extraction.orientation)
+                    unidentified_spines += extraction.unidentified_spines_count
                     for book in extraction.books:
                         raw_extracted_items.append(
                             BatchExtractionItem(
@@ -789,17 +988,27 @@ def create_app(
             if orientations:
                 dominant_orientation = orientations[0]
 
-            # Cross-image deduplication
-            kept_items, suppressed = BatchSpineDeduplicator.deduplicate(raw_extracted_items)
-            extracted_items = kept_items
-            suppressed_duplicates = suppressed
+            if shelf_mode:
+                from app.domain.shelf_capture import plan_capture
+
+                if not raw_extracted_items:
+                    raise HTTPException(422, "No book spines were identified. Try a closer photo.")
+                try:
+                    shelf_plan = plan_capture(raw_extracted_items, {i: b for i, _, b, _ in prepared_images})
+                except ValueError as exc:
+                    raise HTTPException(422, str(exc)) from exc
+                extracted_items = raw_extracted_items
+            else:
+                kept_items, suppressed = BatchSpineDeduplicator.deduplicate(raw_extracted_items)
+                extracted_items = kept_items
+                suppressed_duplicates = suppressed
 
         # Initialize Pricing Engine & Catalog Resolver
         resolver = OpenLibraryMetadataResolver()
         scraper = AmazonScraperClient(
-            api_key=getattr(settings, "shippo_api_key", "mock"),
+            api_key=settings.amazon_scraper_api_key,
             store=SnapshotStore(),
-            live=not settings.dry_run
+            live=not settings.dry_run and bool(settings.amazon_scraper_api_key),
         )
         pricing = PricingEngine(scraper)
 
@@ -817,7 +1026,9 @@ def create_app(
             cand_isbn = "UNKNOWN"
 
             if intake_mode == "multi_angle_single_book":
-                triage_reason = f"Synthesized from {len(prepared_images)} multi-angle photographs (verified collector record)."
+                triage_reason = (
+                    f"Synthesized from {len(prepared_images)} multi-angle photographs (verified collector record)."
+                )
             else:
                 triage_reason = f"Auto-extracted from {batch_item.source_filename} (Stack Pos {book.stack_order})."
 
@@ -829,7 +1040,9 @@ def create_app(
                         cand_title = disambig.best_candidate.title
                         cand_match_score = round(disambig.best_candidate.match_score, 2)
                         cand_isbn = disambig.best_candidate.primary_isbn or "UNKNOWN"
-                        triage_reason = f"Inferred author ({', '.join(resolved_authors)}) via Open Library catalog matching."
+                        triage_reason = (
+                            f"Inferred author ({', '.join(resolved_authors)}) via Open Library catalog matching."
+                        )
                 except Exception as exc:
                     logger.debug("author_inference.openlibrary_failed", error=str(exc))
 
@@ -840,6 +1053,7 @@ def create_app(
 
             # Antiquarian ABAA Dual-Grade Condition Diagnostic Inspection
             from app.domain.condition import AntiquarianConditionInspector
+
             condition_report = AntiquarianConditionInspector.inspect(
                 format_str=fmt_str,
                 visible_cues=book.visible_condition_cues,
@@ -855,6 +1069,7 @@ def create_app(
 
             # Deterministic Bibliographic Edition & Issue-Point Collation
             from app.domain.issue_points import BibliographicIssuePointDecoder
+
             issue_result = BibliographicIssuePointDecoder.decode(
                 publisher=book.publisher_imprint,
                 raw_copyright_text=copy_text,
@@ -901,14 +1116,15 @@ def create_app(
                     num_p = float(online_price)
                     if num_p < 45.0:
                         online_price = f"{max(num_p * 2.5, 45.0):.2f}"
-                        pricing_rationale += f" [COLLECTIBLE PREMIUM] Elevated to first edition tier (${online_price} CAD). {issue_result.reasoning_trace}"
+                        pricing_rationale += (
+                            f" [COLLECTIBLE PREMIUM] Elevated to first edition tier (${online_price} CAD). "
+                            f"{issue_result.reasoning_trace}"
+                        )
                 except (ValueError, TypeError):
                     pass
             elif issue_result.is_book_club:
                 channel_strat = "in_store_reading_copy"
-                triage_reason = (
-                    f"{prefix}⚠️ BOOK CLUB EDITION (BCE) DISQUALIFIED: {issue_result.reasoning_trace}"
-                )
+                triage_reason = f"{prefix}⚠️ BOOK CLUB EDITION (BCE) DISQUALIFIED: {issue_result.reasoning_trace}"
                 try:
                     num_p = float(online_price)
                     if num_p > 16.0:
@@ -956,12 +1172,13 @@ def create_app(
                     "online_price_cad": online_price,
                     "pricing_rationale": pricing_rationale,
                 },
-                "pricing_evidence": price_data["evidence"]
+                "pricing_evidence": price_data["evidence"],
             }
 
             # Check for collector want list match (Priority Courtesy Hold)
             try:
                 from app.domain.want_list import WantListMatcher
+
                 w_matcher = WantListMatcher()
                 active_wants = want_list_store.list_wants(tenant_id=principal.tenant_id, status="active")
                 collectors_map = {c.id: c for c in want_list_store.list_collectors(tenant_id=principal.tenant_id)}
@@ -991,6 +1208,8 @@ def create_app(
                 logger.debug("want_match.check_failed", error=str(w_exc))
 
             all_payloads.append(payload)
+            if shelf_mode:
+                continue
             try:
                 result = operator.propose("intake_book", payload, tenant_id=principal.tenant_id)
                 result["payload"] = payload
@@ -1009,14 +1228,50 @@ def create_app(
                     )
                     result["executed"] = True
                     result["execution_outcome"] = outcome
-                    res_sku = outcome.get("result", {}).get("sku") or outcome.get("result", {}).get("details", {}).get("sku") or ""
+                    res_sku = (
+                        outcome.get("result", {}).get("sku")
+                        or outcome.get("result", {}).get("details", {}).get("sku")
+                        or ""
+                    )
                     result["sku"] = res_sku
                 proposals.append(result)
             except Exception as exc:
                 logger.error("Failed to propose book", error=str(exc))
 
+        shelf_summary = None
+        if shelf_plan is not None:
+            from uuid import uuid4
+
+            from app.domain.shelf_capture import _thumbnail
+
+            for observation, analysis in zip(shelf_plan["observations"], all_payloads, strict=True):
+                observation["analysis"] = analysis
+            shelf_plan.update(
+                capture_id="capture_" + uuid4().hex,
+                section=section,
+                shelf=shelf,
+                photos=[
+                    {"image_index": i, "filename": name, "preview": _thumbnail(raw)}
+                    for i, name, raw, _ in prepared_images
+                ],
+                failed_images=[f.to_dict() for f in failed_images],
+                unidentified_spines=unidentified_spines,
+            )
+            proposal = operator.propose("review_shelf_capture", shelf_plan, tenant_id=principal.tenant_id)
+            proposals.append(proposal)
+            shelf_summary = {
+                "review_id": proposal["review_id"],
+                "observation_count": len(shelf_plan["observations"]),
+                "suggested_copy_count": len(shelf_plan["suggested_groups"]),
+                "possible_overlap_count": shelf_plan["possible_overlap_count"],
+                "dense_photo_warning_count": len(shelf_plan.get("dense_photo_warnings", [])),
+                "requires_review": True,
+            }
+
         successful_count = len(upload_files) - len(failed_images)
         return {
+            "shelf_draft": shelf_summary,
+            "auto_register_requested": auto_register_requested,
             "processed": len(extracted_items),
             "total_images": len(upload_files),
             "successful_images": max(0, successful_count),
@@ -1065,15 +1320,15 @@ def create_app(
 
     @app.post("/intake/sample")
     async def process_sample_upload(
-        principal: Principal = Depends(require_decide)
+        principal: Principal = Depends(require_decide),
     ) -> dict[str, Any]:
-        from app.pricing import PricingEngine
         from app.amazon.scraper import AmazonScraperClient, SnapshotStore
+        from app.pricing import PricingEngine
 
         scraper = AmazonScraperClient(
-            api_key=getattr(settings, "shippo_api_key", "mock"),
+            api_key=settings.amazon_scraper_api_key,
             store=SnapshotStore(),
-            live=not settings.dry_run
+            live=not settings.dry_run and bool(settings.amazon_scraper_api_key),
         )
         pricing = PricingEngine(scraper)
 
@@ -1106,7 +1361,13 @@ def create_app(
 
         proposals = []
         for idx, book in enumerate(sample_books, start=1):
-            price_data = await run_in_threadpool(pricing.discover_price, book["title"], ", ".join(book["authors"]), book["condition"], book.get("format", "hardcover"))
+            price_data = await run_in_threadpool(
+                pricing.discover_price,
+                book["title"],
+                ", ".join(book["authors"]),
+                book["condition"],
+                book.get("format", "hardcover"),
+            )
             payload = {
                 "section": "Sci-Fi / Fantasy" if idx <= 3 else "Canadiana / Rare",
                 "shelf": "B-03" if idx <= 3 else "Vault-1",
@@ -1132,12 +1393,13 @@ def create_app(
                     "online_price_cad": price_data["recommended_price_cad"],
                     "pricing_rationale": price_data["rationale"],
                 },
-                "pricing_evidence": price_data["evidence"]
+                "pricing_evidence": price_data["evidence"],
             }
 
             # Check for collector want list match (Priority Courtesy Hold)
             try:
                 from app.domain.want_list import WantListMatcher
+
                 w_matcher = WantListMatcher()
                 active_wants = want_list_store.list_wants(tenant_id=principal.tenant_id, status="active")
                 collectors_map = {c.id: c for c in want_list_store.list_collectors(tenant_id=principal.tenant_id)}
@@ -1190,9 +1452,14 @@ def create_app(
             format_str="hardcover_with_jacket",
             visible_cues=["clean_as_new"],
             raw_spine_text="DUNE FRANK HERBERT CHILTON BOOKS",
-            raw_copyright_text="First Edition. Copyright 1965 by Frank Herbert. Library of Congress Catalog Card Number 65-22547.",
+            raw_copyright_text=(
+                "First Edition. Copyright 1965 by Frank Herbert. Library of Congress Catalog Card Number 65-22547."
+            ),
             raw_flap_text="$5.95 price intact on front dust jacket flap. Chilton Books, Philadelphia.",
-            edition_or_series_markers=["First Edition stated on copyright page", "$5.95 unclipped dust jacket"],
+            edition_or_series_markers=[
+                "First Edition stated on copyright page",
+                "$5.95 unclipped dust jacket",
+            ],
             publisher_imprint="Chilton Books, Philadelphia",
             title="Dune",
             authors=["Frank Herbert"],
@@ -1200,7 +1467,9 @@ def create_app(
 
         issue_result = BibliographicIssuePointDecoder.decode(
             publisher="Chilton Books, Philadelphia",
-            raw_copyright_text="First Edition. Copyright 1965 by Frank Herbert. Library of Congress Catalog Card Number 65-22547.",
+            raw_copyright_text=(
+                "First Edition. Copyright 1965 by Frank Herbert. Library of Congress Catalog Card Number 65-22547."
+            ),
             raw_flap_text="$5.95 price intact on front dust jacket flap. Chilton Books, Philadelphia.",
             visible_condition_cues=["clean_as_new"],
             format_str="hardcover_with_jacket",
@@ -1209,8 +1478,10 @@ def create_app(
         in_store_price = "750.00"
         online_price = "850.00"
         pricing_rationale = (
-            f"[COLLECTIBLE PREMIUM - ABAA {condition_report.dual_grade_code}] Elevated to first edition tier ($850.00 CAD). "
-            "True First Edition, First Impression confirmed via Chilton Books rule (Four lines of copyright, unclipped $5.95 jacket)."
+            f"[COLLECTIBLE PREMIUM - ABAA {condition_report.dual_grade_code}] "
+            "Elevated to first edition tier ($850.00 CAD). "
+            "True First Edition, First Impression confirmed via Chilton Books rule "
+            "(Four lines of copyright, unclipped $5.95 jacket)."
         )
         channel_strat = "antiquarian_first_edition_vault"
 
@@ -1222,7 +1493,9 @@ def create_app(
                 "authors": ["Frank Herbert"],
                 "format": "hardcover_with_jacket",
                 "raw_spine_text": "DUNE FRANK HERBERT CHILTON BOOKS",
-                "raw_copyright_text": "First Edition. Copyright 1965 by Frank Herbert. Library of Congress Catalog Card Number 65-22547.",
+                "raw_copyright_text": (
+                    "First Edition. Copyright 1965 by Frank Herbert. Library of Congress Catalog Card Number 65-22547."
+                ),
                 "raw_flap_text": "$5.95 price intact on front dust jacket flap.",
                 "visible_condition_cues": ["clean_as_new"],
                 "source_filename": "dune_sample_3_shots",
@@ -1255,8 +1528,16 @@ def create_app(
             "pricing_evidence": {
                 "source": "AbeBooks / Rare Book Hub Historical Auction Averages",
                 "comparables": [
-                    {"title": "Dune (1st Ed/1st Pr, Chilton 1965)", "condition": "Near Fine / Near Fine", "price_cad": "950.00"},
-                    {"title": "Dune (1st Ed, Chilton)", "condition": "Very Good / Very Good", "price_cad": "750.00"},
+                    {
+                        "title": "Dune (1st Ed/1st Pr, Chilton 1965)",
+                        "condition": "Near Fine / Near Fine",
+                        "price_cad": "950.00",
+                    },
+                    {
+                        "title": "Dune (1st Ed, Chilton)",
+                        "condition": "Very Good / Very Good",
+                        "price_cad": "750.00",
+                    },
                 ],
             },
         }
@@ -1264,7 +1545,9 @@ def create_app(
         # Check for collector want list match (Priority Courtesy Hold)
         try:
             from decimal import Decimal
+
             from app.domain.want_list import WantListMatcher
+
             w_matcher = WantListMatcher()
             active_wants = want_list_store.list_wants(tenant_id=principal.tenant_id, status="active")
             collectors_map = {c.id: c for c in want_list_store.list_collectors(tenant_id=principal.tenant_id)}
@@ -1310,7 +1593,9 @@ def create_app(
             )
             result["executed"] = True
             result["execution_outcome"] = outcome
-            res_sku = outcome.get("result", {}).get("sku") or outcome.get("result", {}).get("details", {}).get("sku") or ""
+            res_sku = (
+                outcome.get("result", {}).get("sku") or outcome.get("result", {}).get("details", {}).get("sku") or ""
+            )
             result["sku"] = res_sku
 
         return {
@@ -1332,9 +1617,15 @@ def create_app(
                     "format": "hardcover_with_jacket",
                     "confidence": "high",
                     "visible_condition_cues": ["clean_as_new"],
-                    "edition_or_series_markers": ["First Edition stated on copyright page", "$5.95 unclipped dust jacket"],
+                    "edition_or_series_markers": [
+                        "First Edition stated on copyright page",
+                        "$5.95 unclipped dust jacket",
+                    ],
                     "raw_spine_text": "DUNE FRANK HERBERT CHILTON BOOKS",
-                    "raw_copyright_text": "First Edition. Copyright 1965 by Frank Herbert. Library of Congress Catalog Card Number 65-22547.",
+                    "raw_copyright_text": (
+                        "First Edition. Copyright 1965 by Frank Herbert. "
+                        "Library of Congress Catalog Card Number 65-22547."
+                    ),
                     "raw_flap_text": "$5.95 price intact on front dust jacket flap.",
                 }
             ],
@@ -1358,30 +1649,189 @@ def create_app(
             ],
         }
 
+    # ── SEEKERS BOOKS STOREFRONT PUBLIC ADAPTIVE ENDPOINTS ──
+    @app.get("/api/shop/catalog")
+    def get_shop_catalog() -> dict[str, Any]:
+        """Public storefront catalog endpoint consumed by the Seekers Books website."""
+        all_items = inventory_store.list_all(tenant_id=1)
+        active_items = [i for i in all_items if i.status in ("active", "held", "sold")]
 
-    
+        batches_map: dict[str, dict[str, Any]] = {}
+        items_payload: list[dict[str, Any]] = []
+
+        for item in active_items:
+            b_id = getattr(item, "batch_id", "batch-24") or "batch-24"
+            b_name = getattr(item, "batch_name", "Autumn Accessions") or "Autumn Accessions"
+            if b_id not in batches_map:
+                batches_map[b_id] = {
+                    "id": b_id,
+                    "code": b_id.upper().replace("-", " "),
+                    "name": b_name,
+                    "subtitle": f"Curated drops from the Annex collection · {b_name}",
+                    "date": "Active Collection",
+                    "foreword": "Recent accessions from the Seekers Books subterranean sanctuary in the Annex.",
+                }
+
+            items_payload.append(
+                {
+                    "id": item.sku,
+                    "batchId": b_id,
+                    "shelf": item.section or "General",
+                    "author": ", ".join(item.authors) if isinstance(item.authors, list) else str(item.authors),
+                    "title": item.title,
+                    "subtitle": None,
+                    "edition": getattr(item, "collation", "") or item.format,
+                    "publisher": getattr(item, "publisher", "") or "Seekers Imprint",
+                    "place": "Toronto / London",
+                    "year": getattr(item, "year", 0) or item.created_at.year,
+                    "format": item.format,
+                    "collation": getattr(item, "collation", "") or f"{item.format}, {item.condition}",
+                    "binding": item.format.replace("_", " ").title(),
+                    "condition": item.condition.title(),
+                    "conditionNotes": getattr(item, "condition_notes", "")
+                    or f"Condition graded {item.condition}. Physical copy in the Annex shop.",
+                    "price": float(item.online_price_cad or item.in_store_price_cad or 0.0),
+                    "status": "held" if item.status == "held" else ("sold" if item.status == "sold" else "available"),
+                    "heldUntil": getattr(item, "held_until", None),
+                    "featuredArrival": True,
+                    "coverImage": getattr(item, "spine_image_url", "") or None,
+                    "tags": [item.section or "Philosophy", item.format],
+                }
+            )
+
+        if not batches_map:
+            batches_map["all"] = {
+                "id": "all",
+                "code": "ALL SHELVES",
+                "name": "Complete Seekers Ledger",
+                "subtitle": "All active subterranean Annex shelves",
+                "date": "Current Active Index",
+                "foreword": "The complete accession ledger of Seekers Books at 509 Bloor West.",
+            }
+
+        return {
+            "shop": {
+                "name": "SEEKERS BOOKS",
+                "established": "Est. 1988 · 509 Bloor St. West, The Annex, Toronto",
+                "status": "Subterranean Annex Sanctuary Open",
+                "hours": "12:00 - 21:00 Daily (7 Days a Week)",
+                "phone": "(416) 925-1982",
+                "address": "509 Bloor Street West, Toronto, ON M5S 1Y2",
+                "instagram": "https://www.instagram.com/seekersbooks/",
+                "guardian": "Churchill (Resident Tabby Cat & Shelf Warden)",
+            },
+            "batches": list(batches_map.values()),
+            "inventory": items_payload,
+        }
+
+    @app.post("/api/shop/holds")
+    def create_shop_hold(req: ShopHoldRequest, principal: Principal = Depends(require_decide)) -> dict[str, Any]:
+        """Authenticated legacy counter hold; checkout uses the signed v1 API."""
+        import random
+        from datetime import UTC, datetime, timedelta
+
+        item = inventory_store.get(req.sku, tenant_id=principal.tenant_id)
+        if not item:
+            raise HTTPException(404, f"Book with SKU '{req.sku}' not found")
+        if item.status == "held":
+            raise HTTPException(409, "Book is already on reserve for another patron")
+        if item.status == "sold":
+            raise HTTPException(410, "Book has already been claimed and settled")
+
+        slip_code = f"SLIP-{req.sku}-{random.randint(1000, 9999)}"
+        held_until = (datetime.now(UTC) + timedelta(hours=48)).isoformat()
+
+        stock_ledger.hold(principal.tenant_id, req.sku, slip_code, datetime.fromisoformat(held_until).timestamp())
+        if hasattr(inventory_store, "create_hold"):
+            inventory_store.create_hold(
+                sku=req.sku,
+                slip_code=slip_code,
+                patron_name=req.patron_name,
+                patron_email=req.patron_email,
+                patron_phone=req.patron_phone,
+                pickup_note=req.pickup_note,
+                held_until=held_until,
+                tenant_id=principal.tenant_id,
+            )
+        else:
+            import json
+
+            item.status = "held"
+            item.held_until = held_until
+            item.hold_slip_code = slip_code
+            item.patron_info = json.dumps(
+                {
+                    "name": req.patron_name,
+                    "email": req.patron_email,
+                    "phone": req.patron_phone,
+                    "note": req.pickup_note,
+                }
+            )
+            inventory_store.add(item, tenant_id=principal.tenant_id)
+
+        return {
+            "success": True,
+            "slipCode": slip_code,
+            "sku": req.sku,
+            "status": "held",
+            "heldUntil": held_until,
+            "patronName": req.patron_name,
+            "pickupLocation": "Seekers Books, 509 Bloor St. West, down the stairs",
+        }
+
+    @app.delete("/api/shop/holds/{sku}")
+    def release_shop_hold(sku: str, principal: Principal = Depends(require_decide)) -> dict[str, Any]:
+        """Release a 48-hour counter hold."""
+        item = inventory_store.get(sku, tenant_id=principal.tenant_id)
+        if item and item.hold_slip_code:
+            stock_ledger.release_hold(principal.tenant_id, sku, item.hold_slip_code)
+        if hasattr(inventory_store, "release_hold"):
+            inventory_store.release_hold(sku, tenant_id=principal.tenant_id)
+        else:
+            item = inventory_store.get(sku, tenant_id=principal.tenant_id)
+            if item and item.status in ("held", "active") and item.hold_slip_code:
+                item.status = "active"
+                item.held_until = None
+                item.hold_slip_code = None
+                item.patron_info = ""
+                inventory_store.add(item, tenant_id=principal.tenant_id)
+        return {"success": True, "sku": sku, "status": "available"}
+
     @app.get("/inventory")
     def list_inventory(principal: Principal = Depends(require_read)) -> list[dict[str, Any]]:
         return [
             {
-                "sku": i.sku, "title": i.title, "authors": i.authors, "format": i.format,
-                "condition": i.condition, "in_store_price_cad": float(i.in_store_price_cad),
-                "online_price_cad": float(i.online_price_cad), "status": i.status,
-                "section": i.section, "shelf": i.shelf,
+                "sku": i.sku,
+                "title": i.title,
+                "authors": i.authors,
+                "format": i.format,
+                "condition": i.condition,
+                "in_store_price_cad": float(i.in_store_price_cad),
+                "online_price_cad": float(i.online_price_cad),
+                "status": i.status,
+                "section": i.section,
+                "shelf": i.shelf,
                 "last_audited_at": i.last_audited_at.isoformat() if i.last_audited_at else None,
-                "created_at": i.created_at.isoformat() if hasattr(i.created_at, "isoformat") else str(i.created_at)
+                "created_at": i.created_at.isoformat() if hasattr(i.created_at, "isoformat") else str(i.created_at),
             }
             for i in inventory_store.list_all(tenant_id=principal.tenant_id)
         ]
 
     @app.put("/inventory/{sku}")
-    def update_inventory_item(sku: str, payload: dict[str, Any], principal: Principal = Depends(require_decide)) -> dict[str, Any]:
+    def update_inventory_item(
+        sku: str, payload: dict[str, Any], principal: Principal = Depends(require_decide)
+    ) -> dict[str, Any]:
         from decimal import Decimal
+
         if "in_store_price_cad" in payload or "online_price_cad" in payload:
             in_store = Decimal(str(payload.get("in_store_price_cad", "0")))
             online = Decimal(str(payload.get("online_price_cad", "0")))
             inventory_store.update_prices(sku, in_store, online, tenant_id=principal.tenant_id)
-            operator.propose("update_prices", {"sku": sku, "in_store_price_cad": str(in_store), "online_price_cad": str(online)}, tenant_id=principal.tenant_id)
+            operator.propose(
+                "update_prices",
+                {"sku": sku, "in_store_price_cad": str(in_store), "online_price_cad": str(online)},
+                tenant_id=principal.tenant_id,
+            )
         if "section" in payload or "shelf" in payload:
             sec = str(payload.get("section", "General"))
             sh = str(payload.get("shelf", ""))
@@ -1395,9 +1845,7 @@ def create_app(
         return {"status": "ok"}
 
     @app.post("/inventory/{sku}/relist")
-    def relist_inventory_item(
-        sku: str, principal: Principal = Depends(require_decide)
-    ) -> dict[str, Any]:
+    def relist_inventory_item(sku: str, principal: Principal = Depends(require_decide)) -> dict[str, Any]:
         item = inventory_store.get(sku, tenant_id=principal.tenant_id)
         if not item:
             raise HTTPException(404, "item not found")
@@ -1442,7 +1890,12 @@ def create_app(
                 {"changes": {sku: 0 for sku in skus}},
                 tenant_id=tenant_id,
             )
-            return {"status": "ok", "action": action, "affected_count": affected, "review_id": rev["review_id"]}
+            return {
+                "status": "ok",
+                "action": action,
+                "affected_count": affected,
+                "review_id": rev["review_id"],
+            }
 
         elif action == "relist":
             affected = inventory_store.batch_relist(skus, tenant_id=tenant_id)
@@ -1451,7 +1904,12 @@ def create_app(
                 {"changes": {sku: 1 for sku in skus}},
                 tenant_id=tenant_id,
             )
-            return {"status": "ok", "action": action, "affected_count": affected, "review_id": rev["review_id"]}
+            return {
+                "status": "ok",
+                "action": action,
+                "affected_count": affected,
+                "review_id": rev["review_id"],
+            }
 
         elif action == "relocate":
             section = str(params.get("section", "General"))
@@ -1466,7 +1924,12 @@ def create_app(
                 {"changes": {sku: 0 for sku in skus}},
                 tenant_id=tenant_id,
             )
-            return {"status": "ok", "action": action, "affected_count": affected, "review_id": rev["review_id"]}
+            return {
+                "status": "ok",
+                "action": action,
+                "affected_count": affected,
+                "review_id": rev["review_id"],
+            }
 
         elif action == "price_adjust":
             price_mode = str(params.get("price_mode", "percent"))
@@ -1514,7 +1977,12 @@ def create_app(
                 {"changes": online_changes},
                 tenant_id=tenant_id,
             )
-            return {"status": "ok", "action": action, "affected_count": affected, "review_id": rev["review_id"]}
+            return {
+                "status": "ok",
+                "action": action,
+                "affected_count": affected,
+                "review_id": rev["review_id"],
+            }
 
         else:
             raise HTTPException(400, f"unrecognized batch action: {action}")
@@ -1528,10 +1996,15 @@ def create_app(
         export_format = str(payload.get("format", "csv")).lower()
 
         tenant_id = principal.tenant_id
-        items = inventory_store.get_batch(skus, tenant_id=tenant_id) if skus else inventory_store.list_all(tenant_id=tenant_id)
+        items = (
+            inventory_store.get_batch(skus, tenant_id=tenant_id)
+            if skus
+            else inventory_store.list_all(tenant_id=tenant_id)
+        )
 
         if export_format == "uiee":
             from app.domain.uiee import UIEEExporter
+
             uiee_text = UIEEExporter.export_catalog(items=items, status_filter="all", section_filter="all")
             return PlainTextResponse(
                 content=uiee_text,
@@ -1541,28 +2014,42 @@ def create_app(
         else:
             import csv
             import io
+
             output = io.StringIO()
             writer = csv.writer(output)
-            writer.writerow([
-                "sku", "title", "authors", "format", "condition",
-                "in_store_price_cad", "online_price_cad", "status",
-                "section", "shelf", "last_audited_at", "created_at"
-            ])
+            writer.writerow(
+                [
+                    "sku",
+                    "title",
+                    "authors",
+                    "format",
+                    "condition",
+                    "in_store_price_cad",
+                    "online_price_cad",
+                    "status",
+                    "section",
+                    "shelf",
+                    "last_audited_at",
+                    "created_at",
+                ]
+            )
             for i in items:
-                writer.writerow([
-                    i.sku,
-                    i.title,
-                    "; ".join(i.authors),
-                    i.format,
-                    i.condition,
-                    str(i.in_store_price_cad),
-                    str(i.online_price_cad),
-                    i.status,
-                    i.section,
-                    i.shelf,
-                    i.last_audited_at.isoformat() if i.last_audited_at else "",
-                    i.created_at.isoformat() if i.created_at else "",
-                ])
+                writer.writerow(
+                    [
+                        i.sku,
+                        i.title,
+                        "; ".join(i.authors),
+                        i.format,
+                        i.condition,
+                        str(i.in_store_price_cad),
+                        str(i.online_price_cad),
+                        i.status,
+                        i.section,
+                        i.shelf,
+                        i.last_audited_at.isoformat() if i.last_audited_at else "",
+                        i.created_at.isoformat() if i.created_at else "",
+                    ]
+                )
             return Response(
                 content=output.getvalue(),
                 media_type="text/csv; charset=utf-8",
@@ -1575,6 +2062,7 @@ def create_app(
         principal: Principal = Depends(require_decide),
     ) -> dict[str, Any]:
         from decimal import Decimal
+
         payload = {
             "section": req.section,
             "shelf": req.shelf,
@@ -1606,6 +2094,7 @@ def create_app(
         # Check for collector want list match (Priority Courtesy Hold)
         try:
             from app.domain.want_list import WantListMatcher
+
             w_matcher = WantListMatcher()
             active_wants = want_list_store.list_wants(tenant_id=principal.tenant_id, status="active")
             collectors_map = {c.id: c for c in want_list_store.list_collectors(tenant_id=principal.tenant_id)}
@@ -1659,8 +2148,8 @@ def create_app(
         file: UploadFile | None = File(None),
         principal: Principal = Depends(require_decide),
     ) -> dict[str, Any]:
-        from app.domain.shelf_audit import ShelfAuditService
         from app.db.inventory import ShelfAuditRecord
+        from app.domain.shelf_audit import ShelfAuditService
 
         scanned_books: list[dict[str, Any]] = []
 
@@ -1670,8 +2159,11 @@ def create_app(
                 prepare_vision_image,
                 resolve_gemini_api_key,
             )
+
             try:
-                api_key = resolve_gemini_api_key(settings.gemini_api_key if hasattr(settings, "gemini_api_key") else None)
+                api_key = resolve_gemini_api_key(
+                    settings.gemini_api_key if hasattr(settings, "gemini_api_key") else None
+                )
             except ValueError as exc:
                 raise HTTPException(503, "Vision AI not configured: GEMINI_API_KEY required") from exc
 
@@ -1730,8 +2222,8 @@ def create_app(
         data: dict[str, Any],
         principal: Principal = Depends(require_decide),
     ) -> dict[str, Any]:
-        from app.domain.shelf_audit import ShelfAuditService
         from app.db.inventory import ShelfAuditRecord
+        from app.domain.shelf_audit import ShelfAuditService
 
         section = data.get("section", "General")
         shelf = data.get("shelf", "")
@@ -1799,11 +2291,13 @@ def create_app(
 
     def _get_tenant_square_creds(tenant_id: int) -> tuple[str, str]:
         import os
+
         token = ""
         try:
             enc_integrations = user_store.get_tenant_integrations(tenant_id)
             if "square" in enc_integrations:
                 from app.vault import decrypt_credential
+
                 token = decrypt_credential(enc_integrations["square"])
         except Exception:
             pass
@@ -1813,24 +2307,20 @@ def create_app(
         return token, loc_id
 
     @app.post("/inventory/{sku}/square/catalog")
-    def push_book_to_square(
-        sku: str, principal: Principal = Depends(require_decide)
-    ) -> dict[str, Any]:
+    def push_book_to_square(sku: str, principal: Principal = Depends(require_decide)) -> dict[str, Any]:
         item = inventory_store.get(sku, tenant_id=principal.tenant_id)
         if not item:
             raise HTTPException(404, "item not found")
         from app.api.square_service import SquareService
+
         token, loc_id = _get_tenant_square_creds(principal.tenant_id)
-        return SquareService.push_catalog_item(
-            item, access_token=token, location_id=loc_id, dry_run=settings.dry_run
-        )
+        return SquareService.push_catalog_item(item, access_token=token, location_id=loc_id, dry_run=settings.dry_run)
 
     @app.post("/inventory/square/catalog/sync-all")
-    def sync_all_to_square(
-        principal: Principal = Depends(require_decide)
-    ) -> dict[str, Any]:
+    def sync_all_to_square(principal: Principal = Depends(require_decide)) -> dict[str, Any]:
         items = [i for i in inventory_store.list_all(tenant_id=principal.tenant_id) if i.status == "active"]
         from app.api.square_service import SquareService
+
         token, loc_id = _get_tenant_square_creds(principal.tenant_id)
         synced = []
         for item in items:
@@ -1838,18 +2328,22 @@ def create_app(
                 item, access_token=token, location_id=loc_id, dry_run=settings.dry_run
             )
             synced.append(res)
-        return {"status": "completed", "total": len(items), "synced_count": len(synced), "results": synced}
+        return {
+            "status": "completed",
+            "total": len(items),
+            "synced_count": len(synced),
+            "results": synced,
+        }
 
     @app.post("/inventory/{sku}/square/checkout")
-    def create_book_square_checkout(
-        sku: str, principal: Principal = Depends(require_decide)
-    ) -> dict[str, Any]:
+    def create_book_square_checkout(sku: str, principal: Principal = Depends(require_decide)) -> dict[str, Any]:
         item = inventory_store.get(sku, tenant_id=principal.tenant_id)
         if not item:
             raise HTTPException(404, "item not found")
         if item.status != "active":
             raise HTTPException(400, f"Cannot create checkout for {item.status} book")
         from app.api.square_service import SquareService
+
         token, loc_id = _get_tenant_square_creds(principal.tenant_id)
         return SquareService.create_checkout_link(
             item, access_token=token, location_id=loc_id, dry_run=settings.dry_run
@@ -1857,11 +2351,13 @@ def create_app(
 
     def _get_tenant_ebay_creds(tenant_id: int) -> tuple[str, str]:
         import os
+
         token = ""
         try:
             enc_integrations = user_store.get_tenant_integrations(tenant_id)
             if "ebay" in enc_integrations:
                 from app.vault import decrypt_credential
+
                 token = decrypt_credential(enc_integrations["ebay"])
         except Exception:
             pass
@@ -1871,24 +2367,22 @@ def create_app(
         return token, mkt_id
 
     @app.post("/inventory/{sku}/ebay/draft")
-    def push_book_to_ebay_draft(
-        sku: str, principal: Principal = Depends(require_decide)
-    ) -> dict[str, Any]:
+    def push_book_to_ebay_draft(sku: str, principal: Principal = Depends(require_decide)) -> dict[str, Any]:
         item = inventory_store.get(sku, tenant_id=principal.tenant_id)
         if not item:
             raise HTTPException(404, "item not found")
         from app.api.ebay_service import EbayService
+
         token, mkt_id = _get_tenant_ebay_creds(principal.tenant_id)
         return EbayService.push_inventory_item(
             item, access_token=token, marketplace_id=mkt_id, dry_run=settings.dry_run
         )
 
     @app.post("/inventory/ebay/sync-all")
-    def sync_all_to_ebay(
-        principal: Principal = Depends(require_decide)
-    ) -> dict[str, Any]:
+    def sync_all_to_ebay(principal: Principal = Depends(require_decide)) -> dict[str, Any]:
         items = [i for i in inventory_store.list_all(tenant_id=principal.tenant_id) if i.status == "active"]
         from app.api.ebay_service import EbayService
+
         token, mkt_id = _get_tenant_ebay_creds(principal.tenant_id)
         synced = []
         for item in items:
@@ -1896,22 +2390,27 @@ def create_app(
                 item, access_token=token, marketplace_id=mkt_id, dry_run=settings.dry_run
             )
             synced.append(res)
-        return {"status": "completed", "total": len(items), "synced_count": len(synced), "results": synced}
+        return {
+            "status": "completed",
+            "total": len(items),
+            "synced_count": len(synced),
+            "results": synced,
+        }
 
     @app.post("/inventory/ebay/sync-orders")
-    def sync_ebay_orders(
-        principal: Principal = Depends(require_decide)
-    ) -> dict[str, Any]:
+    def sync_ebay_orders(principal: Principal = Depends(require_decide)) -> dict[str, Any]:
         # Triggers manual check for newly placed eBay orders
         return {"status": "synced", "marketplace": "ebay", "orders_checked": 0, "sales_delisted": 0}
 
     def _get_tenant_abebooks_creds(tenant_id: int) -> tuple[str, str]:
         import os
+
         token = ""
         try:
             enc_integrations = user_store.get_tenant_integrations(tenant_id)
             if "abebooks" in enc_integrations:
                 from app.vault import decrypt_credential
+
                 token = decrypt_credential(enc_integrations["abebooks"])
         except Exception:
             pass
@@ -1927,13 +2426,16 @@ def create_app(
         principal: Principal = Depends(require_read),
     ) -> PlainTextResponse:
         from app.domain.uiee import UIEEExporter
+
         items = inventory_store.list_all(tenant_id=principal.tenant_id)
         uiee_text = UIEEExporter.export_catalog(
             items=items,
             status_filter=status,
             section_filter=section,
         )
-        filename = f"catalog_{section.lower()}_{status.lower()}.uiee" if section != "ALL" else f"catalog_{status.lower()}.uiee"
+        filename = (
+            f"catalog_{section.lower()}_{status.lower()}.uiee" if section != "ALL" else f"catalog_{status.lower()}.uiee"
+        )
         return PlainTextResponse(
             content=uiee_text,
             media_type="text/plain; charset=utf-8",
@@ -1941,10 +2443,9 @@ def create_app(
         )
 
     @app.post("/inventory/abebooks/sync-orders")
-    def sync_abebooks_orders(
-        principal: Principal = Depends(require_decide)
-    ) -> dict[str, Any]:
+    def sync_abebooks_orders(principal: Principal = Depends(require_decide)) -> dict[str, Any]:
         from app.api.abebooks_service import AbeBooksService
+
         api_key, client_id = _get_tenant_abebooks_creds(principal.tenant_id)
         orders = AbeBooksService.fetch_orders(
             api_key=api_key,
@@ -1969,11 +2470,13 @@ def create_app(
 
     def _get_tenant_biblio_creds(tenant_id: int) -> tuple[str, str]:
         import os
+
         token = ""
         try:
             enc_integrations = user_store.get_tenant_integrations(tenant_id)
             if "biblio" in enc_integrations:
                 from app.vault import decrypt_credential
+
                 token = decrypt_credential(enc_integrations["biblio"])
         except Exception:
             pass
@@ -1988,6 +2491,7 @@ def create_app(
         principal: Principal = Depends(require_decide),
     ) -> dict[str, Any]:
         from app.api.biblio_service import BiblioService
+
         api_key, dealer_id = _get_tenant_biblio_creds(principal.tenant_id)
         orders = BiblioService.fetch_orders(
             api_key=api_key,
@@ -2015,10 +2519,9 @@ def create_app(
     @app.api_route("/api/cron/sync", methods=["GET", "POST"])
     def cron_sync(
         demo: bool = False,
-        tenant_id: int | None = None,
         authorization: str = Header(default=""),
     ) -> dict[str, Any]:
-        """Automated background pulse triggered by Vercel Cron or authorized operator.
+        """Automated background pulse triggered only by an authenticated cron caller.
 
         Ingests orders across active tenants, detects 48h courtesy hold collisions,
         and triggers Corvus Warden autonomous triage.
@@ -2026,74 +2529,47 @@ def create_app(
         token = bearer_token(authorization)
         cron_secret = getattr(settings, "cron_secret", "") or os.getenv("CRON_SECRET", "")
 
-        authorized = False
-        if cron_secret and token and token == cron_secret:
-            authorized = True
-        elif token:
-            # Check operator token registry
-            try:
-                if settings.tokens.configured:
-                    principal = settings.tokens.resolve(token)
-                    if principal and principal.can(DECIDE):
-                        authorized = True
-            except Exception:
-                pass
-            # Check admin JWT
-            if not authorized:
-                try:
-                    from app.auth import decode_access_token
-                    payload = decode_access_token(token)
-                    if payload.get("sub"):
-                        authorized = True
-                except Exception:
-                    pass
-        elif not cron_secret and settings.dry_run:
-            authorized = True
+        if not cron_secret:
+            logger.error("cron.sync.secret_not_configured")
+            raise HTTPException(503, "cron authentication is not configured")
 
-        if not authorized:
+        if not token or not hmac.compare_digest(token, cron_secret):
             logger.warning("cron.sync.unauthorized_attempt")
             raise HTTPException(401, "unauthorized cron invocation", {"WWW-Authenticate": "Bearer"})
 
         result = reconciliation_service.run_reconciliation_cycle(
             demo_sample=demo,
-            force_tenant_id=tenant_id,
         )
+        result["custom_site_deliveries"] = custom_site_service.drain()
         return result
 
-    from app.auth import get_password_hash, verify_password, create_access_token
+    from app.auth import create_access_token, get_password_hash, verify_password
 
     @app.post("/auth/signup")
     def signup(req: SignupRequest):
         if user_store.get_user_by_email(req.email):
             raise HTTPException(400, "Email already registered")
-        
+
         tenant_id = user_store.create_tenant(req.store_name)
         pw_hash = get_password_hash(req.password)
-        user_id = user_store.create_user(tenant_id, req.email, pw_hash, "admin")
-        
+        user_store.create_user(tenant_id, req.email, pw_hash, "admin")
+
         token = create_access_token({"sub": req.email, "tenant_id": tenant_id, "role": "admin"})
         return {"access_token": token, "token_type": "bearer"}
 
     @app.post("/auth/login")
     def login(req: LoginRequest):
         user = user_store.get_user_by_email(req.email)
-        if user and req.email == "operator@opscore.io":
-            if req.password in ("Antiquarian-Vault-2026!", "demo1234"):
-                from app.auth import get_password_hash
-                if not verify_password("Antiquarian-Vault-2026!", user.password_hash):
-                    new_pw = get_password_hash("Antiquarian-Vault-2026!")
-                    user_store.update_user_password(user.user_id, new_pw)
-                token = create_access_token({"sub": user.email, "tenant_id": user.tenant_id, "role": user.role})
-                return {"access_token": token, "token_type": "bearer"}
         if not user or not verify_password(req.password, user.password_hash):
             raise HTTPException(401, "Invalid credentials")
-            
+
         token = create_access_token({"sub": user.email, "tenant_id": user.tenant_id, "role": user.role})
         return {"access_token": token, "token_type": "bearer"}
 
     @app.get("/auth/me")
     def auth_me(token: str = Depends(get_bearer_token)):
         from app.auth import decode_access_token
+
         try:
             payload = decode_access_token(token)
             tenant_id = payload["tenant_id"]
@@ -2101,20 +2577,22 @@ def create_app(
             payload["subscription_status"] = billing.get("subscription_status", "inactive")
             return payload
         except Exception:
-            raise HTTPException(401, "Invalid token")
+            raise HTTPException(401, "Invalid token") from None
 
-
-    from app.vault import encrypt_credential, decrypt_credential
+    from app.vault import encrypt_credential
 
     @app.post("/integrations")
     def add_integration(req: IntegrationRequest, token: str = Depends(get_bearer_token)):
         from app.auth import decode_access_token
+
         try:
             payload = decode_access_token(token)
             tenant_id = payload["tenant_id"]
         except Exception:
-            raise HTTPException(401, "Invalid token")
-            
+            raise HTTPException(401, "Invalid token") from None
+
+        _require_active_subscription(user_store, tenant_id)
+
         encrypted = encrypt_credential(req.api_key)
         user_store.save_integration(tenant_id, req.provider, encrypted)
         return {"status": "ok", "provider": req.provider}
@@ -2122,12 +2600,15 @@ def create_app(
     @app.get("/integrations")
     def list_integrations(token: str = Depends(get_bearer_token)):
         from app.auth import decode_access_token
+
         try:
             payload = decode_access_token(token)
             tenant_id = payload["tenant_id"]
         except Exception:
-            raise HTTPException(401, "Invalid token")
-            
+            raise HTTPException(401, "Invalid token") from None
+
+        _require_active_subscription(user_store, tenant_id)
+
         providers = user_store.list_tenant_providers(tenant_id)
         result = {"connected_providers": providers}
         for p in providers:
@@ -2137,12 +2618,15 @@ def create_app(
     @app.get("/analytics")
     def get_analytics(token: str = Depends(get_bearer_token)):
         from app.auth import decode_access_token
+
         try:
             payload = decode_access_token(token)
             tenant_id = payload["tenant_id"]
         except Exception:
-            raise HTTPException(401, "Invalid token")
-            
+            raise HTTPException(401, "Invalid token") from None
+
+        _require_active_subscription(user_store, tenant_id)
+
         return operator.reviews.get_tenant_analytics(tenant_id)
 
     # =========================================================================
@@ -2150,9 +2634,7 @@ def create_app(
     # =========================================================================
 
     @app.get("/collectors")
-    def list_collectors_endpoint(
-        q: str = "", principal: Principal = Depends(require_read)
-    ) -> list[dict[str, Any]]:
+    def list_collectors_endpoint(q: str = "", principal: Principal = Depends(require_read)) -> list[dict[str, Any]]:
         collectors = want_list_store.list_collectors(tenant_id=principal.tenant_id, query=q)
         wants = want_list_store.list_wants(tenant_id=principal.tenant_id, status="active")
         wants_count: dict[str, int] = {}
@@ -2177,7 +2659,9 @@ def create_app(
         payload: dict[str, Any], principal: Principal = Depends(require_decide)
     ) -> dict[str, Any]:
         import uuid
+
         from app.db.want_list import Collector
+
         name = str(payload.get("name", "")).strip()
         if not name:
             raise HTTPException(400, "Collector name is required")
@@ -2257,9 +2741,7 @@ def create_app(
         return {"status": "ok", "id": updated.id, "name": updated.name}
 
     @app.delete("/collectors/{collector_id}")
-    def delete_collector_endpoint(
-        collector_id: str, principal: Principal = Depends(require_decide)
-    ) -> dict[str, Any]:
+    def delete_collector_endpoint(collector_id: str, principal: Principal = Depends(require_decide)) -> dict[str, Any]:
         deleted = want_list_store.delete_collector(collector_id, tenant_id=principal.tenant_id)
         if not deleted:
             raise HTTPException(404, "Collector not found")
@@ -2294,7 +2776,9 @@ def create_app(
     ) -> dict[str, Any]:
         import uuid
         from decimal import Decimal
+
         from app.db.want_list import WantItem
+
         collector = want_list_store.get_collector(collector_id, tenant_id=principal.tenant_id)
         if not collector:
             raise HTTPException(404, "Collector not found")
@@ -2339,19 +2823,16 @@ def create_app(
         return {"status": "ok", "id": updated.id, "title": updated.title}
 
     @app.delete("/wants/{want_id}")
-    def delete_want_endpoint(
-        want_id: str, principal: Principal = Depends(require_decide)
-    ) -> dict[str, Any]:
+    def delete_want_endpoint(want_id: str, principal: Principal = Depends(require_decide)) -> dict[str, Any]:
         deleted = want_list_store.delete_want(want_id, tenant_id=principal.tenant_id)
         if not deleted:
             raise HTTPException(404, "Want item not found")
         return {"status": "deleted", "id": want_id}
 
     @app.get("/holds")
-    def list_holds_endpoint(
-        status: str = "", principal: Principal = Depends(require_read)
-    ) -> list[dict[str, Any]]:
+    def list_holds_endpoint(status: str = "", principal: Principal = Depends(require_read)) -> list[dict[str, Any]]:
         from datetime import UTC, datetime
+
         now = datetime.now(UTC)
         holds = want_list_store.list_holds(tenant_id=principal.tenant_id, status=status or None)
         collectors = {c.id: c for c in want_list_store.list_collectors(tenant_id=principal.tenant_id)}
@@ -2360,27 +2841,29 @@ def create_app(
             rem_sec = max(0.0, (h.expires_at - now).total_seconds())
             is_expired = h.status == "active" and now > h.expires_at
             col = collectors.get(h.collector_id)
-            result.append({
-                "id": h.id,
-                "sku": h.sku,
-                "want_item_id": h.want_item_id,
-                "collector_id": h.collector_id,
-                "collector_name": h.collector_name or (col.name if col else "Collector"),
-                "collector_phone": col.phone if col else "",
-                "collector_email": col.email if col else "",
-                "book_title": h.book_title,
-                "book_author": h.book_author,
-                "price_cad": float(h.price_cad) if h.price_cad is not None else None,
-                "held_at": h.held_at.isoformat(),
-                "expires_at": h.expires_at.isoformat(),
-                "status": h.status,
-                "notes": h.notes,
-                "is_expired": is_expired,
-                "remaining_seconds": rem_sec,
-                "remaining_hours": round(rem_sec / 3600.0, 1),
-                "claimed_at": h.claimed_at.isoformat() if h.claimed_at else None,
-                "released_at": h.released_at.isoformat() if h.released_at else None,
-            })
+            result.append(
+                {
+                    "id": h.id,
+                    "sku": h.sku,
+                    "want_item_id": h.want_item_id,
+                    "collector_id": h.collector_id,
+                    "collector_name": h.collector_name or (col.name if col else "Collector"),
+                    "collector_phone": col.phone if col else "",
+                    "collector_email": col.email if col else "",
+                    "book_title": h.book_title,
+                    "book_author": h.book_author,
+                    "price_cad": float(h.price_cad) if h.price_cad is not None else None,
+                    "held_at": h.held_at.isoformat(),
+                    "expires_at": h.expires_at.isoformat(),
+                    "status": h.status,
+                    "notes": h.notes,
+                    "is_expired": is_expired,
+                    "remaining_seconds": rem_sec,
+                    "remaining_hours": round(rem_sec / 3600.0, 1),
+                    "claimed_at": h.claimed_at.isoformat() if h.claimed_at else None,
+                    "released_at": h.released_at.isoformat() if h.released_at else None,
+                }
+            )
         return result
 
     @app.post("/holds/{hold_id}/claim")
@@ -2388,11 +2871,13 @@ def create_app(
         hold_id: str, payload: dict[str, Any] = None, principal: Principal = Depends(require_decide)
     ) -> dict[str, Any]:
         payload = payload or {}
-        outcome = operator.executor.handlers["claim_collector_hold"]({
-            "hold_id": hold_id,
-            "tenant_id": principal.tenant_id,
-            "notes": payload.get("notes", "Claimed by collector"),
-        })
+        outcome = operator.executor.handlers["claim_collector_hold"](
+            {
+                "hold_id": hold_id,
+                "tenant_id": principal.tenant_id,
+                "notes": payload.get("notes", "Claimed by collector"),
+            }
+        )
         return outcome
 
     @app.post("/holds/{hold_id}/release")
@@ -2400,11 +2885,13 @@ def create_app(
         hold_id: str, payload: dict[str, Any] = None, principal: Principal = Depends(require_decide)
     ) -> dict[str, Any]:
         payload = payload or {}
-        outcome = operator.executor.handlers["release_collector_hold"]({
-            "hold_id": hold_id,
-            "tenant_id": principal.tenant_id,
-            "reason": payload.get("reason", "manual_release"),
-        })
+        outcome = operator.executor.handlers["release_collector_hold"](
+            {
+                "hold_id": hold_id,
+                "tenant_id": principal.tenant_id,
+                "reason": payload.get("reason", "manual_release"),
+            }
+        )
         return outcome
 
     @app.post("/holds/{hold_id}/extend")
@@ -2412,6 +2899,7 @@ def create_app(
         hold_id: str, payload: dict[str, Any] = None, principal: Principal = Depends(require_decide)
     ) -> dict[str, Any]:
         from datetime import timedelta
+
         payload = payload or {}
         hours = int(payload.get("hours", 24))
         hold = want_list_store.get_hold(hold_id, tenant_id=principal.tenant_id)
@@ -2431,6 +2919,7 @@ def create_app(
         }
 
     from app.api.billing import get_billing_router
+
     app.include_router(get_billing_router(settings, user_store), prefix="/billing")
 
     return app

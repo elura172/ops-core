@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 from datetime import UTC, datetime
 from decimal import Decimal
 
@@ -104,7 +103,7 @@ def test_ebay_webhook_challenge():
     token = "secret_verification_token_777"
     endpoint = "https://ops-core-khaki.vercel.app/webhooks/ebay"
 
-    expected_hash = hashlib.sha256(f"{challenge}{token}{endpoint}".encode("utf-8")).hexdigest()
+    expected_hash = hashlib.sha256(f"{challenge}{token}{endpoint}".encode()).hexdigest()
     res = handle_ebay_challenge(challenge, token, endpoint)
     assert res["challengeResponse"] == expected_hash
 
@@ -137,9 +136,7 @@ def test_ebay_sale_webhook_corvus_auto_approves_and_delists_store():
 
     # Inbound eBay order notification event
     event = {
-        "metadata": {
-            "topic": "MARKETPLACE_ORDER_CREATED"
-        },
+        "metadata": {"topic": "MARKETPLACE_ORDER_CREATED"},
         "data": {
             "order": {
                 "orderId": "EBAY-1974-998811",
@@ -149,9 +146,9 @@ def test_ebay_sale_webhook_corvus_auto_approves_and_delists_store():
                         "title": "Two Solitudes (First Edition)",
                         "quantity": 1,
                     }
-                ]
+                ],
             }
-        }
+        },
     }
 
     result = handle_ebay_order_webhook(event, operator, tenant_id=1)

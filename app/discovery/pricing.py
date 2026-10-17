@@ -57,11 +57,13 @@ def round_to_retail_ending(amount: Decimal) -> Decimal:
     return base + Decimal("0.50")
 
 
-FAIR_CUES = frozenset({
-    "torn_or_chipped_jacket",
-    "ex_library_stickers_or_tape",
-    "cocked_spine",
-})
+FAIR_CUES = frozenset(
+    {
+        "torn_or_chipped_jacket",
+        "ex_library_stickers_or_tape",
+        "cocked_spine",
+    }
+)
 GOOD_CUES = frozenset({"creased_reading_spine", "bumped_headcap_or_tail"})
 
 
@@ -113,18 +115,13 @@ class AbeBooksCompsProvider(CompsProvider):
         else:
             params["kn"] = f"{title} {author or ''}".strip()
 
-        url = (
-            "https://www.abebooks.com/servlet/SearchResults?"
-            + urllib.parse.urlencode(params)
-        )
+        url = "https://www.abebooks.com/servlet/SearchResults?" + urllib.parse.urlencode(params)
         html = self._fetch_html(url)
         if not html:
             return ()
 
         # Extract next_f streaming data
-        chunks = re.findall(
-            r"self\.__next_f\.push\(\[1,\"(.*?)\"\]\)", html
-        )
+        chunks = re.findall(r"self\.__next_f\.push\(\[1,\"(.*?)\"\]\)", html)
         combined = "".join(chunks) if chunks else html
 
         raw_matches = ABEBOOKS_PRICE_PATTERN.findall(combined)
@@ -162,15 +159,10 @@ class AbeBooksCompsProvider(CompsProvider):
             try:
                 with urlopen(req, timeout=self.timeout) as resp:
                     if resp.status in RETRYABLE_STATUS:
-                        raise HTTPError(
-                            url, resp.status, "Retryable", resp.headers, None
-                        )
+                        raise HTTPError(url, resp.status, "Retryable", resp.headers, None)
                     return resp.read().decode("utf-8", errors="replace")
             except HTTPError as exc:
-                if (
-                    exc.code not in RETRYABLE_STATUS
-                    or attempt >= self.retries.max_attempts
-                ):
+                if exc.code not in RETRYABLE_STATUS or attempt >= self.retries.max_attempts:
                     logger.debug(f"AbeBooks HTTP {exc.code} for {url}")
                     return None
                 import time
@@ -220,31 +212,21 @@ class BookValuationEngine:
         cand = disambiguation.best_candidate
         condition = infer_condition_grade(spine)
 
-        isbn_to_query = disambiguation.detected_isbn or (
-            cand.primary_isbn if cand else None
-        )
+        isbn_to_query = disambiguation.detected_isbn or (cand.primary_isbn if cand else None)
         title = cand.title if cand else spine.title
         author = self._pick_author(cand, spine)
 
-        comps = self.comps_provider.fetch_comps(
-            title=title, author=author, isbn=isbn_to_query
-        )
+        comps = self.comps_provider.fetch_comps(title=title, author=author, isbn=isbn_to_query)
 
         mult = CONDITION_MULTIPLIERS.get(condition, Decimal("0.75"))
 
         if comps:
-            in_store_price, online_price, confidence, rationale = (
-                self._price_from_comps(comps, mult, condition)
-            )
+            in_store_price, online_price, confidence, rationale = self._price_from_comps(comps, mult, condition)
         else:
-            in_store_price, online_price, confidence, rationale = (
-                self._price_from_heuristic(spine, mult, condition)
-            )
+            in_store_price, online_price, confidence, rationale = self._price_from_heuristic(spine, mult, condition)
 
-        channel_strategy, in_store_price, online_price, rationale = (
-            self._route_channel(
-                disambiguation, in_store_price, online_price, rationale
-            )
+        channel_strategy, in_store_price, online_price, rationale = self._route_channel(
+            disambiguation, in_store_price, online_price, rationale
         )
 
         return BookValuation(
@@ -259,9 +241,7 @@ class BookValuationEngine:
         )
 
     @staticmethod
-    def _pick_author(
-        cand: object | None, spine: SpineExtractionItem
-    ) -> str | None:
+    def _pick_author(cand: object | None, spine: SpineExtractionItem) -> str | None:
         if cand and hasattr(cand, "authors") and cand.authors:  # type: ignore[union-attr]
             return cand.authors[0]  # type: ignore[union-attr]
         if spine.authors:
@@ -281,12 +261,8 @@ class BookValuationEngine:
         raw_online = base_comp.total_price_cad * mult
         raw_in_store = base_comp.item_price_cad * mult * Decimal("0.85")
 
-        online_price = round_to_retail_ending(
-            max(raw_online, MIN_FLOOR_PRICE_CAD)
-        )
-        in_store_price = round_to_retail_ending(
-            max(raw_in_store, Decimal("3.00"))
-        )
+        online_price = round_to_retail_ending(max(raw_online, MIN_FLOOR_PRICE_CAD))
+        in_store_price = round_to_retail_ending(max(raw_in_store, Decimal("3.00")))
         confidence = "high" if len(comps) >= 5 else "medium"
         rationale = (
             f"Priced from {len(comps)} live AbeBooks comps "
@@ -301,16 +277,11 @@ class BookValuationEngine:
         mult: Decimal,
         condition: BookConditionGrade,
     ) -> tuple[Decimal, Decimal, str, str]:
-        def_in_store, def_online = FORMAT_DEFAULTS.get(
-            spine.format, (Decimal("6.00"), Decimal("10.00"))
-        )
+        def_in_store, def_online = FORMAT_DEFAULTS.get(spine.format, (Decimal("6.00"), Decimal("10.00")))
         in_store_price = round_to_retail_ending(def_in_store * mult)
         online_price = round_to_retail_ending(def_online * mult)
         confidence = "low"
-        rationale = (
-            f"No live comps found. {spine.format.value} "
-            f"baseline adjusted for {condition.value}."
-        )
+        rationale = f"No live comps found. {spine.format.value} baseline adjusted for {condition.value}."
         return in_store_price, online_price, confidence, rationale
 
     @staticmethod
@@ -321,10 +292,7 @@ class BookValuationEngine:
         rationale: str,
     ) -> tuple[str, Decimal, Decimal, str]:
         if disambiguation.needs_copyright_check:
-            rationale += (
-                " [FLAGGED] Potential collectible: verify copyright"
-                " points before finalized pricing."
-            )
+            rationale += " [FLAGGED] Potential collectible: verify copyright points before finalized pricing."
             return "online_only_collectible", in_store_price, online_price, rationale
         if in_store_price <= MIN_FLOOR_PRICE_CAD:
             return (

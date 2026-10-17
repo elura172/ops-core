@@ -38,7 +38,10 @@ GUIDELINES:
 2. SEQUENCE:
    - For horizontal stacks: sequence strictly from TOP to BOTTOM (stack_order: 1 is topmost).
    - For vertical shelves: sequence strictly from LEFT to RIGHT (stack_order: 1 is leftmost).
+   - For a whole bookcase, read one shelf row at a time, left-to-right, then top-to-bottom.
    - If mixed or angled, sequence by the most dominant logical reading order.
+   - Two visible spines with the same title are TWO physical copies. Return both with separate boxes.
+   - A close-up may show just one book. Never invent additional spines to fill a shelf.
 
 3. BOUNDING BOX:
    - Provide normalized bounding box coordinates for each spine as box_2d:
@@ -66,36 +69,53 @@ GUIDELINES:
    - Always record raw_spine_text with verbatim transcribed spine text for downstream fuzzy search.
 
 8. AUTHOR INFERENCE:
-   - When the spine does not visibly print the author's name (e.g. only Title and Publisher colophon/imprint like "TAN", "Penguin", "Dover", "Everyman", "Oxford" are present), use your deep bibliographic knowledge to INFER the canonical author (e.g. "TOTAL CONSECRATION" published by "TAN" -> "St. Louis de Montfort").
-   - Populate `authors` with the inferred canonical author(s) whenever the title and publisher imprint clearly identify the canonical work, rather than leaving `authors` empty or defaulting to ["Unknown"].
+   - When the spine does not visibly print the author's name (e.g. only Title and Publisher
+     colophon/imprint like "TAN", "Penguin", "Dover", "Everyman", "Oxford" are present), use
+     bibliographic knowledge to INFER the canonical author (e.g. "TOTAL CONSECRATION" published
+     by "TAN" -> "St. Louis de Montfort").
+   - Populate `authors` with the inferred canonical author(s) whenever the title and publisher
+     imprint clearly identify the canonical work, rather than leaving `authors` empty or defaulting
+     to ["Unknown"].
 """
 
 MULTI_ANGLE_BOOK_SYSTEM_PROMPT = """\
 You are an expert antiquarian and commercial book cataloger.
-You are provided multiple photographs of the SAME SINGLE BOOK taken from multiple angles (e.g. spine, front cover, title page, copyright/colophon page, back cover).
-Analyze all provided images TOGETHER and synthesize a single authoritative bibliographic record for this volume in the `books` array (with exactly 1 book entry in the array).
+You are provided multiple photographs of the SAME SINGLE BOOK taken from multiple angles
+(e.g. spine, front cover, title page, copyright/colophon page, back cover).
+Analyze all provided images TOGETHER and synthesize a single authoritative bibliographic record
+for this volume in the `books` array (with exactly 1 book entry in the array).
 
 SYNTHESIS GUIDELINES:
 1. TITLE & SUBTITLE:
-   - Extract the complete canonical title and subtitle, reconciling what is visible on the spine, front cover, and title page.
+   - Extract the complete canonical title and subtitle, reconciling what is visible on the spine,
+     front cover, and title page.
 2. AUTHORS:
    - Identify all primary authors, editors, translators, or illustrators stated on the title page or cover.
 3. PUBLISHER & IMPRINT:
-   - Extract the exact publishing house and imprint (e.g. "Arkham House", "Gnome Press", "Doubleday", "Faber & Faber", "Penguin").
+   - Extract the exact publishing house and imprint (e.g. "Arkham House", "Gnome Press",
+     "Doubleday", "Faber & Faber", "Penguin").
 4. BINDING & FORMAT:
-   - Determine whether it is hardcover_with_jacket, hardcover_no_jacket, trade_paperback, or mass_market_paperback by inspecting all angles.
+   - Determine whether it is hardcover_with_jacket, hardcover_no_jacket, trade_paperback, or
+     mass_market_paperback by inspecting all angles.
 5. EDITION & PRINTING IDENTIFICATION:
-   - Inspect the title page and copyright page for edition points: "First Edition", "First Printing", publisher numberline (e.g. "1 2 3 4 5 6 7 8 9 10"), printing date, or original copyright year. Record these in `edition_or_series_markers`.
+   - Inspect the title page and copyright page for edition points: "First Edition", "First Printing",
+     publisher numberline (e.g. "1 2 3 4 5 6 7 8 9 10"), printing date, or original copyright year.
+     Record these in `edition_or_series_markers`.
 6. PHYSICAL CONDITION:
-   - Aggregate all visible condition flaws across every angle: sunned_faded_spine, creased_reading_spine, bumped_headcap_or_tail, torn_or_chipped_jacket, ex_library_stickers_or_tape, remainder_mark_visible, cocked_spine, or clean_as_new.
+   - Aggregate all visible condition flaws across every angle: sunned_faded_spine,
+     creased_reading_spine, bumped_headcap_or_tail, torn_or_chipped_jacket,
+     ex_library_stickers_or_tape, remainder_mark_visible, cocked_spine, or clean_as_new.
 7. TRANSCRIPTION:
    - Record key transcribed text from the spine and title page in `raw_spine_text`. Set confidence to "high".
 
 8. COPYRIGHT & NUMBERLINE TRANSCRIPTION:
-   - Verbatim transcribe all text on the copyright or colophon page, especially printing statements, date codes, and numberline sequences (e.g. "First Edition", "2 4 6 8 9 7 5 3", "First Published in 1954") into `raw_copyright_text`.
+   - Verbatim transcribe all text on the copyright or colophon page, especially printing statements,
+     date codes, and numberline sequences (e.g. "First Edition", "2 4 6 8 9 7 5 3",
+     "First Published in 1954") into `raw_copyright_text`.
 
 9. DUST JACKET FLAP & PRICE:
-   - If the dust jacket front flap is visible, transcribe the printed retail price (e.g. "$16.95") or note the absence of price into `raw_flap_text`.
+   - If the dust jacket front flap is visible, transcribe the printed retail price (e.g. "$16.95")
+     or note the absence of price into `raw_flap_text`.
 """
 
 BOOK_STACK_GEMINI_SCHEMA = {
@@ -178,6 +198,55 @@ BOOK_STACK_GEMINI_SCHEMA = {
     "required": ["books", "orientation", "unidentified_spines_count"],
 }
 
+# Shelf photos can contain dozens of spines.  Keep the response schema small:
+# verbose per-book fields (condition, raw transcription, publisher, edition)
+# multiply into thousands of unnecessary output tokens and can truncate the
+# structured response before Gemini closes the JSON object.
+BOOK_SHELF_SYSTEM_PROMPT = """\
+Catalog every visible book spine in the shelf photo. Read one shelf row at a time,
+left to right and top to bottom. Return one record per physical book, including
+repeated titles as separate books. Give each book a normalized [top,left,bottom,right]
+box from 0 to 1000. Transcribe only the title and author when legible; infer a
+well-known author only when the title clearly identifies the work. Use format
+unknown unless the binding is clear. Keep records concise; do not return raw text,
+condition notes, publisher names, or edition notes. In the JSON, `u` is only the
+number of visible spines that you could not include as a record; it is not the total
+number of books. Set it to 0 when every visible spine has a record.
+"""
+
+BOOK_SHELF_GEMINI_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "b": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "n": {"type": "integer"},
+                    "x": {"type": "array", "items": {"type": "integer"}},
+                    "t": {"type": "string"},
+                    "a": {"type": "array", "items": {"type": "string"}},
+                    "f": {
+                        "type": "string",
+                        "enum": [
+                            "hardcover_with_jacket",
+                            "hardcover_no_jacket",
+                            "trade_paperback",
+                            "mass_market_paperback",
+                            "spiral_or_other",
+                            "unknown",
+                        ],
+                    },
+                    "q": {"type": "string", "enum": ["high", "medium", "low"]},
+                },
+                "required": ["n", "x", "t", "a", "f", "q"],
+            },
+        },
+        "u": {"type": "integer"},
+    },
+    "required": ["b", "u"],
+}
+
 RETRYABLE_STATUS = frozenset({408, 409, 425, 429, 500, 502, 503, 504})
 
 
@@ -203,15 +272,14 @@ def resolve_gemini_api_key(explicit_key: str | None = None) -> str:
         except Exception as exc:
             logger.debug(f"Failed to read {hermes_env}: {exc}")
 
-    raise ValueError(
-        "No Gemini API key found. Set GEMINI_API_KEY in environment or provide directly."
-    )
+    raise ValueError("No Gemini API key found. Set GEMINI_API_KEY in environment or provide directly.")
 
 
 def prepare_vision_image(image_bytes: bytes, raw_mime: str | None = None) -> tuple[bytes, str]:
     """Sanitizes image bytes, auto-orients EXIF, downscales massive dimensions, and detects clean MIME type."""
-    from PIL import Image, ImageOps
     import io
+
+    from PIL import Image, ImageOps
 
     if not image_bytes:
         raise ValueError("image_bytes cannot be empty")
@@ -253,20 +321,20 @@ def prepare_vision_image(image_bytes: bytes, raw_mime: str | None = None) -> tup
             return buf.getvalue(), "image/jpeg"
     except Exception as exc:
         logger.debug(f"Pillow normalization skipped: {exc}")
-        safe_mime = detected_mime if detected_mime in ("image/jpeg", "image/png", "image/webp", "image/heic", "image/heif") else "image/jpeg"
+        safe_mime = (
+            detected_mime
+            if detected_mime in ("image/jpeg", "image/png", "image/webp", "image/heic", "image/heif")
+            else "image/jpeg"
+        )
         return image_bytes, safe_mime
 
 
 class BookVisionProvider(Protocol):
     """Protocol for book stack vision extraction providers."""
 
-    def extract_stack(
-        self, image_bytes: bytes, mime_type: str = "image/jpeg"
-    ) -> BookStackExtraction: ...
+    def extract_stack(self, image_bytes: bytes, mime_type: str = "image/jpeg") -> BookStackExtraction: ...
 
-    def extract_multi_angle(
-        self, images: list[tuple[bytes, str]]
-    ) -> BookStackExtraction: ...
+    def extract_multi_angle(self, images: list[tuple[bytes, str]]) -> BookStackExtraction: ...
 
 
 @dataclass
@@ -275,19 +343,19 @@ class GeminiBookVisionProvider(BookVisionProvider):
 
     api_key: str
     model: str = "gemini-flash-lite-latest"
-    fallback_models: list[str] = field(default_factory=lambda: [
-        "gemini-flash-lite-latest",
-        "gemini-3.1-flash-lite",
-        "gemini-3.5-flash-lite",
-    ])
+    fallback_models: list[str] = field(
+        default_factory=lambda: [
+            "gemini-flash-lite-latest",
+            "gemini-3.1-flash-lite",
+            "gemini-3.5-flash-lite",
+        ]
+    )
     base_url: str = "https://generativelanguage.googleapis.com/v1beta"
     timeout: float = 25.0
     retries: RetryPolicy = field(default_factory=lambda: RetryPolicy(max_attempts=2, base_delay=0.3, max_delay=1.5))
     usage: UsageLedger = field(default_factory=UsageLedger)
 
-    def extract_stack(
-        self, image_bytes: bytes, mime_type: str = "image/jpeg"
-    ) -> BookStackExtraction:
+    def extract_stack(self, image_bytes: bytes, mime_type: str = "image/jpeg") -> BookStackExtraction:
         if not image_bytes:
             raise ValueError("image_bytes cannot be empty")
 
@@ -338,7 +406,7 @@ class GeminiBookVisionProvider(BookVisionProvider):
                 res = self._parse_gemini_response(raw_response)
 
                 # Undercount safeguard: If only 1 book was extracted on an image that looks like a stack or shelf
-                if len(res.books) <= 1 and (res.orientation in ("horizontal_stack", "vertical_shelf") or res.unidentified_spines_count > 0):
+                if len(res.books) <= 1 and res.unidentified_spines_count > 0:
                     retry_body = {
                         "contents": [
                             {
@@ -351,7 +419,12 @@ class GeminiBookVisionProvider(BookVisionProvider):
                                     },
                                     {
                                         "text": BOOK_STACK_SYSTEM_PROMPT
-                                        + "\n\nCRITICAL MANDATE: Only 1 book was extracted on the previous attempt, but this image contains multiple books in a stack/shelf. You MUST scan every book spine across the entire image and return ALL books in the books array.",
+                                        + (
+                                            "\n\nCRITICAL MANDATE: Only 1 book was extracted on the previous attempt, "
+                                            "but this image contains multiple books in a stack/shelf. You MUST scan "
+                                            "every book spine across the entire image and return ALL books "
+                                            "in the books array."
+                                        ),
                                     },
                                 ]
                             }
@@ -384,9 +457,80 @@ class GeminiBookVisionProvider(BookVisionProvider):
             raise last_error
         raise TransientProviderError("All Gemini vision models failed")
 
-    def extract_multi_angle(
-        self, images: list[tuple[bytes, str]]
-    ) -> BookStackExtraction:
+    def extract_shelf_stack(self, image_bytes: bytes, mime_type: str = "image/jpeg") -> BookStackExtraction:
+        """Extract a dense shelf using a compact schema to stay within output limits."""
+        if not image_bytes:
+            raise ValueError("image_bytes cannot be empty")
+        clean_mime = (mime_type or "image/jpeg").split(";")[0].strip().lower()
+        if clean_mime in ("image/jpg", "image/pjpeg"):
+            clean_mime = "image/jpeg"
+        if clean_mime not in {"image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"}:
+            clean_mime = "image/jpeg"
+        body = {
+            "contents": [
+                {
+                    "parts": [
+                        {
+                            "inline_data": {
+                                "mime_type": clean_mime,
+                                "data": base64.b64encode(image_bytes).decode("ascii"),
+                            }
+                        },
+                        {"text": BOOK_SHELF_SYSTEM_PROMPT},
+                    ]
+                }
+            ],
+            "generationConfig": {
+                "response_mime_type": "application/json",
+                "response_schema": BOOK_SHELF_GEMINI_SCHEMA,
+                "temperature": 0.1,
+                "maxOutputTokens": 8192,
+            },
+        }
+        models = [self.model] if self.model not in self.fallback_models else []
+        models.extend(self.fallback_models)
+        last_error: Exception | None = None
+        for model in dict.fromkeys(models):
+            url = f"{self.base_url.rstrip('/')}/models/{model}:generateContent?key={self.api_key}"
+            try:
+                raw = self._post_with_retry(url, body)
+                candidate = (raw.get("candidates") or [{}])[0]
+                if candidate.get("finishReason") == "MAX_TOKENS":
+                    raise TerminalProviderError("Gemini shelf response reached its output limit")
+                parts = candidate.get("content", {}).get("parts", [])
+                parsed = json.loads(parts[0].get("text", ""))
+                normalized = {
+                    "books": [
+                        {
+                            "stack_order": book.get("n", i + 1),
+                            "box_2d": book.get("x", [0, 0, 0, 0]),
+                            "title": book.get("t", ""),
+                            "authors": book.get("a", []),
+                            "format": book.get("f", "unknown"),
+                            "confidence": book.get("q", "low"),
+                        }
+                        for i, book in enumerate(parsed.get("b", []))
+                    ],
+                    "orientation": "vertical_shelf",
+                    "unidentified_spines_count": parsed.get("u", 0),
+                }
+                return BookStackExtraction.from_dict(normalized)
+            except (
+                TransientProviderError,
+                TerminalProviderError,
+                HTTPError,
+                json.JSONDecodeError,
+                IndexError,
+                TypeError,
+                ValueError,
+            ) as exc:
+                last_error = exc
+                logger.warning("Gemini compact shelf extraction failed", model=model, error=str(exc))
+        if last_error:
+            raise last_error
+        raise TransientProviderError("All Gemini shelf models failed")
+
+    def extract_multi_angle(self, images: list[tuple[bytes, str]]) -> BookStackExtraction:
         """Synthesizes multiple photos of a single book (spine, cover, title/copyright page)."""
         if not images:
             raise ValueError("images list cannot be empty")
@@ -404,12 +548,14 @@ class GeminiBookVisionProvider(BookVisionProvider):
             if clean_mime not in valid_mimes:
                 clean_mime = "image/jpeg"
             b64_img = base64.b64encode(img_bytes).decode("ascii")
-            parts.append({
-                "inline_data": {
-                    "mime_type": clean_mime,
-                    "data": b64_img,
+            parts.append(
+                {
+                    "inline_data": {
+                        "mime_type": clean_mime,
+                        "data": b64_img,
+                    }
                 }
-            })
+            )
 
         if not parts:
             raise ValueError("No valid image data provided for multi-angle extraction")
@@ -477,9 +623,7 @@ class GeminiBookVisionProvider(BookVisionProvider):
                     raise TerminalProviderError(f"Gemini HTTP {exc.code}") from exc
 
                 sleep_sec = self.retries.backoff(attempt)
-                logger.info(
-                    f"Gemini request failed (attempt {attempt}), retrying in {sleep_sec:.2f}s"
-                )
+                logger.info(f"Gemini request failed (attempt {attempt}), retrying in {sleep_sec:.2f}s")
                 time.sleep(sleep_sec)
             except URLError as exc:
                 if attempt >= self.retries.max_attempts:

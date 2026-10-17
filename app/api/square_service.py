@@ -152,9 +152,70 @@ class SquareService:
             logger.info("square.catalog.delist.dry_run", sku=sku)
             return True
 
-        # In live mode, delisting is done via catalog delete or zero-inventory update
-        logger.info("square.catalog.delist.live", sku=sku)
-        return True
+        url = f"{SQUARE_API_BASE}/catalog/search"
+        search_payload = {
+            "query": {
+                "exact_query": {
+                    "attribute_name": "sku",
+                    "attribute_value": sku,
+                }
+            }
+        }
+        data = json.dumps(search_payload).encode("utf-8")
+        req = Request(
+            url,
+            data=data,
+            headers={
+                "Authorization": f"Bearer {access_token}",
+                "Content-Type": "application/json",
+                "Square-Version": "2024-01-18",
+            },
+            method="POST",
+        )
+
+        try:
+            with urlopen(req, timeout=15.0) as resp:
+                res_body = json.loads(resp.read().decode("utf-8"))
+                objects = res_body.get("objects") or []
+                if not objects:
+                    logger.info("square.catalog.delist.not_found", sku=sku)
+                    return True
+
+                object_ids = set()
+                for obj in objects:
+                    if obj.get("id"):
+                        object_ids.add(obj["id"])
+                    item_data = obj.get("item_variation_data")
+                    if item_data and item_data.get("item_id"):
+                        object_ids.add(item_data["item_id"])
+
+                del_url = f"{SQUARE_API_BASE}/catalog/batch-delete"
+                del_payload = {"object_ids": list(object_ids)}
+                del_req = Request(
+                    del_url,
+                    data=json.dumps(del_payload).encode("utf-8"),
+                    headers={
+                        "Authorization": f"Bearer {access_token}",
+                        "Content-Type": "application/json",
+                        "Square-Version": "2024-01-18",
+                    },
+                    method="POST",
+                )
+                with urlopen(del_req, timeout=15.0) as del_resp:
+                    del_data = json.loads(del_resp.read().decode("utf-8"))
+                    deleted = del_data.get("deleted_object_ids") or []
+                    logger.info("square.catalog.delist.success", sku=sku, deleted_ids=deleted)
+                    return True
+        except HTTPError as exc:
+            err_text = exc.read().decode("utf-8", errors="replace")
+            logger.error("square.catalog.delist.http_error", sku=sku, code=exc.code, error=err_text)
+            return False
+        except URLError as exc:
+            logger.error("square.catalog.delist.net_error", sku=sku, error=str(exc.reason))
+            return False
+        except Exception as exc:
+            logger.error("square.catalog.delist.failed", sku=sku, error=str(exc))
+            return False
 
     @classmethod
     def create_checkout_link(

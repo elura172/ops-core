@@ -4,6 +4,7 @@ from fastapi.testclient import TestClient
 from app.api.http import create_app
 from app.api.operator import OperatorService
 from app.api.tiktok_client import TikTokClient
+from app.db.users import SQLiteUserStore
 from app.domain.order_store import OrderStore
 from app.review.executor import ApprovedActionExecutor
 from app.review.queue import ReviewItem, ReviewQueue
@@ -16,15 +17,32 @@ def dashboard_client(settings):
     queue.submit(ReviewItem("draft", "create_product_draft", {"title": "<script>bad()</script>"}))
     queue.submit(ReviewItem("publish", "publish", {"resource_id": "book"}))
     operator = OperatorService(queue, ApprovedActionExecutor(TikTokClient("test", "test")))
-    return TestClient(create_app(operator, OrderStore(), settings))
+    user_store = SQLiteUserStore(":memory:")
+    client = TestClient(create_app(operator, OrderStore(), settings, user_store=user_store))
+    client.user_store = user_store
+    try:
+        yield client
+    finally:
+        user_store.close()
+
+
+def _active_test_tenant(user_store, name):
+    tenant_id = user_store.create_tenant(name)
+    customer_id = f"cus_test_{tenant_id}"
+    user_store.update_tenant_stripe_customer(tenant_id, customer_id)
+    user_store.update_subscription_status(customer_id, "active")
+    return tenant_id
 
 
 def test_dashboard_shell_and_packaged_assets(dashboard_client):
     response = dashboard_client.get("/dashboard")
     assert response.status_code == 200
-    assert "Good work." in response.text
+    assert "Your bookshop." in response.text
     assert "bad()" not in response.text
     assert "frame-ancestors 'none'" in response.headers["Content-Security-Policy"]
+    assert "https://fonts.googleapis.com" in response.headers["Content-Security-Policy"]
+    assert "https://fonts.gstatic.com" in response.headers["Content-Security-Policy"]
+    assert "img-src 'self' blob: data:" in response.headers["Content-Security-Policy"]
     for asset in ("dashboard.css", "dashboard.js"):
         assert dashboard_client.get(f"/dashboard/assets/{asset}").status_code == 200
     assert dashboard_client.get("/dashboard/assets/http.py").status_code == 404
@@ -56,18 +74,8 @@ def test_preview_decide_execute_result_flow(dashboard_client):
     reviewer = auth(REVIEWER_TOKEN)
     operator = auth(OPERATOR_TOKEN)
     assert dashboard_client.get("/reviews/draft", headers=reviewer).json()["status"] == "PENDING"
-    assert (
-        dashboard_client.post(
-            "/reviews/draft/decision", json={"approve": True}, headers=operator
-        ).status_code
-        == 403
-    )
-    assert (
-        dashboard_client.post(
-            "/reviews/draft/decision", json={"approve": True}, headers=reviewer
-        ).status_code
-        == 200
-    )
+    assert dashboard_client.post("/reviews/draft/decision", json={"approve": True}, headers=operator).status_code == 403
+    assert dashboard_client.post("/reviews/draft/decision", json={"approve": True}, headers=reviewer).status_code == 200
     assert dashboard_client.post("/reviews/draft/execute", headers=reviewer).status_code == 403
     assert dashboard_client.post("/reviews/draft/execute", headers=operator).status_code == 200
     item = dashboard_client.get("/reviews/draft", headers=reviewer).json()
@@ -79,6 +87,7 @@ def test_preview_decide_execute_result_flow(dashboard_client):
 
 def test_camera_upload_endpoint(dashboard_client):
     from unittest.mock import patch
+
     from app.domain.books import BookFormat, BookStackExtraction, SpineExtractionItem
 
     reviewer = auth(REVIEWER_TOKEN)
@@ -127,8 +136,6 @@ def test_sample_stack_endpoint(dashboard_client):
 
 def test_delete_and_clear_reviews_endpoints(dashboard_client):
     reviewer = auth(REVIEWER_TOKEN)
-    operator = auth(OPERATOR_TOKEN)
-
     # Propose an item to test deletion
     resp = dashboard_client.post(
         "/reviews",
@@ -206,13 +213,18 @@ def test_inventory_soft_delist_and_hard_delete_endpoints(dashboard_client):
 
 
 def test_multitenant_deletion_isolation(dashboard_client, tmp_path):
-    from app.auth import create_access_token
-    from app.db.inventory import InventoryItem
-    from decimal import Decimal
     from datetime import UTC, datetime
+    from decimal import Decimal
 
-    t1_headers = {"Authorization": f"Bearer {create_access_token({'sub': 'user1@example.com', 'tenant_id': 101, 'role': 'admin'})}"}
-    t2_headers = {"Authorization": f"Bearer {create_access_token({'sub': 'user2@example.com', 'tenant_id': 102, 'role': 'admin'})}"}
+    from app.auth import create_access_token
+    from app.db.inventory import InventoryItem, SQLiteInventoryStore
+
+    tenant_one_id = _active_test_tenant(dashboard_client.user_store, "Isolation tenant one")
+    tenant_two_id = _active_test_tenant(dashboard_client.user_store, "Isolation tenant two")
+    t1_token = create_access_token({"sub": "user1@example.com", "tenant_id": tenant_one_id, "role": "admin"})
+    t2_token = create_access_token({"sub": "user2@example.com", "tenant_id": tenant_two_id, "role": "admin"})
+    t1_headers = {"Authorization": f"Bearer {t1_token}"}
+    t2_headers = {"Authorization": f"Bearer {t2_token}"}
 
     # 1. Multi-tenant review proposal isolation
     r1 = dashboard_client.post(
@@ -228,35 +240,53 @@ def test_multitenant_deletion_isolation(dashboard_client, tmp_path):
 
     # 2. Multi-tenant inventory deletion isolation
     now = datetime.now(UTC)
-    from app.db.inventory import SQLiteInventoryStore, InventoryItem
     sqlite_inv = SQLiteInventoryStore(tmp_path / "inv.db")
     sqlite_inv.add(
-        InventoryItem("SKU-101", "Book 101", ["Author"], "hardcover", "Fine", Decimal("20"), Decimal("25"), "active", now, now),
-        tenant_id=101,
+        InventoryItem(
+            "SKU-101",
+            "Book 101",
+            ["Author"],
+            "hardcover",
+            "Fine",
+            Decimal("20"),
+            Decimal("25"),
+            "active",
+            now,
+            now,
+        ),
+        tenant_id=tenant_one_id,
     )
-    # Tenant 102 cannot delete Tenant 101's item
-    assert sqlite_inv.delete("SKU-101", tenant_id=102) is False
-    # Item is still present for Tenant 101
-    assert any(i.sku == "SKU-101" for i in sqlite_inv.list_all(tenant_id=101))
-    # Tenant 101 can delete its own item
-    assert sqlite_inv.delete("SKU-101", tenant_id=101) is True
+    # Tenant two cannot delete tenant one's item.
+    assert sqlite_inv.delete("SKU-101", tenant_id=tenant_two_id) is False
+    # Item is still present for tenant one.
+    assert any(i.sku == "SKU-101" for i in sqlite_inv.list_all(tenant_id=tenant_one_id))
+    # Tenant one can delete its own item.
+    assert sqlite_inv.delete("SKU-101", tenant_id=tenant_one_id) is True
     # Item is now gone
-    assert not any(i.sku == "SKU-101" for i in sqlite_inv.list_all(tenant_id=101))
+    assert not any(i.sku == "SKU-101" for i in sqlite_inv.list_all(tenant_id=tenant_one_id))
     # Subsequent delete is False
-    assert sqlite_inv.delete("SKU-101", tenant_id=101) is False
+    assert sqlite_inv.delete("SKU-101", tenant_id=tenant_one_id) is False
 
 
 def test_batch_delete_proposals_endpoint(dashboard_client):
     from app.auth import create_access_token
-    admin_headers = {"Authorization": f"Bearer {create_access_token({'sub': 'admin@example.com', 'tenant_id': 1, 'role': 'admin'})}"}
-    operator_headers = {"Authorization": f"Bearer {create_access_token({'sub': 'op@example.com', 'tenant_id': 1, 'role': 'operator'})}"}
+
+    admin_headers = {
+        "Authorization": f"Bearer {create_access_token({'sub': 'admin@example.com', 'tenant_id': 1, 'role': 'admin'})}"
+    }
+    operator_headers = {
+        "Authorization": f"Bearer {create_access_token({'sub': 'op@example.com', 'tenant_id': 1, 'role': 'operator'})}"
+    }
 
     # Create 3 proposals
     ids = []
     for i in range(3):
         res = dashboard_client.post(
             "/reviews",
-            json={"operation": "update_inventory", "payload": {"sku": f"BATCH-{i}", "stock": i + 1}},
+            json={
+                "operation": "update_inventory",
+                "payload": {"sku": f"BATCH-{i}", "stock": i + 1},
+            },
             headers=admin_headers,
         )
         assert res.status_code == 200
@@ -266,7 +296,10 @@ def test_batch_delete_proposals_endpoint(dashboard_client):
     assert dashboard_client.post("/reviews/batch-delete", json={"review_ids": ids}).status_code == 401
 
     # 2. Operator lacking review:decide -> 403
-    assert dashboard_client.post("/reviews/batch-delete", json={"review_ids": ids}, headers=operator_headers).status_code == 403
+    assert (
+        dashboard_client.post("/reviews/batch-delete", json={"review_ids": ids}, headers=operator_headers).status_code
+        == 403
+    )
 
     # 3. Batch delete 2 items via POST /reviews/batch-delete
     del_res = dashboard_client.post(
@@ -308,8 +341,12 @@ def test_batch_delete_proposals_endpoint(dashboard_client):
 def test_batch_delete_multitenant_isolation(dashboard_client):
     from app.auth import create_access_token
 
-    t1_headers = {"Authorization": f"Bearer {create_access_token({'sub': 'user1@example.com', 'tenant_id': 201, 'role': 'admin'})}"}
-    t2_headers = {"Authorization": f"Bearer {create_access_token({'sub': 'user2@example.com', 'tenant_id': 202, 'role': 'admin'})}"}
+    tenant_one_id = _active_test_tenant(dashboard_client.user_store, "Batch tenant one")
+    tenant_two_id = _active_test_tenant(dashboard_client.user_store, "Batch tenant two")
+    t1_token = create_access_token({"sub": "user1@example.com", "tenant_id": tenant_one_id, "role": "admin"})
+    t2_token = create_access_token({"sub": "user2@example.com", "tenant_id": tenant_two_id, "role": "admin"})
+    t1_headers = {"Authorization": f"Bearer {t1_token}"}
+    t2_headers = {"Authorization": f"Bearer {t2_token}"}
 
     # Tenant 1 creates 2 proposals
     t1_ids = []
@@ -362,7 +399,9 @@ def test_batch_delete_multitenant_isolation(dashboard_client):
 def test_intake_execution_populates_bookshelf_for_physical_only(dashboard_client):
     from app.auth import create_access_token
 
-    admin_headers = {"Authorization": f"Bearer {create_access_token({'sub': 'admin@example.com', 'tenant_id': 1, 'role': 'admin'})}"}
+    admin_headers = {
+        "Authorization": f"Bearer {create_access_token({'sub': 'admin@example.com', 'tenant_id': 1, 'role': 'admin'})}"
+    }
 
     # Propose an intake book with physical-only bargain bin strategy
     prop = dashboard_client.post(
@@ -372,8 +411,17 @@ def test_intake_execution_populates_bookshelf_for_physical_only(dashboard_client
             "payload": {
                 "section": "Bargain Corner",
                 "shelf": "Cart-1",
-                "extraction": {"title": "The Road Past Altamont", "authors": ["Gabrielle Roy"], "format": "paperback"},
-                "disambiguation": {"best_candidate": {"title": "The Road Past Altamont", "authors": ["Gabrielle Roy"]}},
+                "extraction": {
+                    "title": "The Road Past Altamont",
+                    "authors": ["Gabrielle Roy"],
+                    "format": "paperback",
+                },
+                "disambiguation": {
+                    "best_candidate": {
+                        "title": "The Road Past Altamont",
+                        "authors": ["Gabrielle Roy"],
+                    }
+                },
                 "valuation": {
                     "condition_grade": "Fair",
                     "channel_strategy": "bargain_bin_cart",
@@ -415,7 +463,9 @@ def test_intake_execution_populates_bookshelf_for_physical_only(dashboard_client
 def test_batch_intake_execution_populates_bookshelf(dashboard_client):
     from app.auth import create_access_token
 
-    headers = {"Authorization": f"Bearer {create_access_token({'sub': 'batch_user@example.com', 'tenant_id': 99, 'role': 'admin'})}"}
+    tenant_id = _active_test_tenant(dashboard_client.user_store, "Batch intake tenant")
+    token = create_access_token({"sub": "batch_user@example.com", "tenant_id": tenant_id, "role": "admin"})
+    headers = {"Authorization": f"Bearer {token}"}
 
     review_ids = []
     for idx in range(5):
@@ -425,9 +475,13 @@ def test_batch_intake_execution_populates_bookshelf(dashboard_client):
                 "operation": "intake_book",
                 "payload": {
                     "section": "Science Fiction",
-                    "shelf": f"SF-0{idx+1}",
-                    "extraction": {"title": f"Future Chronicles Vol {idx+1}", "authors": ["Arthur C. Clarke"], "format": "hardcover"},
-                    "disambiguation": {"best_candidate": {"title": f"Future Chronicles Vol {idx+1}"}},
+                    "shelf": f"SF-0{idx + 1}",
+                    "extraction": {
+                        "title": f"Future Chronicles Vol {idx + 1}",
+                        "authors": ["Arthur C. Clarke"],
+                        "format": "hardcover",
+                    },
+                    "disambiguation": {"best_candidate": {"title": f"Future Chronicles Vol {idx + 1}"}},
                     "valuation": {
                         "condition_grade": "Very Good",
                         "channel_strategy": "multi_channel_antiquarian",
@@ -442,15 +496,16 @@ def test_batch_intake_execution_populates_bookshelf(dashboard_client):
 
     # Approve and execute all
     for rid in review_ids:
-        dashboard_client.post(f"/reviews/{rid}/decision", json={"approve": True, "reason": "Batch approve"}, headers=headers)
+        dashboard_client.post(
+            f"/reviews/{rid}/decision",
+            json={"approve": True, "reason": "Batch approve"},
+            headers=headers,
+        )
         dashboard_client.post(f"/reviews/{rid}/execute", headers=headers)
 
-    # Verify all 5 books appear in /inventory for tenant 99
+    # Verify all 5 books appear in /inventory for the test tenant
     inv = dashboard_client.get("/inventory", headers=headers).json()
     assert len(inv) == 5
     titles = {b["title"] for b in inv}
     for idx in range(5):
-        assert f"Future Chronicles Vol {idx+1}" in titles
-
-
-
+        assert f"Future Chronicles Vol {idx + 1}" in titles

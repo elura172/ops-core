@@ -183,10 +183,7 @@ def _report(listings: list[AmazonListing], costs: dict[str, LandedCost]) -> int:
         print(f"\n  {BOLD}What is doing the killing{RESET}")
         for reason, count in rejection_summary(rejected).items():
             print(f"    {count:>3} x {reason}")
-        print(
-            f"  {DIM}If one reason dominates, the policy may be miscalibrated"
-            f" rather than the market empty.{RESET}"
-        )
+        print(f"  {DIM}If one reason dominates, the policy may be miscalibrated rather than the market empty.{RESET}")
 
     print(
         f"\n  {YELLOW}Fee schedule is unverified{RESET} — placeholder referral and FBA rates."
@@ -199,15 +196,12 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--json", type=Path, help="candidate JSON file (object or list)")
     parser.add_argument("--example", action="store_true", help="run a worked example")
-    parser.add_argument(
-        "--template", action="store_true", help="print a blank JSON candidate to fill in"
-    )
+    parser.add_argument("--template", action="store_true", help="print a blank JSON candidate to fill in")
     args = parser.parse_args()
 
     if args.template:
         blank = {
-            k: ("" if k not in ("ranks", "brand_registered") else ([] if k == "ranks" else False))
-            for k in EXAMPLE
+            k: ("" if k not in ("ranks", "brand_registered") else ([] if k == "ranks" else False)) for k in EXAMPLE
         }
         blank["freight_per_unit"] = "1.40"
         blank["duty_rate"] = "0.03"

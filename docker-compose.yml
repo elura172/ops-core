@@ -7,12 +7,13 @@ services:
       # app refuses to boot otherwise. See README "Going live".
       LIVE_ENABLED: "false"
       PUBLISH_ENABLED: "false"
-      # Postgres is the multi-worker backend; both schemas share one database
-      # and one migration spine, and migrations run before either store opens.
-      # Point at SQLite (a path, e.g. /srv/data/reviews.db) only for
-      # single-process deployments.
+      # Every application store shares the durable Postgres database. Migrations
+      # run before each Postgres-backed store opens.
       ORDER_DB: ${POSTGRES_DSN:?set POSTGRES_DSN}
       REVIEW_DB: ${POSTGRES_DSN:?set POSTGRES_DSN}
+      USER_DB: ${POSTGRES_DSN:?set POSTGRES_DSN}
+      INVENTORY_DB: ${POSTGRES_DSN:?set POSTGRES_DSN}
+      WANT_LIST_DB: ${POSTGRES_DSN:?set POSTGRES_DSN}
       TTS_WEBHOOK_SECRET: ${TTS_WEBHOOK_SECRET:-staging-only}
       # Without this the review endpoints answer 503 rather than running open.
       OPS_TOKENS: ${OPS_TOKENS:-}

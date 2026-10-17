@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from app.api.abebooks_service import AbeBooksService
@@ -75,7 +75,7 @@ class ReconciliationService:
         force_tenant_id: int | None = None,
     ) -> dict[str, Any]:
         """Runs a complete reconciliation pulse across all active tenants."""
-        started_at = datetime.now(timezone.utc).isoformat()
+        started_at = datetime.now(UTC).isoformat()
         logger.info(
             "reconciliation.cycle.started",
             demo_sample=demo_sample,
@@ -175,15 +175,18 @@ class ReconciliationService:
                     for k in ("approved", "ignored", "failed"):
                         corvus_summary[k] += res["corvus_triage"].get(k, 0)
 
-            tenant_summaries.append({
-                "tenant_id": tenant_id,
-                "orders_processed": tenant_orders_processed,
-                "collisions_detected": tenant_collisions,
-            })
+            tenant_summaries.append(
+                {
+                    "tenant_id": tenant_id,
+                    "orders_processed": tenant_orders_processed,
+                    "collisions_detected": tenant_collisions,
+                }
+            )
 
         # 3. Wake Corvus to triage any remaining pending reviews
         try:
             from app.agents.corvus import CorvusWarden
+
             warden = CorvusWarden(operator=self.operator, user_store=self.user_store)
             final_triage = warden.wake_and_triage()
             for k in ("approved", "ignored", "failed"):
@@ -195,7 +198,7 @@ class ReconciliationService:
         result = {
             "status": "success",
             "started_at": started_at,
-            "completed_at": datetime.now(timezone.utc).isoformat(),
+            "completed_at": datetime.now(UTC).isoformat(),
             "tenants_checked": tenants_checked,
             "orders_polled": total_orders_polled,
             "orders_processed": total_orders_processed,

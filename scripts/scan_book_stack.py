@@ -24,7 +24,8 @@ from app.ai.book_vision import (  # noqa: E402
     GeminiBookVisionProvider,
     resolve_gemini_api_key,
 )
-from app.db.factory import open_review_store  # noqa: E402
+from app.db.factory import open_inventory_store, open_review_store  # noqa: E402
+from app.db.inventory import InventoryItem  # noqa: E402
 from app.discovery.books import OpenLibraryMetadataResolver  # noqa: E402
 from app.discovery.pricing import BookValuationEngine  # noqa: E402
 from app.domain.books import (  # noqa: E402
@@ -105,9 +106,7 @@ MOCK_DEMO_EXTRACTION = {
 }
 
 
-def crop_spines(
-    image_path: Path, books: list[SpineExtractionItem], output_dir: Path
-) -> None:
+def crop_spines(image_path: Path, books: list[SpineExtractionItem], output_dir: Path) -> None:
     """Crop each spine from the image using box_2d coordinates [ymin, xmin, ymax, xmax]."""
     try:
         from PIL import Image
@@ -171,29 +170,20 @@ def print_spine_table(extraction: BookStackExtraction) -> None:
         f"Unidentified: {unid_color}{unid_count}{RESET}\n"
     )
 
-    fmt_header = (
-        f"{BOLD}{'#':<3} {'TITLE':<32} {'AUTHOR':<22} "
-        f"{'FORMAT':<22} {'COND CUES':<25} {'CONF':<6}{RESET}"
-    )
+    fmt_header = f"{BOLD}{'#':<3} {'TITLE':<32} {'AUTHOR':<22} {'FORMAT':<22} {'COND CUES':<25} {'CONF':<6}{RESET}"
     print(fmt_header)
     print("-" * 115)
 
     for b in extraction.books:
         author_str = ", ".join(b.authors) if b.authors else "Unknown"
-        cues_str = (
-            ", ".join(b.visible_condition_cues) if b.visible_condition_cues else "none"
-        )
+        cues_str = ", ".join(b.visible_condition_cues) if b.visible_condition_cues else "none"
 
         title_disp = (b.title[:29] + "...") if len(b.title) > 32 else b.title
         author_disp = (author_str[:19] + "...") if len(author_str) > 22 else author_str
         format_disp = b.format.value
         cues_disp = (cues_str[:22] + "...") if len(cues_str) > 25 else cues_str
 
-        conf_color = (
-            GREEN
-            if b.confidence == "high"
-            else (YELLOW if b.confidence == "medium" else RED)
-        )
+        conf_color = GREEN if b.confidence == "high" else (YELLOW if b.confidence == "medium" else RED)
 
         print(
             f"{b.stack_order:<3} "
@@ -278,20 +268,18 @@ def print_valuation_table(results: list[tuple[DisambiguationResult, BookValuatio
         cand = res.best_candidate
         title_to_use = cand.title if cand else b.title
         title_disp = (title_to_use[:27] + "...") if len(title_to_use) > 30 else title_to_use
-        
+
         in_store = f"${val.in_store_price_cad:.2f}" if val.in_store_price_cad > 0 else "-"
         online = f"${val.online_price_cad:.2f}" if val.online_price_cad > 0 else "-"
-        
+
         strat_color = (
-            GREEN if val.channel_strategy == "in_store_and_online" 
+            GREEN
+            if val.channel_strategy == "in_store_and_online"
             else (YELLOW if "collectible" in val.channel_strategy else DIM)
         )
         strat_disp = val.channel_strategy.replace("_", " ").title()
 
-        conf_color = (
-            GREEN if val.price_confidence == "high" 
-            else (YELLOW if val.price_confidence == "medium" else RED)
-        )
+        conf_color = GREEN if val.price_confidence == "high" else (YELLOW if val.price_confidence == "medium" else RED)
 
         print(
             f"{b.stack_order:<3} "
@@ -325,18 +313,10 @@ def main() -> None:
         description="Extract and disambiguate book stacks for Ottawa used bookstore intake."
     )
     parser.add_argument("image", nargs="?", help="Path to book stack image file")
-    parser.add_argument(
-        "--demo", action="store_true", help="Run with built-in mock sample data"
-    )
-    parser.add_argument(
-        "--crops", type=Path, help="Directory to save cropped spine slices"
-    )
-    parser.add_argument(
-        "--json", action="store_true", help="Output raw structured JSON"
-    )
-    parser.add_argument(
-        "--no-resolve", action="store_true", help="Skip catalog disambiguation lookup"
-    )
+    parser.add_argument("--demo", action="store_true", help="Run with built-in mock sample data")
+    parser.add_argument("--crops", type=Path, help="Directory to save cropped spine slices")
+    parser.add_argument("--json", action="store_true", help="Output raw structured JSON")
+    parser.add_argument("--no-resolve", action="store_true", help="Skip catalog disambiguation lookup")
     parser.add_argument(
         "--model",
         default="gemini-2.5-flash",
@@ -346,20 +326,25 @@ def main() -> None:
         "--api-key",
         help="Gemini API key (defaults to GEMINI_API_KEY env or ~/.hermes/.env)",
     )
+    parser.add_argument("--submit", action="store_true", help="Submit extracted valuations to the Review Desk queue")
+    parser.add_argument("--db", default="review.db", help="Path to SQLite review database (default: review.db)")
+    parser.add_argument("--batch-name", default="Autumn Accessions", help="Name of curated drop batch")
     parser.add_argument(
-        "--submit", action="store_true", help="Submit extracted valuations to the Review Desk queue"
+        "--publish-shop",
+        action="store_true",
+        help="Publish evaluated books directly to the storefront inventory",
     )
     parser.add_argument(
-        "--db", default="review.db", help="Path to SQLite review database (default: review.db)"
+        "--inventory-db",
+        default="inventory.db",
+        help="Path to SQLite inventory database (default: inventory.db)",
     )
 
     args = parser.parse_args()
 
     if args.demo or not args.image:
         if not args.demo and not args.image:
-            print(
-                f"{YELLOW}No image supplied. Running in --demo mode to showcase output.{RESET}\n"
-            )
+            print(f"{YELLOW}No image supplied. Running in --demo mode to showcase output.{RESET}\n")
         extraction = BookStackExtraction.from_dict(MOCK_DEMO_EXTRACTION)
     else:
         img_path = Path(args.image)
@@ -400,10 +385,7 @@ def main() -> None:
     # Valuation resolution
     valuations: list[tuple[DisambiguationResult, BookValuation]] = []
     if not args.no_resolve and disambiguation_results:
-        print(
-            f"\n{CYAN}Pricing {len(disambiguation_results)} items against "
-            f"live market comps...{RESET}"
-        )
+        print(f"\n{CYAN}Pricing {len(disambiguation_results)} items against live market comps...{RESET}")
         engine = BookValuationEngine()
         for res in disambiguation_results:
             val = engine.value_book(res)
@@ -428,7 +410,7 @@ def main() -> None:
         for res, val in valuations:
             review_id = str(uuid.uuid4())
             extraction_dict = res.spine_item.to_dict()
-            
+
             if img_path and not args.demo:
                 b64_img = get_spine_crop_base64(img_path, res.spine_item)
                 if b64_img:
@@ -440,17 +422,80 @@ def main() -> None:
                     "matched": res.matched,
                     "best_candidate": res.best_candidate.to_dict() if res.best_candidate else None,
                     "triage_reason": res.triage_reason,
-                    "suggested_action": res.suggested_catalog_action
+                    "suggested_action": res.suggested_catalog_action,
                 },
-                "valuation": val.to_dict()
+                "valuation": val.to_dict(),
             }
-            item = ReviewItem(
-                review_id=review_id,
-                operation="intake_book",
-                payload=payload
-            )
+            item = ReviewItem(review_id=review_id, operation="intake_book", payload=payload)
             store.submit(item)
         print(f"\n{GREEN}✓ Submitted {len(valuations)} items to Review Desk ({args.db}).{RESET}")
+
+    if args.publish_shop and valuations:
+        from datetime import UTC, datetime
+        from decimal import Decimal
+
+        inv_store = open_inventory_store(args.inventory_db)
+        media_spines_dir = Path("media/spines")
+        media_spines_dir.mkdir(parents=True, exist_ok=True)
+
+        batch_slug = "batch-" + "-".join(args.batch_name.lower().split()[:3])
+        count = 0
+
+        for res, val in valuations:
+            count += 1
+            sku = f"SB-SCAN-{uuid.uuid4().hex[:6].upper()}"
+            spine_url = ""
+
+            if not args.demo and "img_path" in locals() and img_path.is_file():
+                try:
+                    from PIL import Image
+
+                    with Image.open(img_path) as im:
+                        w, h = im.size
+                        ymin, xmin, ymax, xmax = res.spine_item.box_2d
+                        box = (
+                            int(xmin * w / 1000),
+                            int(ymin * h / 1000),
+                            int(xmax * w / 1000),
+                            int(ymax * h / 1000),
+                        )
+                        crop = im.crop(box)
+                        crop_file = media_spines_dir / f"{sku}.jpg"
+                        crop.save(crop_file, "JPEG", quality=85)
+                        spine_url = f"/media/spines/{sku}.jpg"
+                except Exception:
+                    pass
+
+            item = InventoryItem(
+                sku=sku,
+                title=res.spine_item.title,
+                authors=res.spine_item.authors or ["Unknown"],
+                format=res.spine_item.format or "Trade Paperback",
+                condition=res.spine_item.visible_condition_cues[0].replace("_", " ").title()
+                if res.spine_item.visible_condition_cues
+                else "Very Good",
+                in_store_price_cad=Decimal(str(getattr(val, "in_store_price_cad", None) or 15.00)),
+                online_price_cad=Decimal(str(getattr(val, "online_price_cad", None) or 18.00)),
+                status="active",
+                created_at=datetime.now(UTC),
+                updated_at=datetime.now(UTC),
+                section="Philosophy",
+                shelf="Annex Shelf Scan",
+                batch_id=batch_slug,
+                batch_name=args.batch_name,
+                condition_notes=", ".join(res.spine_item.visible_condition_cues)
+                or "Clean sound copy from Annex shelf scan.",
+                collation=f"{res.spine_item.format}, {res.spine_item.publisher_imprint or 'Contemporary printing'}",
+                publisher=res.spine_item.publisher_imprint or "Annex Imprint",
+                year=getattr(res.best_candidate, "year", 1980) if res.best_candidate else 1980,
+                spine_image_url=spine_url,
+            )
+            inv_store.add(item, tenant_id=1)
+
+        print(
+            f"\n{GREEN}✓ Published {count} items directly to Seekers Books storefront "
+            f"under '{args.batch_name}' ({args.inventory_db}).{RESET}"
+        )
 
 
 if __name__ == "__main__":

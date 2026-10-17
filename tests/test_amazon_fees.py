@@ -122,9 +122,7 @@ def test_a_price_below_break_even_loses_money_at_the_target():
 
 def test_low_referral_categories_price_lower():
     kw = dict(landed=landed(), tier=SizeTier.SMALL_STANDARD, fees=VERIFIED)
-    assert break_even_price(category="electronics", **kw) < break_even_price(
-        category="home_kitchen", **kw
-    )
+    assert break_even_price(category="electronics", **kw) < break_even_price(category="home_kitchen", **kw)
 
 
 def test_bigger_size_tiers_need_higher_prices():

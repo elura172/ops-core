@@ -50,7 +50,14 @@ class ReviewStore(Protocol):
     def get(self, review_id: str, tenant_id: int = 1) -> ReviewItem | None: ...
     def list_items(self, pending_only: bool = False, tenant_id: int = 1) -> list[ReviewItem]: ...
     def decide(
-        self, review_id: str, *, approve: bool, reviewer: str, reason: str = "", payload_update: dict[str, Any] | None = None, tenant_id: int = 1
+        self,
+        review_id: str,
+        *,
+        approve: bool,
+        reviewer: str,
+        reason: str = "",
+        payload_update: dict[str, Any] | None = None,
+        tenant_id: int = 1,
     ) -> ReviewItem: ...
     def claim_for_execution(self, review_id: str, actor: str, tenant_id: int = 1) -> ReviewItem: ...
     def complete_execution(self, review_id: str, result: dict[str, Any], tenant_id: int = 1) -> ReviewItem: ...
@@ -79,6 +86,7 @@ def _merge_payload(base: dict[str, Any], update: dict[str, Any]) -> None:
             _merge_payload(base[key], value)
         else:
             base[key] = value
+
 
 class ReviewQueue:
     """In-process store for development and tests.
@@ -120,7 +128,14 @@ class ReviewQueue:
         return item
 
     def decide(
-        self, review_id: str, *, approve: bool, reviewer: str, reason: str = "", payload_update: dict[str, Any] | None = None, tenant_id: int = 1
+        self,
+        review_id: str,
+        *,
+        approve: bool,
+        reviewer: str,
+        reason: str = "",
+        payload_update: dict[str, Any] | None = None,
+        tenant_id: int = 1,
     ) -> ReviewItem:
         if not reviewer.strip():
             raise ValueError("reviewer is required")

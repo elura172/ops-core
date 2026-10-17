@@ -28,9 +28,7 @@ def candidate(**overrides):
 
 
 def test_draft_builder_creates_reviewable_draft():
-    draft = ProductDraftBuilder().build(
-        candidate(), CategorySchema("cat-1", frozenset({"material"}))
-    )
+    draft = ProductDraftBuilder().build(candidate(), CategorySchema("cat-1", frozenset({"material"})))
     assert draft["status"] == "DRAFT"
     assert draft["skus"][0]["price"]["currency"] == "GBP"
 

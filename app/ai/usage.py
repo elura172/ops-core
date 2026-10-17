@@ -49,13 +49,9 @@ class UsageLedger:
         """Claim one call up front, so a crash mid-request still costs budget."""
         with self._lock:
             if self.calls >= self.limit.max_calls:
-                raise UsageLimitExceeded(
-                    f"call budget exhausted: {self.calls}/{self.limit.max_calls}"
-                )
+                raise UsageLimitExceeded(f"call budget exhausted: {self.calls}/{self.limit.max_calls}")
             if self.total_tokens >= self.limit.max_total_tokens:
-                raise UsageLimitExceeded(
-                    f"token budget exhausted: {self.total_tokens}/{self.limit.max_total_tokens}"
-                )
+                raise UsageLimitExceeded(f"token budget exhausted: {self.total_tokens}/{self.limit.max_total_tokens}")
             self.calls += 1
 
     def record(self, usage: dict[str, Any] | None) -> None:

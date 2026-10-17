@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -426,7 +425,11 @@ def test_api_multi_image_collector_want_interception(dashboard_client):
 
     w_resp = dashboard_client.post(
         f"/collectors/{c_id}/wants",
-        json={"title": "The Haunting of Hill House", "author": "Shirley Jackson", "max_price_cad": 250.0},
+        json={
+            "title": "The Haunting of Hill House",
+            "author": "Shirley Jackson",
+            "max_price_cad": 250.0,
+        },
         headers=reviewer,
     )
     assert w_resp.status_code == 200
@@ -592,5 +595,3 @@ def test_api_intake_direct_endpoint(dashboard_client):
     assert data["status"] in ("EXECUTED", "approved")
     assert data["executed"] is True
     assert data["sku"].startswith("BK-")
-
-

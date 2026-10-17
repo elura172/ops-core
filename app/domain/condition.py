@@ -376,17 +376,20 @@ class AntiquarianConditionInspector:
         # A. Book / Binding Grade
         book_relevant_defects = binding_defects + text_defects
         if is_ex_library:
-            book_grade = AbaaConditionGrade.FAIR if any(d.severity == DefectSeverity.SEVERE for d in binding_defects) else AbaaConditionGrade.GOOD
+            book_grade = (
+                AbaaConditionGrade.FAIR
+                if any(d.severity == DefectSeverity.SEVERE for d in binding_defects)
+                else AbaaConditionGrade.GOOD
+            )
         elif any(d.code == "cracked_hinge" for d in binding_defects):
             book_grade = AbaaConditionGrade.GOOD
         elif any(d.code == "cocked_spine" for d in binding_defects):
             book_grade = AbaaConditionGrade.VERY_GOOD
         elif book_relevant_defects:
-            has_moderate = any(d.severity in (DefectSeverity.MODERATE, DefectSeverity.SEVERE) for d in book_relevant_defects)
-            if has_moderate:
-                book_grade = AbaaConditionGrade.VERY_GOOD
-            else:
-                book_grade = AbaaConditionGrade.NEAR_FINE
+            has_moderate = any(
+                d.severity in (DefectSeverity.MODERATE, DefectSeverity.SEVERE) for d in book_relevant_defects
+            )
+            book_grade = AbaaConditionGrade.VERY_GOOD if has_moderate else AbaaConditionGrade.NEAR_FINE
         else:
             book_grade = AbaaConditionGrade.FINE if "clean_as_new" in cues_set else AbaaConditionGrade.NEAR_FINE
 
@@ -494,7 +497,11 @@ class AntiquarianConditionInspector:
         trade_catalog_blurb = " ".join(blurb_parts)
 
         # Diagnostic Summary
-        short_code = f"{book_grade.short_abbreviation} / {jacket_grade.short_abbreviation}" if (has_jacket and jacket_grade) else f"{book_grade.short_abbreviation}"
+        short_code = (
+            f"{book_grade.short_abbreviation} / {jacket_grade.short_abbreviation}"
+            if (has_jacket and jacket_grade)
+            else f"{book_grade.short_abbreviation}"
+        )
         flaw_summary = f"{len(defects)} defect{'s' if len(defects) != 1 else ''}" if defects else "zero major defects"
         diagnostic_summary = f"ABAA Dual Grade: {short_code} ({flaw_summary}, {mult:.2f}x valuation factor)"
 

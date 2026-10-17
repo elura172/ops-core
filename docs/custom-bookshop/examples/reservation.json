@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "checkout_id": "checkout_example_001",
+  "items": [
+    {
+      "sku": "BK-EXAMPLE-001",
+      "quantity": 1,
+      "unit_price": {
+        "amount": "24.00",
+        "currency": "CAD"
+      }
+    }
+  ]
+}

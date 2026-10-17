@@ -1,0 +1,18 @@
+{
+  "schema_version": "1.0",
+  "event_id": "1d5d7f0b-328b-4c93-b5aa-2f7ec3d51b02",
+  "event_type": "order.cancelled",
+  "occurred_at": "2026-10-16T17:00:00Z",
+  "order_id": "web_order_example_001",
+  "reservation_id": "res_example_001",
+  "items": [
+    {
+      "sku": "BK-EXAMPLE-001",
+      "quantity": 1,
+      "unit_price": {
+        "amount": "24.00",
+        "currency": "CAD"
+      }
+    }
+  ]
+}

@@ -1,4 +1,4 @@
-with open("app/api/http.py", "r") as f:
+with open("app/api/http.py") as f:
     lines = f.readlines()
 
 for i, line in enumerate(lines):

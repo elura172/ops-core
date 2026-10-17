@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import uuid
 from decimal import Decimal
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -53,10 +52,16 @@ class EbayService:
         provenance: str = "",
     ) -> str:
         authors_str = ", ".join(authors) if authors else "Unknown"
-        loc_str = f"<p><strong>Location in Vault:</strong> {section} (Shelf {shelf})</p>" if shelf else f"<p><strong>Section:</strong> {section}</p>"
+        loc_str = (
+            f"<p><strong>Location in Vault:</strong> {section} (Shelf {shelf})</p>"
+            if shelf
+            else f"<p><strong>Section:</strong> {section}</p>"
+        )
         prov_str = f"<p><strong>Provenance / Notes:</strong> {provenance}</p>" if provenance else ""
 
-        return f"""<div style="font-family: Georgia, serif; line-height: 1.6; max-width: 700px; padding: 15px; border: 1px solid #d4c5b9; background-color: #faf8f5;">
+        return f"""<div
+  style="font-family: Georgia, serif; line-height: 1.6; max-width: 700px; padding: 15px;
+        border: 1px solid #d4c5b9; background-color: #faf8f5;">
   <h2 style="color: #2b2b2b; margin-bottom: 8px;">{title}</h2>
   <p><strong>Author(s):</strong> {authors_str}</p>
   <p><strong>Format:</strong> {format_str.title()}</p>
@@ -117,7 +122,13 @@ class EbayService:
 
         is_mock_token = not access_token or "mock" in access_token.lower()
         if dry_run or is_mock_token:
-            logger.info("ebay.inventory.push.dry_run", sku=sku, title=title, price_cad=float(price_cad), condition=cond_enum)
+            logger.info(
+                "ebay.inventory.push.dry_run",
+                sku=sku,
+                title=title,
+                price_cad=float(price_cad),
+                condition=cond_enum,
+            )
             return {
                 "status": "synced",
                 "mode": "dry-run",
@@ -134,11 +145,7 @@ class EbayService:
         url = f"{base_url}/sell/inventory/v1/inventory_item/{sku}"
 
         payload = {
-            "availability": {
-                "shipToLocationAvailability": {
-                    "quantity": 1
-                }
-            },
+            "availability": {"shipToLocationAvailability": {"quantity": 1}},
             "condition": cond_enum,
             "conditionDescription": f"Graded as {condition}. {section} section copy.",
             "product": {
@@ -213,13 +220,7 @@ class EbayService:
         base_url = EBAY_API_BASE_SANDBOX if sandbox else EBAY_API_BASE_PROD
         url = f"{base_url}/sell/inventory/v1/inventory_item/{sku}"
 
-        payload = {
-            "availability": {
-                "shipToLocationAvailability": {
-                    "quantity": 0
-                }
-            }
-        }
+        payload = {"availability": {"shipToLocationAvailability": {"quantity": 0}}}
         data = json.dumps(payload).encode("utf-8")
         req = Request(
             url,

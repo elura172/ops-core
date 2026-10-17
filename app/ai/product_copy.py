@@ -78,9 +78,7 @@ def validate_generated_copy(copy: ProductCopy) -> tuple[str, ...]:
     """Return policy reasons; empty means the copy passed."""
     if not copy.title.strip() or not copy.description.strip():
         return ("AI output has an empty title or description",)
-    candidate = ProductCandidate(
-        copy.title, copy.description, "validation", {}, (), ("https://invalid",)
-    )
+    candidate = ProductCandidate(copy.title, copy.description, "validation", {}, (), ("https://invalid",))
     result = ProductPolicyGate().check(candidate, CategorySchema("validation"))
     return result.reasons
 

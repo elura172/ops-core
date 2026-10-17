@@ -105,3 +105,11 @@ def test_open_user_store_sqlite(tmp_path):
     assert u is not None
     assert u.tenant_id == tid
     store.close()
+
+
+def test_postgres_dsn_check_accepts_path_values():
+    from pathlib import Path
+
+    from app.db.factory import is_postgres_dsn
+
+    assert not is_postgres_dsn(Path("local.db"))

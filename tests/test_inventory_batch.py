@@ -8,11 +8,9 @@ from fastapi.testclient import TestClient
 
 from app.api.http import create_app
 from app.api.operator import OperatorService
-from app.api.security import TokenRegistry
 from app.api.tiktok_client import TikTokClient
 from app.auth import create_access_token
 from app.db.inventory import InventoryItem, SQLiteInventoryStore
-from app.db.review_store import SQLiteReviewStore
 from app.domain.audit import AuditLog
 from app.domain.order_store import OrderStore
 from app.review.executor import ApprovedActionExecutor
@@ -48,7 +46,9 @@ def inv_store(tmp_path):
 @pytest.fixture
 def test_client(inv_store, tmp_path, settings):
     review_queue = ReviewQueue()
-    executor = ApprovedActionExecutor(TikTokClient("token", "shop", dry_run=True), AuditLog(), inventory_store=inv_store)
+    executor = ApprovedActionExecutor(
+        TikTokClient("token", "shop", dry_run=True), AuditLog(), inventory_store=inv_store
+    )
     operator = OperatorService(review_queue, executor)
 
     app = create_app(
@@ -95,10 +95,13 @@ def test_sqlite_batch_operations_and_tenant_isolation(inv_store):
         assert item.shelf == "V-01"
 
     # 5. batch_update_prices
-    affected = inv_store.batch_update_prices({
-        "BK-TEST-001": (Decimal("12.50"), Decimal("18.50")),
-        "BK-TEST-002": (Decimal("25.00"), Decimal("35.00")),
-    }, tenant_id=1)
+    affected = inv_store.batch_update_prices(
+        {
+            "BK-TEST-001": (Decimal("12.50"), Decimal("18.50")),
+            "BK-TEST-002": (Decimal("25.00"), Decimal("35.00")),
+        },
+        tenant_id=1,
+    )
     assert affected == 2
     item1 = inv_store.get("BK-TEST-001", tenant_id=1)
     assert item1.in_store_price_cad == Decimal("12.50")
@@ -248,9 +251,18 @@ def test_inventory_export_csv_and_uiee(test_client):
     assert "text/csv" in csv_resp.headers["Content-Type"]
     reader = list(csv.reader(io.StringIO(csv_resp.text)))
     assert reader[0] == [
-        "sku", "title", "authors", "format", "condition",
-        "in_store_price_cad", "online_price_cad", "status",
-        "section", "shelf", "last_audited_at", "created_at"
+        "sku",
+        "title",
+        "authors",
+        "format",
+        "condition",
+        "in_store_price_cad",
+        "online_price_cad",
+        "status",
+        "section",
+        "shelf",
+        "last_audited_at",
+        "created_at",
     ]
     assert len(reader) == 3  # Header + 2 items
 

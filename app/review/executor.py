@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable
+from contextvars import ContextVar
 from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
@@ -56,23 +57,45 @@ class ApprovedActionExecutor:
         publish_gate: PublishGate | None = None,
         mailer: Mailer | None = None,
         shippo_api_key: str = "",
+        amazon_sp_api_client_id: str = "",
+        amazon_sp_api_client_secret: str = "",
+        amazon_sp_api_refresh_token: str = "",
+        amazon_sp_api_seller_id: str = "",
+        amazon_sp_api_marketplace_id: str = "A2EUQ1WTGCTBG2",
     ) -> None:
+        self._tenant_context = ContextVar("executor_tenant", default=1)
+        self._credential_context = ContextVar("executor_credentials", default=None)
         self.client = client
         self.audit = audit
         self.shippo_api_key = shippo_api_key
+        self.amazon_sp_api_client_id = amazon_sp_api_client_id
+        self.amazon_sp_api_client_secret = amazon_sp_api_client_secret
+        self.amazon_sp_api_refresh_token = amazon_sp_api_refresh_token
+        self.amazon_sp_api_seller_id = amazon_sp_api_seller_id
+        self.amazon_sp_api_marketplace_id = amazon_sp_api_marketplace_id
         self.inventory_store = inventory_store
         self.want_list_store = want_list_store
+        if inventory_store is not None:
+            from app.integrations.stock import StockLedger
+
+            self.stock_ledger = StockLedger(inventory_store)
+            if want_list_store is not None:
+                want_list_store.stock_ledger = self.stock_ledger
+
         self.publish_gate = publish_gate or PublishGate(DryRunPublisher(), enabled=False)
         self.mailer = mailer or DryRunMailer()
         # Bound lazily: a client only needs the methods for operations it is
         # actually asked to run.
         self.handlers: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
+            "publish_custom_site": self._publish_custom_site,
+            "review_stock_conflict": self._review_stock_conflict,
             "create_product_draft": lambda p: self.client.create_product_draft(p),
             "update_inventory": self._update_inventory,
             "update_prices": self._update_prices,
             "publish": self._publish,
             "send_customer_response": self._send_customer_response,
             "intake_book": self._intake_book,
+            "review_shelf_capture": self._review_shelf_capture,
             "sync_inventory": self._sync_inventory,
             "fulfill_order": self._fulfill_order,
             "resolve_order_contention": self._resolve_order_contention,
@@ -84,8 +107,57 @@ class ApprovedActionExecutor:
         }
 
     @property
+    def current_tenant_id(self):
+        return self._tenant_context.get()
+
+    @current_tenant_id.setter
+    def current_tenant_id(self, value):
+        self._tenant_context.set(value)
+
+    @property
+    def current_credentials(self):
+        return self._credential_context.get() or {}
+
+    @current_credentials.setter
+    def current_credentials(self, value):
+        self._credential_context.set(value)
+
+    @property
     def allowed_operations(self) -> frozenset[str]:
         return frozenset(self.handlers)
+
+    def _review_shelf_capture(self, payload):
+        raise PermissionError("Shelf captures execute through the durable review store")
+
+    def _amazon_adapter(self, credentials: dict[str, str]):
+        return AmazonSPAPIAdapter(
+            # Keep this channel in simulation until Amazon sandbox, listing
+            # requirements, order intake, and stock-claim checks are complete.
+            dry_run=True,
+            refresh_token=credentials.get("amazon_sp_api_refresh_token", self.amazon_sp_api_refresh_token),
+            client_id=self.amazon_sp_api_client_id,
+            client_secret=self.amazon_sp_api_client_secret,
+            merchant_id=credentials.get("amazon_sp_api_seller_id", self.amazon_sp_api_seller_id),
+            marketplace_id=self.amazon_sp_api_marketplace_id,
+        )
+
+    def _review_stock_conflict(self, payload):
+        raise PermissionError("Resolve the competing orders and physical stock before relisting this copy")
+
+    def _publish_custom_site(self, payload: dict[str, Any]) -> dict[str, Any]:
+        service = getattr(self, "custom_site_service", None)
+        if not service:
+            raise PermissionError("Custom website connection is not configured")
+        connection = service.connections.get(payload.get("connection_id"))
+        tenant_id = getattr(self, "current_tenant_id", 1)
+        if not connection or connection.tenant_id != tenant_id or not connection.enabled:
+            raise PermissionError("Custom website connection is not available for this workspace")
+        return service.ledger.publish(
+            connection,
+            payload["sku"],
+            payload.get("publication", "published"),
+            expected_digest=payload.get("catalogue_digest"),
+        )
 
     def _update_location(self, payload: dict[str, Any]) -> dict[str, Any]:
         sku = payload["sku"]
@@ -142,6 +214,7 @@ class ApprovedActionExecutor:
         tenant_id = payload.get("tenant_id") or getattr(self, "current_tenant_id", 1)
         if sku and self.inventory_store and ("in_store_price_cad" in payload or "online_price_cad" in payload):
             from decimal import Decimal
+
             try:
                 in_store = Decimal(str(payload.get("in_store_price_cad", "0.00")))
                 online = Decimal(str(payload.get("online_price_cad", "0.00")))
@@ -167,8 +240,8 @@ class ApprovedActionExecutor:
 
     def _intake_book(self, payload: dict[str, Any]) -> dict[str, Any]:
         import uuid
-        from datetime import UTC, datetime, timedelta
         from decimal import Decimal
+
         from app.db.inventory import InventoryItem
         from app.publish.books import SquareCatalogAdapter
 
@@ -194,6 +267,7 @@ class ApprovedActionExecutor:
         matched_collector = None
         if self.want_list_store:
             from app.domain.want_list import WantListMatcher
+
             matcher = WantListMatcher()
             active_wants = self.want_list_store.list_wants(tenant_id=intake_tenant, status="active")
             candidate_dict = {
@@ -238,6 +312,7 @@ class ApprovedActionExecutor:
                 self.inventory_store.add(item, tenant_id=intake_tenant)
 
             from app.db.want_list import CollectorHold
+
             hold = CollectorHold(
                 id=f"hld-{uuid.uuid4().hex[:10]}",
                 tenant_id=intake_tenant,
@@ -255,7 +330,15 @@ class ApprovedActionExecutor:
             )
             self.want_list_store.create_hold(hold)
 
-            channel_names = ["abebooks", "ebay", "amazon_spapi", "biblio", "alibris", "shopify", "square"]
+            channel_names = [
+                "abebooks",
+                "ebay",
+                "amazon_spapi",
+                "biblio",
+                "alibris",
+                "shopify",
+                "square",
+            ]
             marketplace_results = {
                 ch: {
                     "status": "withheld",
@@ -291,7 +374,7 @@ class ApprovedActionExecutor:
         credentials = getattr(self, "current_credentials", {})
         adapters = (
             AbeBooksListingAdapter(dry_run=True, api_key=credentials.get("abebooks", "mock_key")),
-            AmazonSPAPIAdapter(dry_run=True),
+            self._amazon_adapter(credentials),
             BiblioListingAdapter(dry_run=True),
             AlibrisListingAdapter(dry_run=True),
             EbayListingAdapter(dry_run=True, api_token=credentials.get("ebay", "mock_token")),
@@ -300,7 +383,7 @@ class ApprovedActionExecutor:
         )
         orchestrator = BookListingOrchestrator(adapters)
         result = orchestrator.list_inventory(payload)
-        
+
         if self.inventory_store:
             details = result.get("details") or {}
             sku = result.get("sku") or details.get("sku") or payload.get("sku") or f"BK-{uuid.uuid4().hex[:8].upper()}"
@@ -327,12 +410,12 @@ class ApprovedActionExecutor:
                 shelf=shelf,
             )
             self.inventory_store.add(item, tenant_id=intake_tenant)
-            
+
             if "details" not in result or not isinstance(result["details"], dict):
                 result["details"] = {}
             result["details"]["sku"] = sku
             result["sku"] = sku
-            
+
         return result
 
     def _collector_hold_notification(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -354,9 +437,11 @@ class ApprovedActionExecutor:
                             f"We have acquired a volume matching your active want list:\n\n"
                             f"'{title}'\n"
                             f"Price: ${price_cad} CAD\n\n"
-                            f"As a preferred collector, we have placed a 48-hour priority courtesy hold on this book for you. "
+                            "As a preferred collector, we have placed a 48-hour priority courtesy "
+                            "hold on this book for you. "
                             f"Your hold is active until {expires_at}.\n\n"
-                            f"Please reply or call the shop to claim this volume before it is released to the general public.\n\n"
+                            "Please reply or call the shop to claim this volume before it is "
+                            "released to the general public.\n\n"
                             f"Warm regards,\n"
                             f"Elura Antiquarian Vault"
                         ),
@@ -376,7 +461,7 @@ class ApprovedActionExecutor:
         hold_id = payload["hold_id"]
         tenant_id = payload.get("tenant_id", 1)
         notes = payload.get("notes", "Claimed by collector")
-        
+
         if not self.want_list_store:
             raise RuntimeError("WantListStore not configured")
 
@@ -384,10 +469,14 @@ class ApprovedActionExecutor:
         if not hold:
             raise KeyError(f"Hold {hold_id} not found")
 
+        ledger = getattr(self, "stock_ledger", None)
+        if ledger:
+            outcome = ledger.observe_sale(tenant_id, hold.sku, "collector", hold_id, hold_owner=hold_id)
+            if outcome == "conflict":
+                raise PermissionError("Collector claim conflicts with another stock claim")
+
         now = datetime.now(UTC)
-        updated = self.want_list_store.update_hold(
-            hold_id, tenant_id=tenant_id, status="claimed", claimed_at=now, notes=notes
-        )
+        self.want_list_store.update_hold(hold_id, tenant_id=tenant_id, status="claimed", claimed_at=now, notes=notes)
         # Mark want item as fulfilled
         self.want_list_store.update_want(hold.want_item_id, tenant_id=tenant_id, status="fulfilled")
 
@@ -396,7 +485,9 @@ class ApprovedActionExecutor:
             self.inventory_store.delist(hold.sku, tenant_id=tenant_id)
 
         # Multi-channel delist
-        sync_result = self._sync_inventory({"sku": hold.sku, "source_channel": "collector_claim", "tenant_id": tenant_id})
+        sync_result = self._sync_inventory(
+            {"sku": hold.sku, "source_channel": "collector_claim", "tenant_id": tenant_id}
+        )
 
         return {
             "status": "claimed",
@@ -432,15 +523,14 @@ class ApprovedActionExecutor:
         book_item = None
         if self.inventory_store:
             book_item = self.inventory_store.get(hold.sku, tenant_id=tenant_id)
-            if book_item:
-                book_item.status = "active"
-                self.inventory_store.add(book_item, tenant_id=tenant_id)
+            if book_item and book_item.status in ("on_hold", "held"):
+                self.inventory_store.relist(hold.sku, tenant_id=tenant_id)
 
         # Trigger marketplace publishing now that the hold is released
         credentials = getattr(self, "current_credentials", {})
         adapters = (
             AbeBooksListingAdapter(dry_run=True, api_key=credentials.get("abebooks", "mock_key")),
-            AmazonSPAPIAdapter(dry_run=True),
+            self._amazon_adapter(credentials),
             BiblioListingAdapter(dry_run=True),
             AlibrisListingAdapter(dry_run=True),
             EbayListingAdapter(dry_run=True, api_token=credentials.get("ebay", "mock_token")),
@@ -486,6 +576,12 @@ class ApprovedActionExecutor:
         source_channel = payload.get("source_channel", "biblio")
         tenant_id = payload.get("tenant_id", 1)
 
+        ledger = getattr(self, "stock_ledger", None)
+        if ledger:
+            outcome = ledger.observe_sale(tenant_id, sku, source_channel, order_id, hold_owner=hold_id)
+            if outcome == "conflict":
+                raise PermissionError("Competing stock claims need staff reconciliation")
+
         # 1. Release the courtesy hold
         if hold_id and self.want_list_store:
             now = datetime.now(UTC)
@@ -493,6 +589,7 @@ class ApprovedActionExecutor:
                 hold_id,
                 tenant_id=tenant_id,
                 status="released",
+                stock_transferred=bool(ledger),
                 released_at=now,
                 notes=f"Released for {source_channel} order {order_id} via operator decision",
             )
@@ -502,12 +599,14 @@ class ApprovedActionExecutor:
             self.inventory_store.delist(sku, tenant_id=tenant_id)
 
         # 3. Trigger multi-channel delisting across all channels
-        sync_result = self._sync_inventory({
-            "sku": sku,
-            "source_channel": source_channel,
-            "tenant_id": tenant_id,
-            "order_id": order_id,
-        })
+        sync_result = self._sync_inventory(
+            {
+                "sku": sku,
+                "source_channel": source_channel,
+                "tenant_id": tenant_id,
+                "order_id": order_id,
+            }
+        )
 
         return {
             "status": "contention_resolved",
@@ -521,12 +620,12 @@ class ApprovedActionExecutor:
 
     def _sync_inventory(self, payload: dict[str, Any]) -> dict[str, Any]:
         from app.publish.inventory_sync import MultiChannelInventorySync
-        
+
         credentials = getattr(self, "current_credentials", {})
-        
+
         adapters = (
             AbeBooksListingAdapter(dry_run=True, api_key=credentials.get("abebooks", "mock_key")),
-            AmazonSPAPIAdapter(dry_run=True, refresh_token=credentials.get("amazon", "mock_token")),
+            self._amazon_adapter(credentials),
             BiblioListingAdapter(dry_run=True, api_key=credentials.get("biblio", "mock_key")),
             AlibrisListingAdapter(dry_run=True),
             EbayListingAdapter(dry_run=True, api_token=credentials.get("ebay", "mock_token")),
@@ -534,12 +633,12 @@ class ApprovedActionExecutor:
             SquareCatalogAdapter(dry_run=True, access_token=credentials.get("square", "")),
         )
         sync = MultiChannelInventorySync(adapters)
-        
+
         sku = payload.get("sku", "")
         source_channel = payload.get("source_channel", "")
         if not sku:
             raise ValueError("sku is required for sync_inventory")
-            
+
         result = sync.process_sale(sku, source_channel)
 
         tenant_id = payload.get("tenant_id") or getattr(self, "current_tenant_id", 1)
@@ -556,21 +655,21 @@ class ApprovedActionExecutor:
     def _fulfill_order(self, payload: dict[str, Any]) -> dict[str, Any]:
         from app.domain.carriers import ShippoAdapter
         from app.domain.packing_slip import generate_packing_slip
-        
+
         provider = payload.get("preferred_provider", "USPS")
         # In ops-core, keys typically come from settings.
         api_key = self.shippo_api_key or "shippo_test_mock_key"
-        
+
         # Instantiate adapter in dry_run mode by default for safety in this environment
         adapter = ShippoAdapter(api_key=api_key, dry_run=True)
         label_data = adapter.create_label(payload)
-        
+
         mock_tracking = label_data["tracking_number"]
         slip_b64 = generate_packing_slip(payload, mock_tracking, provider)
-        
+
         # Combine the results
         label_data["packing_slip_base64"] = slip_b64
-        
+
         return label_data
 
     def _resolve_order_contention(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -592,8 +691,8 @@ class ApprovedActionExecutor:
             credentials = getattr(self, "current_credentials", {})
             adapters = {
                 "abebooks": AbeBooksListingAdapter(dry_run=True),
-                "amazon": AmazonSPAPIAdapter(dry_run=True, refresh_token=credentials.get("amazon", "mock_token")),
-                "amazon_spapi": AmazonSPAPIAdapter(dry_run=True, refresh_token=credentials.get("amazon", "mock_token")),
+                "amazon": self._amazon_adapter(credentials),
+                "amazon_spapi": self._amazon_adapter(credentials),
                 "biblio": BiblioListingAdapter(dry_run=True),
                 "alibris": AlibrisListingAdapter(dry_run=True),
                 "ebay": EbayListingAdapter(dry_run=True),
@@ -631,6 +730,8 @@ class ApprovedActionExecutor:
         Nothing was attempted, so the approval stays usable: the operator enables
         the adapter and executes again rather than going back for a re-review.
         """
+        if operation == "review_stock_conflict":
+            raise PermissionError("Staff must resolve the competing orders before relisting the copy")
         if operation == "publish" and not self.publish_gate.enabled:
             raise PermissionError("publishing is disabled")
         if operation == "send_customer_response" and not getattr(self.mailer, "enabled", True):
@@ -646,26 +747,45 @@ class ApprovedActionExecutor:
         handler = self.handlers.get(operation)
         if handler is None:
             raise ValueError(f"operation is not allowlisted: {operation}")
-            
-        self.current_credentials = credentials or {}
-        self.current_tenant_id = tenant_id
-        
-        result = handler(payload)
-        
-        self.current_credentials = {}
-        self.current_tenant_id = 1
-        
+
+        tenant_token = self._tenant_context.set(tenant_id)
+        credential_token = self._credential_context.set(credentials or {})
+        if operation in {
+            "intake_book",
+            "sync_inventory",
+            "update_inventory",
+            "update_prices",
+            "update_location",
+            "claim_collector_hold",
+            "release_collector_hold",
+            "contention_hold_vs_marketplace",
+            "publish_custom_site",
+            "review_stock_conflict",
+        }:
+            payload = {**payload, "tenant_id": tenant_id}
+        try:
+            result = handler(payload)
+        finally:
+            self._tenant_context.reset(tenant_token)
+            self._credential_context.reset(credential_token)
+
         if not isinstance(result, dict):
             raise TypeError(f"handler for {operation} must return a dictionary")
         return result
 
-    def _audit(
-        self, action: str, actor: str, outcome: str, resource_id: str, **detail: str
-    ) -> None:
+    def _audit(self, action: str, actor: str, outcome: str, resource_id: str, **detail: str) -> None:
         if self.audit is not None:
             self.audit.record(AuditEvent(action, actor, outcome, resource_id, detail))
 
-    def execute(self, store: ReviewStore, review_id: str, *, actor: str, tenant_id: int = 1, credentials: dict[str, str] = None) -> dict[str, Any]:
+    def execute(
+        self,
+        store: ReviewStore,
+        review_id: str,
+        *,
+        actor: str,
+        tenant_id: int = 1,
+        credentials: dict[str, str] = None,
+    ) -> dict[str, Any]:
         item = store.get(review_id, tenant_id=tenant_id)
         if item is None:
             raise KeyError(review_id)
@@ -689,12 +809,17 @@ class ApprovedActionExecutor:
 
         started = time.monotonic()
         try:
-            result = self._dispatch(
-                claimed.operation,
-                claimed.payload,
-                credentials=credentials,
-                tenant_id=tenant_id,
-            )
+            if claimed.operation == "review_shelf_capture":
+                from app.domain.shelf_capture import create_book_reviews
+
+                result = create_book_reviews(store, claimed.payload, tenant_id)
+            else:
+                result = self._dispatch(
+                    claimed.operation,
+                    claimed.payload,
+                    credentials=credentials,
+                    tenant_id=tenant_id,
+                )
         except Exception as exc:
             metrics.executions_total().inc(outcome="failed")
             failed = store.fail_execution(review_id, str(exc), tenant_id=tenant_id)

@@ -20,9 +20,7 @@ def revenue_by_campaign(events: Iterable[AnalyticsEvent]) -> dict[str, Decimal]:
     return dict(totals)
 
 
-def deterministic_assignment(
-    experiment_id: str, subject_id: str, variants: tuple[str, ...]
-) -> ExperimentAssignment:
+def deterministic_assignment(experiment_id: str, subject_id: str, variants: tuple[str, ...]) -> ExperimentAssignment:
     """Assign a subject to a variant, stably and independently per experiment.
 
     A character-sum hash is order-insensitive (``user_ab`` and ``user_ba`` collide)

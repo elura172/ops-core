@@ -149,7 +149,7 @@ def test_abebooks_order_sync_triggers_corvus_and_delists_store():
                 "title": "Fifth Business",
                 "price": "95.00",
             }
-        ]
+        ],
     }
 
     result = AbeBooksService.process_order(order_event, operator, tenant_id=1)
@@ -194,10 +194,8 @@ def test_abebooks_and_uiee_http_endpoints(settings):
     # 2. Webhook order POST
     resp_wh = client.post(
         "/webhooks/abebooks",
-        json={
-            "orderId": "AB-TEST-4422",
-            "items": [{"bookId": "BK-DUNE-1965"}]
-        }
+        headers=auth(ADMIN_TOKEN),
+        json={"orderId": "AB-TEST-4422", "items": [{"bookId": "BK-DUNE-1965"}]},
     )
     assert resp_wh.status_code == 200
     assert resp_wh.json()["order_id"] == "AB-TEST-4422"

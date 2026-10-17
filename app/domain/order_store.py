@@ -81,11 +81,7 @@ class OrderStore:
         return ApplyOutcome(Outcome.APPLIED, event.order_id, order.status, decision.skipped)
 
     def active(self) -> list[Order]:
-        return [
-            o
-            for o in self.orders.values()
-            if o.status not in {OrderStatus.DELIVERED, OrderStatus.CANCELLED}
-        ]
+        return [o for o in self.orders.values() if o.status not in {OrderStatus.DELIVERED, OrderStatus.CANCELLED}]
 
     def quarantined(self, *, include_resolved: bool = False) -> list[dict[str, Any]]:
         return [

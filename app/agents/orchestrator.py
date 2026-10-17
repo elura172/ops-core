@@ -76,9 +76,7 @@ class AgentOrchestrator:
             )
         return task
 
-    def handoff(
-        self, task_id: str, to_role: AgentRole, purpose: str, payload: dict[str, Any]
-    ) -> Handoff:
+    def handoff(self, task_id: str, to_role: AgentRole, purpose: str, payload: dict[str, Any]) -> Handoff:
         task = self.tasks[task_id]
         if task.status != TaskStatus.COMPLETED:
             raise ValueError("only completed tasks may hand off")

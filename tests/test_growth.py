@@ -8,9 +8,7 @@ from app.growth.models import Campaign, Channel, Creative, CreativePerformance
 
 
 def campaign():
-    return Campaign(
-        "c-1", "cr-1", Channel.TIKTOK, Decimal("10"), Decimal("100"), "https://shop.example/p/1"
-    )
+    return Campaign("c-1", "cr-1", Channel.TIKTOK, Decimal("10"), Decimal("100"), "https://shop.example/p/1")
 
 
 def test_campaign_url_preserves_existing_query():

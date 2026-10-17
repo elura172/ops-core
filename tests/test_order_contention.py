@@ -107,9 +107,7 @@ def test_racing_duplicate_events_apply_once(postgres_dsn, postgres_order_reposit
 
     repos = [PostgresOrderRepository(postgres_dsn, pool_size=2) for _ in range(WORKERS)]
     try:
-        outcomes = _race(
-            [lambda repo=repo: repo.apply(event("same-event", OrderStatus.PAID)) for repo in repos]
-        )
+        outcomes = _race([lambda repo=repo: repo.apply(event("same-event", OrderStatus.PAID)) for repo in repos])
     finally:
         for repo in repos:
             repo.close()
@@ -119,9 +117,7 @@ def test_racing_duplicate_events_apply_once(postgres_dsn, postgres_order_reposit
     assert counted.count(Outcome.DUPLICATE) == WORKERS - 1
 
 
-def test_racing_distinct_events_never_lose_the_newer_status(
-    postgres_dsn, postgres_order_repository
-):
+def test_racing_distinct_events_never_lose_the_newer_status(postgres_dsn, postgres_order_repository):
     """PAID and SHIPPED race on one order; SHIPPED must win every time.
 
     Whichever interleaving occurs, classification is serialized by the order-row
@@ -139,21 +135,15 @@ def test_racing_distinct_events_never_lose_the_newer_status(
             repos[0].apply(event(f"seed-{round_number}", OrderStatus.RECEIVED, order_id))
             _race(
                 [
-                    lambda r=repos[0], o=order_id, n=round_number: r.apply(
-                        event(f"paid-{n}", OrderStatus.PAID, o)
-                    ),
+                    lambda r=repos[0], o=order_id, n=round_number: r.apply(event(f"paid-{n}", OrderStatus.PAID, o)),
                     lambda r=repos[1], o=order_id, n=round_number: r.apply(
                         event(f"shipped-{n}", OrderStatus.SHIPPED, o)
                     ),
                 ]
             )
             with repos[0].pool.connection() as connection:
-                row = connection.execute(
-                    "SELECT status FROM orders WHERE order_id = %s", (order_id,)
-                ).fetchone()
-            assert row["status"] == "SHIPPED", (
-                f"round {round_number}: a stale PAID overwrote SHIPPED"
-            )
+                row = connection.execute("SELECT status FROM orders WHERE order_id = %s", (order_id,)).fetchone()
+            assert row["status"] == "SHIPPED", f"round {round_number}: a stale PAID overwrote SHIPPED"
     finally:
         for repo in repos:
             repo.close()
@@ -248,9 +238,7 @@ class NoRowLock:
                 "VALUES (%s, %s, %s, %s) ON CONFLICT (order_id) DO NOTHING",
                 (event.order_id, event.occurred_at, "RECEIVED", event.occurred_at),
             )
-            row = connection.execute(
-                "SELECT status FROM orders WHERE order_id = %s", (event.order_id,)
-            ).fetchone()
+            row = connection.execute("SELECT status FROM orders WHERE order_id = %s", (event.order_id,)).fetchone()
             decision = classify(OrderStatus(row["status"]), event.status)
             if decision.resolution is Resolution.APPLY:
                 connection.execute(
@@ -272,18 +260,12 @@ def test_removing_the_row_lock_loses_updates(postgres_dsn, postgres_order_reposi
             repos[0].apply(event(f"seed-{order_id}", OrderStatus.RECEIVED, order_id))
             _race(
                 [
-                    lambda r=repos[0], o=order_id: NoRowLock(r).apply(
-                        event(f"paid-{o}", OrderStatus.PAID, o)
-                    ),
-                    lambda r=repos[1], o=order_id: NoRowLock(r).apply(
-                        event(f"shipped-{o}", OrderStatus.SHIPPED, o)
-                    ),
+                    lambda r=repos[0], o=order_id: NoRowLock(r).apply(event(f"paid-{o}", OrderStatus.PAID, o)),
+                    lambda r=repos[1], o=order_id: NoRowLock(r).apply(event(f"shipped-{o}", OrderStatus.SHIPPED, o)),
                 ]
             )
             with repos[0].pool.connection() as connection:
-                row = connection.execute(
-                    "SELECT status FROM orders WHERE order_id = %s", (order_id,)
-                ).fetchone()
+                row = connection.execute("SELECT status FROM orders WHERE order_id = %s", (order_id,)).fetchone()
             if row["status"] == "PAID":
                 regressed = True
                 break
@@ -292,6 +274,5 @@ def test_removing_the_row_lock_loses_updates(postgres_dsn, postgres_order_reposi
             repo.close()
 
     assert regressed, (
-        "the unlocked apply never lost an update; the race harness can no "
-        "longer detect a missing row lock"
+        "the unlocked apply never lost an update; the race harness can no longer detect a missing row lock"
     )

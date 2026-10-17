@@ -83,7 +83,7 @@ class BatchSpineDeduplicator:
         # Strip leading articles
         for article in ("the ", "a ", "an "):
             if s.startswith(article):
-                s = s[len(article):].strip()
+                s = s[len(article) :].strip()
                 break
         return s
 
@@ -121,20 +121,10 @@ class BatchSpineDeduplicator:
         return seq_ratio
 
     @classmethod
-    def authors_match(
-        cls, a1: tuple[str, ...], a2: tuple[str, ...]
-    ) -> tuple[bool, str]:
+    def authors_match(cls, a1: tuple[str, ...], a2: tuple[str, ...]) -> tuple[bool, str]:
         """Checks if two author lists are compatible or overlapping."""
-        clean1 = [
-            cls.normalize_author(a)
-            for a in a1
-            if a and a.strip().lower() != "unknown"
-        ]
-        clean2 = [
-            cls.normalize_author(a)
-            for a in a2
-            if a and a.strip().lower() != "unknown"
-        ]
+        clean1 = [cls.normalize_author(a) for a in a1 if a and a.strip().lower() != "unknown"]
+        clean2 = [cls.normalize_author(a) for a in a2 if a and a.strip().lower() != "unknown"]
 
         if not clean1 or not clean2:
             # One or both author lists are unknown -> neutral match
@@ -154,9 +144,7 @@ class BatchSpineDeduplicator:
         return False, "differing_authors"
 
     @classmethod
-    def is_duplicate(
-        cls, b1: SpineExtractionItem, b2: SpineExtractionItem
-    ) -> tuple[bool, float, str]:
+    def is_duplicate(cls, b1: SpineExtractionItem, b2: SpineExtractionItem) -> tuple[bool, float, str]:
         """Determines if two extracted spine items represent the same physical volume."""
         n1 = cls.normalize_title(b1.title)
         n2 = cls.normalize_title(b2.title)
@@ -195,9 +183,7 @@ class BatchSpineDeduplicator:
         else:
             score += 10
 
-        valid_authors = [
-            a for a in b.authors if a and a.strip().lower() != "unknown"
-        ]
+        valid_authors = [a for a in b.authors if a and a.strip().lower() != "unknown"]
         if valid_authors:
             score += 20 + min(len(valid_authors) * 2, 6)
 
@@ -274,24 +260,21 @@ class BatchSpineDeduplicator:
         for candidate in items:
             dup_found = False
             for idx, existing in enumerate(kept_items):
-                is_dup, sim_score, reason = cls.is_duplicate(
-                    candidate.book, existing.book
-                )
+                if candidate.source_image_index == existing.source_image_index:
+                    continue  # Two visible spines in one photo represent separate copies.
+                is_dup, sim_score, reason = cls.is_duplicate(candidate.book, existing.book)
                 if is_dup:
                     dup_found = True
                     cand_score = cls.candidate_richness_score(candidate.book)
                     exist_score = cls.candidate_richness_score(existing.book)
 
-                    primary_author = (
-                        (candidate.book.authors[0] if candidate.book.authors else "")
-                        or (existing.book.authors[0] if existing.book.authors else "")
+                    primary_author = (candidate.book.authors[0] if candidate.book.authors else "") or (
+                        existing.book.authors[0] if existing.book.authors else ""
                     )
 
                     if cand_score > exist_score:
                         # Candidate is richer: replace existing, suppress existing
-                        enriched = cls.merge_duplicate_metadata(
-                            candidate.book, existing.book
-                        )
+                        enriched = cls.merge_duplicate_metadata(candidate.book, existing.book)
                         kept_items[idx] = BatchExtractionItem(
                             book=enriched,
                             source_image_index=candidate.source_image_index,
@@ -306,14 +289,15 @@ class BatchSpineDeduplicator:
                                 kept_image_index=candidate.source_image_index,
                                 kept_image_filename=candidate.source_filename,
                                 similarity_score=sim_score,
-                                reason=f"Overlapping volume across photos; kept richer photo {candidate.source_filename}: {reason}",
+                                reason=(
+                                    "Overlapping volume across photos; kept richer photo "
+                                    f"{candidate.source_filename}: {reason}"
+                                ),
                             )
                         )
                     else:
                         # Existing is richer or equal: suppress candidate, enrich existing
-                        enriched = cls.merge_duplicate_metadata(
-                            existing.book, candidate.book
-                        )
+                        enriched = cls.merge_duplicate_metadata(existing.book, candidate.book)
                         kept_items[idx] = BatchExtractionItem(
                             book=enriched,
                             source_image_index=existing.source_image_index,
@@ -328,7 +312,10 @@ class BatchSpineDeduplicator:
                                 kept_image_index=existing.source_image_index,
                                 kept_image_filename=existing.source_filename,
                                 similarity_score=sim_score,
-                                reason=f"Overlapping volume across photos; kept earlier photo {existing.source_filename}: {reason}",
+                                reason=(
+                                    "Overlapping volume across photos; kept earlier photo "
+                                    f"{existing.source_filename}: {reason}"
+                                ),
                             )
                         )
                     break
@@ -343,9 +330,7 @@ class MultiAngleBookMerger:
     """Merges multiple angles/views of a single book into a consolidated collectible record."""
 
     @classmethod
-    def merge_angles(
-        cls, items: list[SpineExtractionItem]
-    ) -> SpineExtractionItem | None:
+    def merge_angles(cls, items: list[SpineExtractionItem]) -> SpineExtractionItem | None:
         """Merges spine, cover, and copyright page extractions of the same book."""
         if not items:
             return None
@@ -406,7 +391,9 @@ class MultiAngleBookMerger:
         consolidated_raw = " | ".join(raw_texts)
 
         # 9. Copyright & flap text
-        copy_texts = [it.raw_copyright_text.strip() for it in items if it.raw_copyright_text and it.raw_copyright_text.strip()]
+        copy_texts = [
+            it.raw_copyright_text.strip() for it in items if it.raw_copyright_text and it.raw_copyright_text.strip()
+        ]
         best_copyright = max(copy_texts, key=len) if copy_texts else ""
         flap_texts = [it.raw_flap_text.strip() for it in items if it.raw_flap_text and it.raw_flap_text.strip()]
         best_flap = max(flap_texts, key=len) if flap_texts else ""

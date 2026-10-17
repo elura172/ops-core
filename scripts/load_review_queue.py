@@ -131,9 +131,7 @@ def phase_throughput(store_factory: Callable[[], Any]) -> dict[str, Any]:
         thread.join()
     wall = time.monotonic() - started
 
-    executed = sum(
-        1 for index in range(ITEMS) if seeder.get(f"load-{index}").status is ReviewStatus.EXECUTED
-    )
+    executed = sum(1 for index in range(ITEMS) if seeder.get(f"load-{index}").status is ReviewStatus.EXECUTED)
     assert executed == ITEMS, f"only {executed}/{ITEMS} executed"
     assert client.calls == ITEMS, f"side effect ran {client.calls} times for {ITEMS} items"
     seeder.close()
@@ -298,9 +296,7 @@ def phase_alert(store_factory: Callable[[], Any]) -> dict[str, Any]:
     recovered = store.recover_stale_executions(timedelta(seconds=0))
     metrics.stale_recoveries_total().inc(len(recovered))
     fired = manager.evaluate()
-    assert [firing.rule for firing in fired] == ["StaleExecutionRecovered"], (
-        "the stale-recovery alert did not fire"
-    )
+    assert [firing.rule for firing in fired] == ["StaleExecutionRecovered"], "the stale-recovery alert did not fire"
     store.close()
     firing = fired[0]
     return {

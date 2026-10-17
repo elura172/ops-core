@@ -1,0 +1,16 @@
+{
+  "reservation_id": "res_example_001",
+  "checkout_id": "checkout_example_001",
+  "status": "active",
+  "expires_at": "2026-10-16T16:15:00Z",
+  "items": [
+    {
+      "sku": "BK-EXAMPLE-001",
+      "quantity": 1,
+      "unit_price": {
+        "amount": "24.00",
+        "currency": "CAD"
+      }
+    }
+  ]
+}

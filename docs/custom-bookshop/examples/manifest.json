@@ -1,0 +1,9 @@
+{
+  "book.json": "BookSnapshot",
+  "book-withdrawn.json": "BookSnapshot",
+  "reservation.json": "ReservationRequest",
+  "reservation-response.json": "Reservation",
+  "order-paid.json": "OrderEvent",
+  "order-cancelled.json": "OrderEvent",
+  "order-status.json": "OrderEventStatus"
+}

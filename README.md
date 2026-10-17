@@ -1,11 +1,13 @@
 # Ops Core
 
-Dry-run-first commerce operations core. One control plane, two pipelines:
+Dry-run-first operations software for independent used and antiquarian
+booksellers. It brings shelf-photo intake, cataloging, condition review,
+pricing, inventory, and approved publishing into one workflow, with safeguards
+against duplicate copies and cross-channel overselling.
 
-- **TikTok Shop** — an authorized integration, documented below.
-- **Amazon private label** — demand screening, unit economics and launch
-  budgeting in `app/amazon/`, mapped against this system in
-  `docs/amazon-pipeline-map.md`.
+The repository also retains a separate Amazon private-label research toolkit
+in `app/amazon/`. The legacy TikTok integration notes below describe a separate
+adapter boundary, not the bookshop product's primary workflow.
 
 ```bash
 python scripts/scan.py "bread box" "plant mister"   # search, triage, shortlist
@@ -14,10 +16,23 @@ python scripts/budget.py --units 300 --fob 7.50 --price 31.95
 python scripts/screen_candidate.py --example        # full screen on one product
 ```
 
-Both share the same spine: every consequential action becomes a review item, a
-human approves it, and an allowlisted executor performs it exactly once. The
-sections below describe that spine as the TikTok pipeline exercises it; the
-Amazon pipeline reuses it unchanged.
+Consequential publishing and inventory actions pass through review and an
+allowlisted executor. Shelf capture creates reviewable book candidates; it does
+not automatically register or publish them.
+
+## Custom bookshop websites
+
+The proposed connection for an owner’s custom bookshop website is documented in
+[the custom bookshop API contract](docs/custom-bookshop/README.md), with a
+[Gemini implementation handoff](docs/custom-bookshop/GEMINI-HANDOFF.md), OpenAPI
+schemas and example payloads. The Ops Core side is implemented locally;
+[staging setup and remaining checks](docs/custom-bookshop/STAGING.md) describe what
+is needed before a live connection. Shopify is optional and separate.
+
+For photographing an entire bookcase across wide views and close-ups, see the
+[shelf photo intake guide](docs/shelf-capture.md). It explains overlap review,
+physical copy counting, and how book review creation stays separate from
+inventory registration and publishing.
 
 ## Safety defaults
 
@@ -28,6 +43,23 @@ Amazon pipeline reuses it unchanged.
 - Browser automation is disabled by default; any UI adapter must be human-supervised and separately approved.
 
 ## Operator authentication
+
+JWT-backed signup/login and API authentication require `JWT_SECRET_KEY` to be
+configured with at least 32 bytes of secret material. Generate a key with
+`openssl rand -hex 32` and store it in the deployment secret manager; do not
+commit it. The service refuses to start when the key is missing or too short.
+Rotating this key immediately invalidates existing JWT sessions.
+
+The scheduled reconciliation endpoint also requires a separate `CRON_SECRET`.
+Configure the same random value in the deployment environment and the cron
+caller; requests without it are rejected, including in dry-run mode.
+
+Stripe subscriptions require `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, and
+`STRIPE_PRICE_ID` from the same Stripe mode. The price ID selects the actual
+subscription amount and interval; checkout remains unavailable until it is set.
+Configure `/billing/webhook` in Stripe to send Checkout completion and async
+payment events, subscription lifecycle events, and `invoice.paid` /
+`invoice.payment_failed` so access follows the subscription's current status.
 
 ### Review desk
 
@@ -89,9 +121,15 @@ one migration spine:
 - a filesystem path opens the SQLite equivalents, for single-process
   deployments.
 
+The tenant, user, inventory, and want-list stores also need durable storage.
+Set `USER_DB`, `INVENTORY_DB`, and `WANT_LIST_DB` to the same Postgres DSN in a
+multi-worker deployment. `POSTGRES_URL` is the shared fallback for all five
+store settings; explicit per-store variables take precedence. Vercel deployments
+refuse to start if any store would use ephemeral SQLite.
+
 For Compose, copy `.env.example` to `.env` and set `POSTGRES_PASSWORD`.
-The example derives the required `POSTGRES_DSN` from it, and Compose passes that
-same DSN to both stores. Neither value has an in-repository default.
+The example derives `POSTGRES_DSN` from it, and Compose passes that DSN to all
+five stores. Neither value has an in-repository default.
 
 In both, the claim is a conditional `UPDATE ... WHERE status = 'APPROVED'`, so a
 restart, a replay, or a second worker racing the same approval cannot run the

@@ -1,22 +1,19 @@
-import pytest
-from decimal import Decimal
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
+
 from fastapi.testclient import TestClient
 
 from app.api.http import create_app
-from app.config import Settings
-from app.api.security import TokenRegistry
+from app.db.inventory import SQLiteInventoryStore
 from app.db.want_list import (
     Collector,
-    WantItem,
     CollectorHold,
     SQLiteWantListStore,
+    WantItem,
 )
-from app.domain.want_list import WantListMatcher, GRADE_RANKS
-from app.db.inventory import SQLiteInventoryStore, InventoryItem
+from app.domain.want_list import WantListMatcher
 from app.review.executor import ApprovedActionExecutor
-from app.db.review_store import SQLiteReviewStore
-from app.api.operator import OperatorService
+from tests.conftest import ADMIN_TOKEN, auth
 
 
 def test_matcher_title_and_author_rules():
@@ -110,7 +107,7 @@ def test_sqlite_want_list_store():
     assert len(collectors) >= 3
 
     # Create collector
-    c = store.create_collector(
+    store.create_collector(
         Collector(
             id="col-test",
             tenant_id=1,
@@ -123,7 +120,7 @@ def test_sqlite_want_list_store():
     assert store.get_collector("col-test", tenant_id=1) is not None
 
     # Create want
-    w = store.create_want(
+    store.create_want(
         WantItem(
             id="wnt-test",
             collector_id="col-test",
@@ -140,7 +137,7 @@ def test_sqlite_want_list_store():
     assert len(wants) == 1
 
     # Create hold
-    h = store.create_hold(
+    store.create_hold(
         CollectorHold(
             id="hld-test",
             tenant_id=1,
@@ -264,11 +261,13 @@ def test_claim_and_release_courtesy_hold():
     sku = intake_res["sku"]
 
     # 2. Claim hold (sold to collector)
-    claim_res = executor.handlers["claim_collector_hold"]({
-        "hold_id": hold_id,
-        "tenant_id": 1,
-        "notes": "Paid by cash at shop counter",
-    })
+    claim_res = executor.handlers["claim_collector_hold"](
+        {
+            "hold_id": hold_id,
+            "tenant_id": 1,
+            "notes": "Paid by cash at shop counter",
+        }
+    )
     assert claim_res["status"] == "claimed"
 
     # Check inventory is delisted / sold
@@ -282,9 +281,6 @@ def test_claim_and_release_courtesy_hold():
     # Check want is fulfilled
     want = want_store.get_want(hold.want_item_id, tenant_id=1)
     assert want.status == "fulfilled"
-
-
-from tests.conftest import ADMIN_TOKEN, auth
 
 
 def test_http_collector_crm_api(settings):
@@ -351,7 +347,11 @@ def test_http_collector_crm_api(settings):
     assert rev_detail["payload"]["want_match"]["matched"] is True
 
     # Approve and execute the proposal!
-    dec_res = client.post(f"/reviews/{target_p['review_id']}/decision", json={"approve": True, "reason": "Authorized courtesy hold for Margaret Atwood Society"}, headers=headers)
+    dec_res = client.post(
+        f"/reviews/{target_p['review_id']}/decision",
+        json={"approve": True, "reason": "Authorized courtesy hold for Margaret Atwood Society"},
+        headers=headers,
+    )
     assert dec_res.status_code == 200
     exec_res = client.post(f"/reviews/{target_p['review_id']}/execute", headers=headers)
     assert exec_res.status_code == 200

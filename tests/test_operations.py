@@ -22,9 +22,7 @@ def test_job_retries_then_succeeds():
 
 def test_failed_job_moves_to_dead_letter():
     runner = JobRunner()
-    runner.enqueue(
-        Job("j-2", "sync", lambda: (_ for _ in ()).throw(RuntimeError("bad")), max_attempts=2)
-    )
+    runner.enqueue(Job("j-2", "sync", lambda: (_ for _ in ()).throw(RuntimeError("bad")), max_attempts=2))
     now = datetime.now(UTC)
     runner.run_due(now)
     runner.run_due(now + timedelta(seconds=2))

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-from decimal import Decimal
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -90,6 +89,7 @@ class AbeBooksService:
             items = [{"sku": order["sku"]}]
 
         processed_skus: list[str] = []
+        failed = False
         collisions: list[dict[str, Any]] = []
 
         for it in items:
@@ -127,21 +127,28 @@ class AbeBooksService:
                     "collector_id": active_hold.collector_id,
                     "collector_name": active_hold.collector_name,
                     "book_title": active_hold.book_title,
-                    "hold_expires_at": active_hold.expires_at.isoformat() if hasattr(active_hold.expires_at, "isoformat") else str(active_hold.expires_at),
+                    "hold_expires_at": active_hold.expires_at.isoformat()
+                    if hasattr(active_hold.expires_at, "isoformat")
+                    else str(active_hold.expires_at),
                     "buyer_name": str(order.get("buyerName") or order.get("buyer_name") or "AbeBooks Online Buyer"),
                     "price_cad": float(active_hold.price_cad or 0),
-                    "reason": f"Active 48h courtesy hold for '{active_hold.collector_name}' collides with incoming AbeBooks order {order_id}.",
+                    "reason": (
+                        f"Active 48h courtesy hold for '{active_hold.collector_name}' collides "
+                        f"with incoming AbeBooks order {order_id}."
+                    ),
                 }
                 proposed = operator.propose(
                     operation="contention_hold_vs_marketplace",
                     payload=collision_payload,
                     tenant_id=tenant_id,
                 )
-                collisions.append({
-                    "sku": sku,
-                    "review_id": proposed["review_id"],
-                    "hold_id": active_hold.id,
-                })
+                collisions.append(
+                    {
+                        "sku": sku,
+                        "review_id": proposed["review_id"],
+                        "hold_id": active_hold.id,
+                    }
+                )
                 processed_skus.append(sku)
                 continue
 
@@ -149,13 +156,19 @@ class AbeBooksService:
                 # 2. Propose inventory sync
                 proposed = operator.propose(
                     operation="sync_inventory",
-                    payload={"sku": sku, "source_channel": "abebooks", "tenant_id": tenant_id, "order_id": order_id},
+                    payload={
+                        "sku": sku,
+                        "source_channel": "abebooks",
+                        "tenant_id": tenant_id,
+                        "order_id": order_id,
+                    },
                     tenant_id=tenant_id,
                 )
                 review_id = proposed["review_id"]
                 processed_skus.append(sku)
                 logger.info("abebooks.sync_proposed", sku=sku, order_id=order_id, review_id=review_id)
             except Exception as exc:
+                failed = True
                 logger.error("abebooks.sync_failed", sku=sku, order_id=order_id, error=str(exc))
 
         triage_results = None
@@ -163,6 +176,7 @@ class AbeBooksService:
         if processed_skus and not collisions:
             try:
                 from app.agents.corvus import CorvusWarden
+
                 warden = CorvusWarden(operator)
                 triage_results = warden.wake_and_triage()
                 logger.info("corvus.abebooks_triage.complete", **triage_results)
@@ -170,7 +184,8 @@ class AbeBooksService:
                 logger.error("corvus.abebooks_triage.failed", error=str(exc))
 
         return {
-            "status": "processed",
+            "status": "retry_required" if failed else "processed",
+            "http_status": 503 if failed else 200,
             "order_id": order_id,
             "processed_skus": processed_skus,
             "collisions": collisions,

@@ -13,6 +13,4 @@ class DisabledBrowserAdapter:
     """Default adapter: prevents accidental unattended browser activity."""
 
     def capture(self, url: str) -> bytes:
-        raise RuntimeError(
-            "browser automation is disabled; use an approved, human-supervised adapter"
-        )
+        raise RuntimeError("browser automation is disabled; use an approved, human-supervised adapter")

@@ -64,9 +64,11 @@ def test_signature_and_payload_reduction():
     sig = hmac.new(b"secret", body, hashlib.sha256).hexdigest()
     assert verify_signature(body, sig, "secret")
     assert not verify_signature(body, "bad", "secret")
-    assert reduce_order_event(
-        {"event_id": "e", "order_id": "o", "status": "PAID", "recipient_address": "secret"}
-    ) == ("e", "o", "PAID")
+    assert reduce_order_event({"event_id": "e", "order_id": "o", "status": "PAID", "recipient_address": "secret"}) == (
+        "e",
+        "o",
+        "PAID",
+    )
 
 
 def test_reconcile_returns_status_drift():

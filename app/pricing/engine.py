@@ -162,9 +162,7 @@ class PricingEngine:
 
         # Format-based heuristic fallback (realistic catalog baseline, never $100 placeholder)
         fmt_key = str(format_hint).lower().replace(" ", "_")
-        def_in_store, def_online = FORMAT_DEFAULTS.get(
-            fmt_key, (Decimal("8.00"), Decimal("14.00"))
-        )
+        def_in_store, def_online = FORMAT_DEFAULTS.get(fmt_key, (Decimal("8.00"), Decimal("14.00")))
         online_price = round_to_retail_ending(def_online * mult)
         in_store_price = round_to_retail_ending(def_in_store * mult)
         evidence["confidence_score"] = 0.35

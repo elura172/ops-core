@@ -1,0 +1,11 @@
+-- Persist real copy metadata on Postgres as well as SQLite. Unknown stays empty.
+ALTER TABLE inventory ADD COLUMN IF NOT EXISTS batch_id TEXT NOT NULL DEFAULT 'batch-24';
+ALTER TABLE inventory ADD COLUMN IF NOT EXISTS batch_name TEXT NOT NULL DEFAULT 'Autumn Accessions';
+ALTER TABLE inventory ADD COLUMN IF NOT EXISTS condition_notes TEXT NOT NULL DEFAULT '';
+ALTER TABLE inventory ADD COLUMN IF NOT EXISTS "collation" TEXT NOT NULL DEFAULT '';
+ALTER TABLE inventory ADD COLUMN IF NOT EXISTS publisher TEXT NOT NULL DEFAULT '';
+ALTER TABLE inventory ADD COLUMN IF NOT EXISTS year INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE inventory ADD COLUMN IF NOT EXISTS held_until TEXT;
+ALTER TABLE inventory ADD COLUMN IF NOT EXISTS hold_slip_code TEXT;
+ALTER TABLE inventory ADD COLUMN IF NOT EXISTS patron_info TEXT NOT NULL DEFAULT '';
+ALTER TABLE inventory ADD COLUMN IF NOT EXISTS spine_image_url TEXT NOT NULL DEFAULT '';

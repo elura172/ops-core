@@ -24,7 +24,13 @@ from psycopg_pool import ConnectionPool
 
 from app.domain.audit import AuditEvent
 from app.observability.logging import get_logger
-from app.review.queue import AlreadyExecuted, ReviewItem, ReviewStatus, _merge_payload, _validate_claim
+from app.review.queue import (
+    AlreadyExecuted,
+    ReviewItem,
+    ReviewStatus,
+    _merge_payload,
+    _validate_claim,
+)
 
 logger = get_logger("review_store")
 
@@ -61,9 +67,8 @@ class PostgresReviewStore:
 
     @contextmanager
     def _transaction(self) -> Iterator[psycopg.Connection[DictRow]]:
-        with self.pool.connection() as connection:
-            with connection.transaction():
-                yield connection
+        with self.pool.connection() as connection, connection.transaction():
+            yield connection
 
     def _fetch(self, connection: psycopg.Connection[DictRow], review_id: str, tenant_id: int = 1) -> ReviewItem:
         row = connection.execute(
@@ -76,9 +81,10 @@ class PostgresReviewStore:
 
     def submit(self, item: ReviewItem, tenant_id: int = 1) -> ReviewItem:
         with self.pool.connection() as connection:
-            connection.execute(
+            inserted = connection.execute(
                 "INSERT INTO reviews (review_id, tenant_id, operation, payload, status, reviewer, reason, created_at) "
-                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s) "
+                "ON CONFLICT(review_id) DO NOTHING",
                 (
                     item.review_id,
                     tenant_id,
@@ -90,6 +96,8 @@ class PostgresReviewStore:
                     item.created_at,
                 ),
             )
+            if inserted.rowcount != 1:
+                raise ValueError(f"duplicate review ID: {item.review_id}")
         return item
 
     def get(self, review_id: str, tenant_id: int = 1) -> ReviewItem | None:
@@ -203,8 +211,7 @@ class PostgresReviewStore:
         with self._transaction() as connection:
             item = self._fetch(connection, review_id, tenant_id)
             connection.execute(
-                "UPDATE reviews SET status = %s, result = %s, executed_at = %s "
-                "WHERE review_id = %s AND tenant_id = %s",
+                "UPDATE reviews SET status = %s, result = %s, executed_at = %s WHERE review_id = %s AND tenant_id = %s",
                 (
                     ReviewStatus.EXECUTED.value,
                     Jsonb(_json_safe(result)),
@@ -251,9 +258,7 @@ class PostgresReviewStore:
         cutoff = datetime.now(UTC) - older_than
         with self._transaction() as connection:
             rows = connection.execute(
-                "UPDATE reviews SET status = %s, failure = %s "
-                "WHERE status = %s AND executed_at < %s "
-                "RETURNING *",
+                "UPDATE reviews SET status = %s, failure = %s WHERE status = %s AND executed_at < %s RETURNING *",
                 (
                     ReviewStatus.FAILED.value,
                     "execution did not complete; outcome unknown",
@@ -382,4 +387,5 @@ class PostgresReviewStore:
 def _json_safe(value: dict[str, Any]) -> dict[str, Any]:
     """Match the SQLite store, which serializes results with ``default=str``."""
     import json
+
     return json.loads(json.dumps(value, default=str))

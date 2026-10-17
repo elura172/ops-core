@@ -172,14 +172,13 @@ class ShelfAuditService:
         audit_id: str | None = None,
     ) -> ShelfAuditResult:
         audit_id = audit_id or f"aud-{uuid.uuid4().hex[:12]}"
-        
+
         verified: list[VerifiedShelfItem] = []
         matched_expected_skus: set[str] = set()
         matched_other_skus: set[str] = set()
-        
+
         other_inventory = [
-            b for b in store_inventory
-            if b.status == "active" and (b.section != section or b.shelf != shelf)
+            b for b in store_inventory if b.status == "active" and (b.section != section or b.shelf != shelf)
         ]
 
         misplaced: list[MisplacedShelfItem] = []

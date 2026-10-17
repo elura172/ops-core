@@ -40,14 +40,26 @@ def handle_ebay_order_webhook(
     skus = EbayService.extract_skus_from_event(payload)
     if not skus:
         logger.info("ebay_webhook.no_skus_found", event_type=event_type)
-        return {"accepted": True, "status": 200, "message": "no SKUs detected in event", "processed_skus": []}
+        return {
+            "accepted": True,
+            "status": 200,
+            "message": "no SKUs detected in event",
+            "processed_skus": [],
+        }
 
     processed_skus: list[str] = []
     for sku in skus:
         try:
             proposed = operator.propose(
                 operation="sync_inventory",
-                payload={"sku": sku, "source_channel": "ebay", "tenant_id": tenant_id},
+                payload={
+                    "sku": sku,
+                    "source_channel": "ebay",
+                    "tenant_id": tenant_id,
+                    "order_id": str(
+                        payload.get("orderId") or payload.get("order_id") or payload.get("notificationId") or ""
+                    ),
+                },
                 tenant_id=tenant_id,
             )
             review_id = proposed["review_id"]
@@ -59,6 +71,7 @@ def handle_ebay_order_webhook(
     # Wake Corvus, the Vault Warden, to triage and execute dual delisting
     try:
         from app.agents.corvus import CorvusWarden
+
         warden = CorvusWarden(operator)
         triage_results = warden.wake_and_triage()
         logger.info("corvus.ebay_triage.complete", **triage_results)

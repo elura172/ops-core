@@ -79,9 +79,7 @@ def test_himalaya_sends_the_body_over_stdin_not_argv(monkeypatch):
         return Result()
 
     monkeypatch.setattr("app.customer_support.email.subprocess.run", fake_run)
-    response = CustomerResponse(
-        "c-1", "buyer@example.test", "Your order", "Tracking: ABC123", approved=True
-    )
+    response = CustomerResponse("c-1", "buyer@example.test", "Your order", "Tracking: ABC123", approved=True)
     HimalayaMailer(enabled=True).send(response)
 
     assert "Tracking: ABC123" not in " ".join(captured["argv"])

@@ -1,11 +1,8 @@
 from __future__ import annotations
 
-import pytest
-
 from app.domain.condition import (
     AbaaConditionGrade,
     AntiquarianConditionInspector,
-    DefectSeverity,
 )
 
 

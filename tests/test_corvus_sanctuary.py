@@ -1,14 +1,13 @@
 from __future__ import annotations
 
-import pytest
 from unittest.mock import MagicMock
 
 from app.agents.corvus import CorvusWarden
 from app.agents.sanctuary import CorvusSanctuary
-from app.review.queue import ReviewQueue
-from app.review.executor import ApprovedActionExecutor
 from app.api.operator import OperatorService
 from app.domain.audit import AuditEvent
+from app.review.executor import ApprovedActionExecutor
+from app.review.queue import ReviewQueue
 
 
 class MemoryAuditSink:
@@ -21,7 +20,7 @@ class MemoryAuditSink:
 
 def test_corvus_sanctuary_tribute_and_blessing():
     sanctuary = CorvusSanctuary(":memory:")
-    
+
     # 1. Record POS sync defense
     trib1 = sanctuary.record_defense(
         operation="sync_inventory",
@@ -99,4 +98,3 @@ def test_corvus_sanctuary_migration_discovery():
     assert migrations[5].version == 6
     assert migrations[5].name == "corvus_sanctuary"
     assert "CREATE TABLE IF NOT EXISTS corvus_sanctuary" in migrations[5].sql()
-

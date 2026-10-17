@@ -9,9 +9,7 @@ from app.ai.product_copy import (
 
 
 def test_local_provider_is_grounded_and_deterministic():
-    result = LocalCopyProvider().generate(
-        ProductCopyRequest("Storage Box", ("Glass", "Stackable"), "GB")
-    )
+    result = LocalCopyProvider().generate(ProductCopyRequest("Storage Box", ("Glass", "Stackable"), "GB"))
     assert result.claims == ()
     assert result.source_facts == ("Glass", "Stackable")
 

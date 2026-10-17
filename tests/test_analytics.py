@@ -9,9 +9,7 @@ from app.analytics.reporting import anomaly, deterministic_assignment, funnel, r
 
 
 def event(name, value="0", campaign="c-1"):
-    return AnalyticsEvent(
-        name, name, datetime.now(UTC), campaign_id=campaign, value_gbp=Decimal(value)
-    )
+    return AnalyticsEvent(name, name, datetime.now(UTC), campaign_id=campaign, value_gbp=Decimal(value))
 
 
 def test_funnel_and_campaign_revenue():
@@ -42,8 +40,7 @@ def test_assignment_is_not_order_sensitive():
     variants = ("A", "B", "C")
     pairs = [("user_ab", "user_ba"), ("abc123", "321cba"), ("xy9", "9yx")]
     collisions = sum(
-        deterministic_assignment("exp", a, variants).variant
-        == deterministic_assignment("exp", b, variants).variant
+        deterministic_assignment("exp", a, variants).variant == deterministic_assignment("exp", b, variants).variant
         for a, b in pairs
     )
     assert collisions < len(pairs)
@@ -55,8 +52,7 @@ def test_concurrent_experiments_are_independent():
     variants = ("A", "B", "C")
     subjects = [f"u{i}" for i in range(1500)]
     agreement = sum(
-        deterministic_assignment("exp-a", s, variants).variant
-        == deterministic_assignment("exp-b", s, variants).variant
+        deterministic_assignment("exp-a", s, variants).variant == deterministic_assignment("exp-b", s, variants).variant
         for s in subjects
     ) / len(subjects)
     assert 0.28 < agreement < 0.39
@@ -64,9 +60,7 @@ def test_concurrent_experiments_are_independent():
 
 def test_assignment_distributes_evenly():
     variants = ("A", "B", "C", "D")
-    counts = Counter(
-        deterministic_assignment("exp", f"u{i}", variants).variant for i in range(4000)
-    )
+    counts = Counter(deterministic_assignment("exp", f"u{i}", variants).variant for i in range(4000))
     assert set(counts) == set(variants)
     assert all(850 < n < 1150 for n in counts.values())
 

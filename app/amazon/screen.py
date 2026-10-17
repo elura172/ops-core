@@ -124,9 +124,7 @@ def screen(
         reasons = _rejections(listing, policy)
         landed = landed_cost_for.get(listing.asin)
         if landed is None:
-            reasons.append(
-                Rejection("no_landed_cost", "no landed-cost estimate — cannot compute margin")
-            )
+            reasons.append(Rejection("no_landed_cost", "no landed-cost estimate — cannot compute margin"))
         if reasons:
             rejected[listing.asin] = reasons
             continue
@@ -160,9 +158,7 @@ def screen(
             )
         if economics.roi < policy.min_roi:
             economic_reasons.append(
-                Rejection(
-                    "roi_too_low", f"ROI {economics.roi:.1%} below floor {policy.min_roi:.0%}"
-                )
+                Rejection("roi_too_low", f"ROI {economics.roi:.1%} below floor {policy.min_roi:.0%}")
             )
         if economic_reasons:
             rejected[listing.asin] = economic_reasons

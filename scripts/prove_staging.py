@@ -74,9 +74,7 @@ class StagingProofRunner:
             conn.execute(f"CREATE DATABASE {db_name}")
 
     def get_commit_sha(self) -> str:
-        res = subprocess.run(
-            ["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=True
-        )
+        res = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=True)
         return res.stdout.strip()
 
     def start_api_server(self, dsn: str) -> subprocess.Popen[str]:
@@ -127,9 +125,7 @@ class StagingProofRunner:
             while time.time() < deadline:
                 if proc.poll() is not None:
                     out = proc.stdout.read() if proc.stdout else ""
-                    raise RuntimeError(
-                        f"Server exited prematurely with code {proc.returncode}:\n{out}"
-                    )
+                    raise RuntimeError(f"Server exited prematurely with code {proc.returncode}:\n{out}")
                 try:
                     r = client.get("/health", timeout=1.0)
                     if r.status_code == 200:
@@ -173,9 +169,7 @@ class StagingProofRunner:
         migrations = migrate(STAGING_DSN)
         applied_names = [f"{m.version:04d}_{m.name}" for m in migrations]
         self.evidence["applied_migrations"] = applied_names
-        self.log(
-            "ISSUE_4", f"Clean PostgreSQL database migrated successfully from zero: {applied_names}"
-        )
+        self.log("ISSUE_4", f"Clean PostgreSQL database migrated successfully from zero: {applied_names}")
         assert len(migrations) == 3, f"Expected 3 migrations, got {len(migrations)}"
 
         # Boot API
@@ -211,9 +205,7 @@ class StagingProofRunner:
 
                 # 4. Correlation ID verification
                 cid_in = "test-corr-id-12345"
-                res_corr = client.get(
-                    "/reviews", headers={**auth_header(REVIEWER_TOKEN), "X-Correlation-Id": cid_in}
-                )
+                res_corr = client.get("/reviews", headers={**auth_header(REVIEWER_TOKEN), "X-Correlation-Id": cid_in})
                 assert res_corr.headers.get("X-Correlation-Id") == cid_in
                 self.log("ISSUE_4", f"Correlation ID reflected in response header: {cid_in}")
 
@@ -225,9 +217,7 @@ class StagingProofRunner:
                 res_h2 = client.get("/health")
                 assert res_h2.status_code == 200
                 assert res_h2.json()["mode"] == "dry-run"
-            self.log(
-                "ISSUE_4", "Second deployment succeeded cleanly without manual database repair"
-            )
+            self.log("ISSUE_4", "Second deployment succeeded cleanly without manual database repair")
         finally:
             self.stop_api_server(server2)
 
@@ -255,9 +245,7 @@ class StagingProofRunner:
                 payload=action_payload,
             )
             store.submit(item1)
-            self.log(
-                "ISSUE_7", f"Agent submitted review item: {item1.review_id} ({item1.operation})"
-            )
+            self.log("ISSUE_7", f"Agent submitted review item: {item1.review_id} ({item1.operation})")
 
             with httpx.Client(base_url=BASE_URL) as client:
                 reviewer_auth = auth_header(REVIEWER_TOKEN)
@@ -278,9 +266,7 @@ class StagingProofRunner:
                     headers=operator_auth,
                 )
                 assert res_op_decide.status_code == 403
-                self.log(
-                    "ISSUE_7", "Role check: Operator attempt to decide was refused (403 Forbidden)"
-                )
+                self.log("ISSUE_7", "Role check: Operator attempt to decide was refused (403 Forbidden)")
 
                 # 4. Role separation: Reviewer cannot execute
                 res_rev_exec = client.post(
@@ -288,9 +274,7 @@ class StagingProofRunner:
                     headers=reviewer_auth,
                 )
                 assert res_rev_exec.status_code == 403
-                self.log(
-                    "ISSUE_7", "Role check: Reviewer attempt to execute was refused (403 Forbidden)"
-                )
+                self.log("ISSUE_7", "Role check: Reviewer attempt to execute was refused (403 Forbidden)")
 
                 # 5. Reviewer approves
                 decision_corr = "corr-review-decision-001"
@@ -366,8 +350,7 @@ class StagingProofRunner:
                 assert res_pub_check.json()["status"] == "APPROVED"
                 self.log(
                     "ISSUE_7",
-                    "Negative case: Disabled adapter safely rejected (403) and "
-                    "left approval intact",
+                    "Negative case: Disabled adapter safely rejected (403) and left approval intact",
                 )
 
                 # 9. Ingest order webhooks to seed order events and quarantine
@@ -375,18 +358,14 @@ class StagingProofRunner:
                     {"event_id": "ev-ord-01-paid", "order_id": "ord-proof-01", "status": "PAID"}
                 ).encode()
                 sig_paid = sign_body(body_paid, WEBHOOK_SECRET)
-                r_wh1 = client.post(
-                    "/webhooks/orders", content=body_paid, headers={"x-signature": sig_paid}
-                )
+                r_wh1 = client.post("/webhooks/orders", content=body_paid, headers={"x-signature": sig_paid})
                 assert r_wh1.status_code == 200
 
                 body_del = json.dumps(
                     {"event_id": "ev-ord-01-del", "order_id": "ord-proof-01", "status": "DELIVERED"}
                 ).encode()
                 sig_del = sign_body(body_del, WEBHOOK_SECRET)
-                r_wh2 = client.post(
-                    "/webhooks/orders", content=body_del, headers={"x-signature": sig_del}
-                )
+                r_wh2 = client.post("/webhooks/orders", content=body_del, headers={"x-signature": sig_del})
                 assert r_wh2.status_code == 200
 
                 # Seed quarantine event: DELIVERED -> CANCELLED is unreachable
@@ -394,9 +373,7 @@ class StagingProofRunner:
                     {"event_id": "ev-ord-01-bad", "order_id": "ord-proof-01", "status": "CANCELLED"}
                 ).encode()
                 sig_quar = sign_body(body_quar, WEBHOOK_SECRET)
-                r_wh3 = client.post(
-                    "/webhooks/orders", content=body_quar, headers={"x-signature": sig_quar}
-                )
+                r_wh3 = client.post("/webhooks/orders", content=body_quar, headers={"x-signature": sig_quar})
                 assert r_wh3.status_code == 202
                 assert r_wh3.json()["outcome"] == "quarantined"
                 self.log("ISSUE_7", "Webhook order ingest and quarantine seeded successfully")
@@ -513,8 +490,7 @@ class StagingProofRunner:
                 assert resumed_data["result"]["dry_run"] is True
                 self.log(
                     "ISSUE_5",
-                    "Restored app safely resumed: replay returned exact stored "
-                    "result without executing adapter",
+                    "Restored app safely resumed: replay returned exact stored result without executing adapter",
                 )
 
                 # Smoke test quarantined resolution on restored app
@@ -529,9 +505,7 @@ class StagingProofRunner:
                 )
                 assert res_resolve.status_code == 200
                 assert res_resolve.json()["resolved"] is True
-                self.log(
-                    "ISSUE_5", f"Restored app smoke test: resolved quarantined event {event_id}"
-                )
+                self.log("ISSUE_5", f"Restored app smoke test: resolved quarantined event {event_id}")
         finally:
             self.stop_api_server(server_restored)
 
@@ -543,9 +517,7 @@ class StagingProofRunner:
         # =====================================================================
         # PHASE 4: Issue #6 - Wire Staging Metrics and Prove Alert Delivery
         # =====================================================================
-        self.log(
-            "ISSUE_6", "=== Starting Phase 4: Wire staging metrics and prove alert delivery ==="
-        )
+        self.log("ISSUE_6", "=== Starting Phase 4: Wire staging metrics and prove alert delivery ===")
         # Seed an abandoned EXECUTING review in STAGING_DB
         insert_sql = (
             "INSERT INTO reviews (review_id, operation, payload, status, "
@@ -600,9 +572,7 @@ class StagingProofRunner:
                 res_metrics = client.get("/metrics", headers=reviewer_auth)
                 assert res_metrics.status_code == 200
                 assert "ops_review_stale_recoveries_total" in res_metrics.text
-                self.log(
-                    "ISSUE_6", "Verified ops_review_stale_recoveries_total in Prometheus /metrics"
-                )
+                self.log("ISSUE_6", "Verified ops_review_stale_recoveries_total in Prometheus /metrics")
         finally:
             self.stop_api_server(server_alerts)
 

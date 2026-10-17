@@ -22,9 +22,7 @@ class SLAWatchdog:
         self.sla_hours = sla_hours
         self.warning_ratio = warning_ratio
 
-    def audit(
-        self, orders: Iterable[Order], alert: Callable[[SLAEvaluation], None]
-    ) -> list[SLAEvaluation]:
+    def audit(self, orders: Iterable[Order], alert: Callable[[SLAEvaluation], None]) -> list[SLAEvaluation]:
         evaluations: list[SLAEvaluation] = []
         for order in orders:
             if order.status in OUT_OF_SCOPE or order.created_at_estimated:

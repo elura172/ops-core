@@ -114,6 +114,62 @@ def test_blanking_an_attestation_does_not_attest_it(clean_env, blank):
         LaunchGate(checklist, explicitly_enabled=True).assert_live_allowed()
 
 
+def test_missing_ops_tokens_does_not_install_a_known_admin_credential(clean_env):
+    from app.config import Settings
+
+    settings = Settings.from_env_permissive()
+
+    assert settings.tokens.configured is False
+    assert settings.launch_checklist().approval_required is False
+
+
+def test_stripe_price_id_is_loaded_from_environment(clean_env):
+    from app.config import Settings
+
+    clean_env.setenv("STRIPE_PRICE_ID", "price_test_configured")
+
+    settings = Settings.from_env_permissive()
+
+    assert settings.stripe_price_id == "price_test_configured"
+
+
+def test_postgres_url_is_shared_by_all_store_settings(clean_env):
+    from app.config import Settings
+
+    store_envs = (
+        "ORDER_DB",
+        "REVIEW_DB",
+        "USER_DB",
+        "INVENTORY_DB",
+        "WANT_LIST_DB",
+    )
+    for name in (*store_envs, "POSTGRES_URL"):
+        clean_env.delenv(name, raising=False)
+    clean_env.setenv("POSTGRES_URL", "postgresql://ops@example.test/ops_core")
+
+    settings = Settings.from_env_permissive()
+
+    assert {getattr(settings, field.lower()) for field in store_envs} == {"postgresql://ops@example.test/ops_core"}
+
+
+def test_vercel_refuses_ephemeral_store_fallback(clean_env):
+    from app.config import Settings
+
+    clean_env.setenv("VERCEL", "1")
+    for name in (
+        "POSTGRES_URL",
+        "ORDER_DB",
+        "REVIEW_DB",
+        "USER_DB",
+        "INVENTORY_DB",
+        "WANT_LIST_DB",
+    ):
+        clean_env.delenv(name, raising=False)
+
+    with pytest.raises(RuntimeError, match="Vercel deployments require durable PostgreSQL"):
+        Settings.from_env_permissive()
+
+
 def test_an_unparseable_flag_is_a_deployment_fault(clean_env):
     """A typo must not be silently read as an attestation in either direction."""
     from app.config import Settings

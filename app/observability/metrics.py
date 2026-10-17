@@ -58,9 +58,7 @@ class Counter:
 
 
 class Histogram:
-    def __init__(
-        self, name: str, help_text: str, buckets: tuple[float, ...] = _DEFAULT_BUCKETS
-    ) -> None:
+    def __init__(self, name: str, help_text: str, buckets: tuple[float, ...] = _DEFAULT_BUCKETS) -> None:
         self.name = name
         self.help_text = help_text
         self.buckets = buckets
@@ -138,8 +136,7 @@ REGISTRY = Registry()
 def executions_total() -> Counter:
     return REGISTRY.counter(
         "ops_review_executions_total",
-        "Approved-action execution attempts by outcome "
-        "(completed, failed, replayed, claim_rejected).",
+        "Approved-action execution attempts by outcome (completed, failed, replayed, claim_rejected).",
     )
 
 

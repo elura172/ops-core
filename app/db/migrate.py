@@ -11,12 +11,11 @@ from __future__ import annotations
 
 import re
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
 import psycopg
-
-import time
 
 from app.observability.logging import get_logger
 
@@ -37,7 +36,7 @@ def connect_with_retry(
         except Exception as exc:
             last_exc = exc
             if attempt < max_retries - 1:
-                delay = initial_delay * (2 ** attempt)
+                delay = initial_delay * (2**attempt)
                 logger.warning(
                     "db.connect_retry",
                     attempt=attempt + 1,
@@ -87,8 +86,7 @@ def discover(directory: Path = MIGRATIONS_DIR) -> list[Migration]:
         version = int(match.group(1))
         if version in found:
             raise MigrationError(
-                f"duplicate migration version {version:04d}: "
-                f"{found[version].path.name} and {path.name}"
+                f"duplicate migration version {version:04d}: {found[version].path.name} and {path.name}"
             )
         found[version] = Migration(version, match.group(2), path)
     return [found[version] for version in sorted(found)]
@@ -108,9 +106,7 @@ def migrate(dsn: str, directory: Path = MIGRATIONS_DIR) -> list[Migration]:
                 "  applied_at timestamptz NOT NULL DEFAULT now()"
                 ")"
             )
-            rows = connection.execute(
-                "SELECT version, name FROM schema_migrations ORDER BY version"
-            ).fetchall()
+            rows = connection.execute("SELECT version, name FROM schema_migrations ORDER BY version").fetchall()
             recorded = {row[0]: row[1] for row in rows}
 
             # Refuse drift instead of guessing: every applied migration must
@@ -119,8 +115,7 @@ def migrate(dsn: str, directory: Path = MIGRATIONS_DIR) -> list[Migration]:
             for version, name in recorded.items():
                 if on_disk.get(version) != name:
                     raise MigrationError(
-                        f"applied migration {version:04d}_{name} does not match "
-                        f"the files on disk; refusing to continue"
+                        f"applied migration {version:04d}_{name} does not match the files on disk; refusing to continue"
                     )
 
             for migration in migrations:

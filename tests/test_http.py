@@ -1,6 +1,8 @@
 import hashlib
 import hmac
 from dataclasses import replace
+from datetime import UTC, datetime
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -9,8 +11,12 @@ from app.api.http import create_app
 from app.api.operator import OperatorService
 from app.api.security import TokenRegistry
 from app.api.tiktok_client import TikTokClient
+from app.auth import create_access_token
+from app.db.sqlite import SQLiteOrderRepository
+from app.db.users import SQLiteUserStore
 from app.domain.audit import AuditLog
-from app.domain.order_store import OrderStore
+from app.domain.order_store import OrderEvent, OrderStore
+from app.domain.orders import OrderStatus
 from app.review.executor import ApprovedActionExecutor
 from app.review.queue import ReviewItem, ReviewQueue
 from tests.conftest import ADMIN_TOKEN, OPERATOR_TOKEN, REVIEWER_TOKEN, WEBHOOK_SECRET, auth
@@ -25,7 +31,11 @@ def client(settings):
         ApprovedActionExecutor(TikTokClient("token", "shop", dry_run=True), AuditLog()),
     )
     return TestClient(
-        create_app(operator=operator, order_repository=OrderStore(), settings=settings)
+        create_app(
+            operator=operator,
+            order_repository=SQLiteOrderRepository(":memory:"),
+            settings=settings,
+        )
     )
 
 
@@ -49,12 +59,7 @@ def test_review_endpoints_reject_unknown_token(client):
 
 def test_permissions_are_enforced_per_role(client):
     # A reviewer may decide but not execute; an operator is the mirror image.
-    assert (
-        client.post(
-            "/reviews/r-1/decision", json={"approve": True}, headers=auth(REVIEWER_TOKEN)
-        ).status_code
-        == 200
-    )
+    assert client.post("/reviews/r-1/decision", json={"approve": True}, headers=auth(REVIEWER_TOKEN)).status_code == 200
     assert client.post("/reviews/r-1/execute", headers=auth(REVIEWER_TOKEN)).status_code == 403
     assert client.post("/reviews/r-1/execute", headers=auth(OPERATOR_TOKEN)).status_code == 200
 
@@ -115,10 +120,10 @@ def test_webhook_creates_fulfill_order_proposal(client):
     response_reviews = client.get("/reviews", headers=auth(ADMIN_TOKEN))
     assert response_reviews.status_code == 200
     reviews = response_reviews.json()
-    
+
     fulfill_reviews = [r for r in reviews if r["operation"] == "fulfill_order"]
     assert len(fulfill_reviews) == 1
-    
+
     # Detail should contain the payload
     review_id = fulfill_reviews[0]["review_id"]
     response_detail = client.get(f"/reviews/{review_id}", headers=auth(ADMIN_TOKEN))
@@ -174,17 +179,119 @@ def test_quarantined_events_are_reachable_and_resolvable(client):
     assert [row["event_id"] for row in open_events] == ["e-21"]
 
     # Resolution is a decision, so an execute-only operator cannot make it.
-    assert (
-        client.post("/orders/quarantined/e-21/resolve", headers=auth(OPERATOR_TOKEN)).status_code
-        == 403
-    )
+    assert client.post("/orders/quarantined/e-21/resolve", headers=auth(OPERATOR_TOKEN)).status_code == 403
     resolved = client.post("/orders/quarantined/e-21/resolve", headers=auth(REVIEWER_TOKEN))
     assert resolved.status_code == 200
     assert resolved.json()["resolved_by"] == "ada"
     assert client.get("/orders/quarantined", headers=auth(REVIEWER_TOKEN)).json() == []
+    assert client.post("/orders/quarantined/e-21/resolve", headers=auth(REVIEWER_TOKEN)).status_code == 404
+
+
+def test_quarantined_events_are_scoped_to_the_authenticated_tenant(settings):
+    repository = SQLiteOrderRepository(":memory:")
+    user_store = SQLiteUserStore(":memory:")
+    tenant_two_id = user_store.create_tenant("Tenant Two")
+    user_store.update_tenant_stripe_customer(tenant_two_id, "cus_tenant_two")
+    user_store.update_subscription_status("cus_tenant_two", "active")
+    occurred_at = datetime.now(UTC)
+    for tenant_id in (1, tenant_two_id):
+        repository.apply(
+            OrderEvent(
+                f"delivered-t{tenant_id}",
+                f"o-t{tenant_id}",
+                OrderStatus.DELIVERED,
+                occurred_at,
+            ),
+            tenant_id=tenant_id,
+        )
+        repository.apply(
+            OrderEvent(
+                f"cancelled-t{tenant_id}",
+                f"o-t{tenant_id}",
+                OrderStatus.CANCELLED,
+                occurred_at,
+            ),
+            tenant_id=tenant_id,
+        )
+
+    client = TestClient(
+        create_app(
+            order_repository=repository,
+            settings=settings,
+            user_store=user_store,
+        )
+    )
+    tenant_one_token = create_access_token({"sub": "one@example.test", "tenant_id": 1, "role": "admin"})
+    tenant_two_token = create_access_token({"sub": "two@example.test", "tenant_id": tenant_two_id, "role": "admin"})
+
+    tenant_two_events = client.get("/orders/quarantined", headers=auth(tenant_two_token))
+    assert [row["event_id"] for row in tenant_two_events.json()] == [f"cancelled-t{tenant_two_id}"]
     assert (
-        client.post("/orders/quarantined/e-21/resolve", headers=auth(REVIEWER_TOKEN)).status_code
+        client.post(
+            "/orders/quarantined/cancelled-t1/resolve",
+            headers=auth(tenant_two_token),
+        ).status_code
         == 404
+    )
+    assert (
+        client.post(
+            f"/orders/quarantined/cancelled-t{tenant_two_id}/resolve",
+            headers=auth(tenant_two_token),
+        ).status_code
+        == 200
+    )
+    tenant_one_events = client.get("/orders/quarantined", headers=auth(tenant_one_token))
+    assert [row["event_id"] for row in tenant_one_events.json()] == ["cancelled-t1"]
+
+
+def test_inactive_tenant_can_reach_checkout_but_not_workspace_apis(settings, monkeypatch):
+    from app.api.http import create_app
+
+    monkeypatch.setattr(
+        "stripe.StripeClient",
+        lambda _: SimpleNamespace(
+            v1=SimpleNamespace(
+                checkout=SimpleNamespace(
+                    sessions=SimpleNamespace(create=lambda **_: SimpleNamespace(url="https://checkout.test/session"))
+                )
+            )
+        ),
+    )
+    checkout_settings = replace(
+        settings,
+        stripe_secret_key="sk_test_unit",
+        stripe_price_id="price_test_monthly",
+    )
+    client = TestClient(
+        create_app(settings=checkout_settings),
+        base_url="https://ops-core.test",
+    )
+    token = create_access_token({"sub": "unpaid@example.test", "tenant_id": 999, "role": "admin"})
+    headers = auth(token)
+
+    identity = client.get("/auth/me", headers=headers)
+    assert identity.status_code == 200
+    assert identity.json()["subscription_status"] == "inactive"
+    checkout = client.post(
+        "/billing/checkout",
+        json={
+            "success_url": "https://ops-core.test/success",
+            "cancel_url": "https://ops-core.test/cancel",
+        },
+        headers=headers,
+    )
+    assert checkout.status_code == 200
+    assert client.get("/reviews", headers=headers).status_code == 402
+    assert client.get("/inventory", headers=headers).status_code == 402
+    assert client.get("/integrations", headers=headers).status_code == 402
+    assert client.get("/analytics", headers=headers).status_code == 402
+    assert (
+        client.post(
+            "/integrations",
+            json={"provider": "square", "api_key": "unused-inactive-key"},
+            headers=headers,
+        ).status_code
+        == 402
     )
 
 
@@ -195,14 +302,10 @@ def test_approvals_survive_a_process_restart(tmp_path, settings):
     from app.review.queue import ReviewItem
 
     durable = replace(settings, review_db=str(tmp_path / "reviews.db"))
-    SQLiteReviewStore(durable.review_db).submit(
-        ReviewItem("r-restart", "update_inventory", {"changes": {"sku-1": 3}})
-    )
+    SQLiteReviewStore(durable.review_db).submit(ReviewItem("r-restart", "update_inventory", {"changes": {"sku-1": 3}}))
 
     first_boot = TestClient(create_app(order_repository=OrderStore(), settings=durable))
-    first_boot.post(
-        "/reviews/r-restart/decision", json={"approve": True}, headers=auth(REVIEWER_TOKEN)
-    )
+    first_boot.post("/reviews/r-restart/decision", json={"approve": True}, headers=auth(REVIEWER_TOKEN))
     executed = first_boot.post("/reviews/r-restart/execute", headers=auth(OPERATOR_TOKEN)).json()
     assert executed["replayed"] is False
 

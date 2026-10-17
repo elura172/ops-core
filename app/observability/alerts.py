@@ -43,10 +43,7 @@ def default_rules() -> list[AlertRule]:
         AlertRule(
             name="ReviewExecutionFailed",
             severity="page",
-            message=(
-                "an approved mutation failed mid-execution; the item is terminal "
-                "and needs a human re-approval"
-            ),
+            message=("an approved mutation failed mid-execution; the item is terminal and needs a human re-approval"),
             value=lambda: metrics.executions_total().value(outcome="failed"),
         ),
         AlertRule(

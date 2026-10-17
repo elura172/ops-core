@@ -27,9 +27,7 @@ ISBN_PATTERN = re.compile(
 )
 
 RETRYABLE_STATUS = frozenset({408, 429, 500, 502, 503, 504})
-OPEN_LIBRARY_FIELDS = (
-    "key,title,author_name,first_publish_year,publisher,isbn,cover_i,edition_count"
-)
+OPEN_LIBRARY_FIELDS = "key,title,author_name,first_publish_year,publisher,isbn,cover_i,edition_count"
 
 
 def clean_isbn(raw: str) -> str:
@@ -71,9 +69,7 @@ def compute_string_similarity(a: str, b: str) -> float:
     # Token overlap
     tokens_a = _tokenize(a_clean)
     tokens_b = _tokenize(b_clean)
-    jaccard = (
-        len(tokens_a & tokens_b) / len(tokens_a | tokens_b) if (tokens_a and tokens_b) else 0.0
-    )
+    jaccard = len(tokens_a & tokens_b) / len(tokens_a | tokens_b) if (tokens_a and tokens_b) else 0.0
 
     # Sequence alignment
     seq_ratio = difflib.SequenceMatcher(None, a_clean, b_clean).ratio()
@@ -99,11 +95,7 @@ def score_candidate(
     # 2. Author match (35% weight)
     author_score = 0.0
     if spine.authors and candidate.authors:
-        author_scores = [
-            compute_string_similarity(a1, a2)
-            for a1 in spine.authors
-            for a2 in candidate.authors
-        ]
+        author_scores = [compute_string_similarity(a1, a2) for a1 in spine.authors for a2 in candidate.authors]
         author_score = max(author_scores) if author_scores else 0.0
     elif not spine.authors:
         author_score = 0.5
@@ -191,8 +183,7 @@ class OpenLibraryMetadataResolver(MetadataResolver):
     ) -> tuple[bool, str, str]:
         """Evaluates whether this book requires opening to copyright page."""
         has_first_edition_marker = any(
-            re.search(r"\b(first|1st|special|limited)\b", m, re.IGNORECASE)
-            for m in spine.edition_or_series_markers
+            re.search(r"\b(first|1st|special|limited)\b", m, re.IGNORECASE) for m in spine.edition_or_series_markers
         )
         if has_first_edition_marker:
             return (
@@ -212,11 +203,7 @@ class OpenLibraryMetadataResolver(MetadataResolver):
                 "inspect_edition_points",
             )
 
-        if (
-            candidate.first_publish_year
-            and candidate.first_publish_year < 1970
-            and not detected_isbn
-        ):
+        if candidate.first_publish_year and candidate.first_publish_year < 1970 and not detected_isbn:
             return (
                 True,
                 "Pre-1970 vintage title: check title/copyright page for exact print date.",

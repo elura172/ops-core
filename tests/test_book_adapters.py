@@ -7,6 +7,7 @@ from app.publish.books import (
     BiblioListingAdapter,
     BookListingOrchestrator,
     EbayListingAdapter,
+    ShopifyListingAdapter,
 )
 from app.publish.inventory_sync import MultiChannelInventorySync
 
@@ -61,6 +62,19 @@ def test_biblio_adapter_dry_run():
     )
     assert listing_id == "biblio-dryrun-BK-123"
     assert adapter.delist_book("BK-123") is True
+
+
+def test_shopify_defaults_to_dry_run_and_refuses_unsupported_live_operations():
+    adapter = ShopifyListingAdapter("https://example.myshopify.com", "token")
+    assert adapter.dry_run is True
+    assert (
+        adapter.list_book("BK-123", "Test Book", "Good", Decimal("10.00"), {}) == "gid://shopify/Product/dryrun-BK-123"
+    )
+
+    live_adapter = ShopifyListingAdapter("https://example.myshopify.com", "token", dry_run=False)
+    assert live_adapter.list_book("BK-123", "Test Book", "Good", Decimal("10.00"), {}) is None
+    assert live_adapter.delist_book("BK-123") is False
+    assert live_adapter.cancel_order("ORDER-1") is False
 
 
 def test_alibris_adapter_dry_run():
@@ -180,4 +194,3 @@ def test_orchestrator_physical_only_bargain_bin():
     assert "sku" in result
     assert result["details"]["title"] == "Old Paperback"
     assert result["details"]["in_store_price_cad"] == Decimal("8.00")
-

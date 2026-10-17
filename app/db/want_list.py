@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-import json
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any, Protocol
 
@@ -65,7 +64,9 @@ class WantListStore(Protocol):
 
     def create_want(self, want: WantItem) -> WantItem: ...
     def get_want(self, want_id: str, tenant_id: int = 1) -> WantItem | None: ...
-    def list_wants(self, tenant_id: int = 1, collector_id: str | None = None, status: str | None = None) -> list[WantItem]: ...
+    def list_wants(
+        self, tenant_id: int = 1, collector_id: str | None = None, status: str | None = None
+    ) -> list[WantItem]: ...
     def update_want(self, want_id: str, tenant_id: int = 1, **kwargs: Any) -> WantItem | None: ...
     def delete_want(self, want_id: str, tenant_id: int = 1) -> bool: ...
 
@@ -310,7 +311,8 @@ class SQLiteWantListStore:
             ),
         ]
         conn.executemany(
-            "INSERT INTO want_items (id, collector_id, tenant_id, title, author, max_price_cad, min_condition, binding, keywords, status, created_at, updated_at) "
+            "INSERT INTO want_items (id, collector_id, tenant_id, title, author, max_price_cad, "
+            "min_condition, binding, keywords, status, created_at, updated_at) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             sample_wants,
         )
@@ -366,7 +368,9 @@ class SQLiteWantListStore:
             if query:
                 q = f"%{query}%"
                 cur = conn.execute(
-                    "SELECT * FROM collectors WHERE tenant_id = ? AND (name LIKE ? OR email LIKE ? OR phone LIKE ? OR notes LIKE ?) ORDER BY name ASC",
+                    "SELECT * FROM collectors WHERE tenant_id = ? "
+                    "AND (name LIKE ? OR email LIKE ? OR phone LIKE ? OR notes LIKE ?) "
+                    "ORDER BY name ASC",
                     (tenant_id, q, q, q, q),
                 )
             else:
@@ -403,7 +407,8 @@ class SQLiteWantListStore:
     def create_want(self, want: WantItem) -> WantItem:
         with self._transaction() as conn:
             conn.execute(
-                "INSERT INTO want_items (id, collector_id, tenant_id, title, author, max_price_cad, min_condition, binding, keywords, status, created_at, updated_at) "
+                "INSERT INTO want_items (id, collector_id, tenant_id, title, author, max_price_cad, "
+                "min_condition, binding, keywords, status, created_at, updated_at) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     want.id,
@@ -431,7 +436,9 @@ class SQLiteWantListStore:
             row = cur.fetchone()
             return _row_to_want(row) if row else None
 
-    def list_wants(self, tenant_id: int = 1, collector_id: str | None = None, status: str | None = None) -> list[WantItem]:
+    def list_wants(
+        self, tenant_id: int = 1, collector_id: str | None = None, status: str | None = None
+    ) -> list[WantItem]:
         query = "SELECT * FROM want_items WHERE tenant_id = ?"
         params: list[Any] = [tenant_id]
         if collector_id:
@@ -449,7 +456,15 @@ class SQLiteWantListStore:
         current = self.get_want(want_id, tenant_id=tenant_id)
         if not current:
             return None
-        allowed = {"title", "author", "max_price_cad", "min_condition", "binding", "keywords", "status"}
+        allowed = {
+            "title",
+            "author",
+            "max_price_cad",
+            "min_condition",
+            "binding",
+            "keywords",
+            "status",
+        }
         updates: dict[str, Any] = {}
         for k, v in kwargs.items():
             if k in allowed:
@@ -476,9 +491,14 @@ class SQLiteWantListStore:
 
     # Hold operations
     def create_hold(self, hold: CollectorHold) -> CollectorHold:
+        ledger = getattr(self, "stock_ledger", None)
+        if ledger and hold.status == "active":
+            ledger.hold(hold.tenant_id, hold.sku, hold.id, hold.expires_at.timestamp())
         with self._transaction() as conn:
             conn.execute(
-                "INSERT INTO collector_holds (id, tenant_id, sku, want_item_id, collector_id, held_at, expires_at, status, notes, book_title, book_author, collector_name, price_cad, claimed_at, released_at, created_at) "
+                "INSERT INTO collector_holds (id, tenant_id, sku, want_item_id, collector_id, "
+                "held_at, expires_at, status, notes, book_title, book_author, collector_name, "
+                "price_cad, claimed_at, released_at, created_at) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     hold.id,
@@ -534,6 +554,12 @@ class SQLiteWantListStore:
         current = self.get_hold(hold_id, tenant_id=tenant_id)
         if not current:
             return None
+        ledger = getattr(self, "stock_ledger", None)
+        if ledger:
+            status = kwargs.get("status", current.status)
+            if status == "active":
+                expiry = kwargs.get("expires_at", current.expires_at)
+                ledger.hold(tenant_id, current.sku, current.id, expiry.timestamp())
         allowed = {"status", "notes", "claimed_at", "released_at", "expires_at"}
         updates: dict[str, Any] = {}
         for k, v in kwargs.items():
@@ -548,13 +574,15 @@ class SQLiteWantListStore:
         params = list(updates.values()) + [hold_id, tenant_id]
         with self._transaction() as conn:
             conn.execute(f"UPDATE collector_holds SET {clause} WHERE id = ? AND tenant_id = ?", params)
+        if ledger and kwargs.get("status") in ("released", "expired") and not kwargs.get("stock_transferred"):
+            ledger.release_hold(tenant_id, current.sku, current.id)
         return self.get_hold(hold_id, tenant_id=tenant_id)
 
 
 class PostgresWantListStore:
     def __init__(self, dsn: str, *, pool_size: int = 3) -> None:
-        from psycopg_pool import ConnectionPool
         from psycopg.rows import dict_row
+        from psycopg_pool import ConnectionPool
 
         self.pool = ConnectionPool(
             dsn,
@@ -574,28 +602,73 @@ class PostgresWantListStore:
                 if row and row["cnt"] == 0:
                     now = datetime.now(UTC)
                     conn.execute(
-                        "INSERT INTO collectors (id, tenant_id, name, email, phone, notes, created_at, updated_at) VALUES "
+                        "INSERT INTO collectors (id, tenant_id, name, email, phone, notes, "
+                        "created_at, updated_at) VALUES "
                         "(%s, 1, %s, %s, %s, %s, %s, %s), "
                         "(%s, 1, %s, %s, %s, %s, %s, %s), "
                         "(%s, 1, %s, %s, %s, %s, %s, %s)",
                         (
-                            "col-arthur-pendelton", "Dr. Arthur Pendelton", "arthur.pendelton@sympatico.ca", "(613) 555-0144",
-                            "Early Canadiana collector, Hugh MacLennan firsts, Bank St. regular.", now, now,
-                            "col-eleanor-vance", "Prof. Eleanor Vance", "eleanor.vance@carleton.ca", "(613) 555-0182",
-                            "Carleton English literature faculty. Collecting Robertson Davies firsts in jacket.", now, now,
-                            "col-michael-davies", "Michael Davies", "mdavies@ottawa-history.org", "(613) 555-0199",
-                            "Arctic exploration, polar journals, Canadian geographic expeditions.", now, now,
+                            "col-arthur-pendelton",
+                            "Dr. Arthur Pendelton",
+                            "arthur.pendelton@sympatico.ca",
+                            "(613) 555-0144",
+                            "Early Canadiana collector, Hugh MacLennan firsts, Bank St. regular.",
+                            now,
+                            now,
+                            "col-eleanor-vance",
+                            "Prof. Eleanor Vance",
+                            "eleanor.vance@carleton.ca",
+                            "(613) 555-0182",
+                            "Carleton English literature faculty. Collecting Robertson Davies firsts in jacket.",
+                            now,
+                            now,
+                            "col-michael-davies",
+                            "Michael Davies",
+                            "mdavies@ottawa-history.org",
+                            "(613) 555-0199",
+                            "Arctic exploration, polar journals, Canadian geographic expeditions.",
+                            now,
+                            now,
                         ),
                     )
                     conn.execute(
-                        "INSERT INTO want_items (id, collector_id, tenant_id, title, author, max_price_cad, min_condition, binding, keywords, status, created_at, updated_at) VALUES "
+                        "INSERT INTO want_items (id, collector_id, tenant_id, title, author, "
+                        "max_price_cad, min_condition, binding, keywords, status, created_at, "
+                        "updated_at) VALUES "
                         "(%s, %s, 1, %s, %s, %s, %s, %s, %s, 'active', %s, %s), "
                         "(%s, %s, 1, %s, %s, %s, %s, %s, %s, 'active', %s, %s), "
                         "(%s, %s, 1, %s, %s, %s, %s, %s, %s, 'active', %s, %s)",
                         (
-                            "wnt-two-solitudes", "col-arthur-pendelton", "Two Solitudes", "Hugh MacLennan", Decimal("175.00"), "Good", "Hardcover", "Collins 1945 first edition with dust jacket preferred.", now, now,
-                            "wnt-fifth-business", "col-eleanor-vance", "Fifth Business", "Robertson Davies", Decimal("120.00"), "Very Good", "Hardcover", "Macmillan 1970 first edition.", now, now,
-                            "wnt-friendly-arctic", "col-michael-davies", "The Friendly Arctic", "Vilhjalmur Stefansson", Decimal("250.00"), "Good", "Hardcover", "Macmillan 1921 with original folding map intact.", now, now,
+                            "wnt-two-solitudes",
+                            "col-arthur-pendelton",
+                            "Two Solitudes",
+                            "Hugh MacLennan",
+                            Decimal("175.00"),
+                            "Good",
+                            "Hardcover",
+                            "Collins 1945 first edition with dust jacket preferred.",
+                            now,
+                            now,
+                            "wnt-fifth-business",
+                            "col-eleanor-vance",
+                            "Fifth Business",
+                            "Robertson Davies",
+                            Decimal("120.00"),
+                            "Very Good",
+                            "Hardcover",
+                            "Macmillan 1970 first edition.",
+                            now,
+                            now,
+                            "wnt-friendly-arctic",
+                            "col-michael-davies",
+                            "The Friendly Arctic",
+                            "Vilhjalmur Stefansson",
+                            Decimal("250.00"),
+                            "Good",
+                            "Hardcover",
+                            "Macmillan 1921 with original folding map intact.",
+                            now,
+                            now,
                         ),
                     )
         except Exception:
@@ -634,7 +707,9 @@ class PostgresWantListStore:
             if query:
                 q = f"%{query}%"
                 cur = conn.execute(
-                    "SELECT * FROM collectors WHERE tenant_id = %s AND (name ILIKE %s OR email ILIKE %s OR phone ILIKE %s OR notes ILIKE %s) ORDER BY name ASC",
+                    "SELECT * FROM collectors WHERE tenant_id = %s "
+                    "AND (name ILIKE %s OR email ILIKE %s OR phone ILIKE %s OR notes ILIKE %s) "
+                    "ORDER BY name ASC",
                     (tenant_id, q, q, q, q),
                 )
             else:
@@ -671,7 +746,8 @@ class PostgresWantListStore:
     def create_want(self, want: WantItem) -> WantItem:
         with self.pool.connection() as conn, conn.transaction():
             conn.execute(
-                "INSERT INTO want_items (id, collector_id, tenant_id, title, author, max_price_cad, min_condition, binding, keywords, status, created_at, updated_at) "
+                "INSERT INTO want_items (id, collector_id, tenant_id, title, author, max_price_cad, "
+                "min_condition, binding, keywords, status, created_at, updated_at) "
                 "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
                 (
                     want.id,
@@ -699,7 +775,9 @@ class PostgresWantListStore:
             row = cur.fetchone()
             return _row_to_want(row) if row else None
 
-    def list_wants(self, tenant_id: int = 1, collector_id: str | None = None, status: str | None = None) -> list[WantItem]:
+    def list_wants(
+        self, tenant_id: int = 1, collector_id: str | None = None, status: str | None = None
+    ) -> list[WantItem]:
         query = "SELECT * FROM want_items WHERE tenant_id = %s"
         params: list[Any] = [tenant_id]
         if collector_id:
@@ -717,7 +795,15 @@ class PostgresWantListStore:
         current = self.get_want(want_id, tenant_id=tenant_id)
         if not current:
             return None
-        allowed = {"title", "author", "max_price_cad", "min_condition", "binding", "keywords", "status"}
+        allowed = {
+            "title",
+            "author",
+            "max_price_cad",
+            "min_condition",
+            "binding",
+            "keywords",
+            "status",
+        }
         updates: dict[str, Any] = {}
         for k, v in kwargs.items():
             if k in allowed:
@@ -741,9 +827,14 @@ class PostgresWantListStore:
 
     # Hold operations
     def create_hold(self, hold: CollectorHold) -> CollectorHold:
+        ledger = getattr(self, "stock_ledger", None)
+        if ledger and hold.status == "active":
+            ledger.hold(hold.tenant_id, hold.sku, hold.id, hold.expires_at.timestamp())
         with self.pool.connection() as conn, conn.transaction():
             conn.execute(
-                "INSERT INTO collector_holds (id, tenant_id, sku, want_item_id, collector_id, held_at, expires_at, status, notes, book_title, book_author, collector_name, price_cad, claimed_at, released_at, created_at) "
+                "INSERT INTO collector_holds (id, tenant_id, sku, want_item_id, collector_id, "
+                "held_at, expires_at, status, notes, book_title, book_author, collector_name, "
+                "price_cad, claimed_at, released_at, created_at) "
                 "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
                 (
                     hold.id,
@@ -799,6 +890,12 @@ class PostgresWantListStore:
         current = self.get_hold(hold_id, tenant_id=tenant_id)
         if not current:
             return None
+        ledger = getattr(self, "stock_ledger", None)
+        if ledger:
+            status = kwargs.get("status", current.status)
+            if status == "active":
+                expiry = kwargs.get("expires_at", current.expires_at)
+                ledger.hold(tenant_id, current.sku, current.id, expiry.timestamp())
         allowed = {"status", "notes", "claimed_at", "released_at", "expires_at"}
         updates: dict[str, Any] = {}
         for k, v in kwargs.items():
@@ -810,4 +907,6 @@ class PostgresWantListStore:
         params = list(updates.values()) + [hold_id, tenant_id]
         with self.pool.connection() as conn, conn.transaction():
             conn.execute(f"UPDATE collector_holds SET {clause} WHERE id = %s AND tenant_id = %s", params)
+        if ledger and kwargs.get("status") in ("released", "expired") and not kwargs.get("stock_transferred"):
+            ledger.release_hold(tenant_id, current.sku, current.id)
         return self.get_hold(hold_id, tenant_id=tenant_id)

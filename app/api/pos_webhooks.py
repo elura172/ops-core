@@ -9,6 +9,7 @@ from app.observability.logging import get_logger
 
 logger = get_logger("pos_webhook")
 
+
 def verify_square_signature(url: str, body: bytes, signature: str, secret: str) -> bool:
     if not signature or not secret:
         return False
@@ -17,6 +18,7 @@ def verify_square_signature(url: str, body: bytes, signature: str, secret: str) 
     expected = hmac.new(secret.encode("utf-8"), content, hashlib.sha256).digest()
     expected_b64 = base64.b64encode(expected).decode("utf-8")
     return hmac.compare_digest(expected_b64, signature)
+
 
 def handle_square_webhook(
     url: str,
@@ -37,20 +39,24 @@ def handle_square_webhook(
         return {"accepted": False, "error": "invalid json", "status": 400}
 
     event_type = payload.get("type")
-    
+
     # We only care about order creation/payment completion which implies a sale
     if event_type not in ("order.created", "order.updated"):
         return {"accepted": True, "status": 200, "message": f"ignored event type {event_type}"}
-        
+
     order = payload.get("data", {}).get("object", {}).get("order", {})
     state = order.get("state", "")
-    
-    if state not in ("COMPLETED", "OPEN"):
+
+    if state != "COMPLETED":
         return {"accepted": True, "status": 200, "message": f"ignored order state {state}"}
 
+    order_id = str(order.get("id") or payload.get("event_id") or "")
+    if not order_id:
+        return {"accepted": False, "error": "stable order ID required", "status": 400}
     line_items = order.get("line_items", [])
     processed_skus = []
-    
+    failed = False
+
     for item in line_items:
         # In Square, the SKU is often tracked under note, sku, or catalog_object_id
         raw_sku = item.get("note", "").strip() or item.get("sku", "").strip() or item.get("catalog_object_id", "")
@@ -59,32 +65,43 @@ def handle_square_webhook(
             if sku.startswith(prefix):
                 sku = sku.removeprefix(prefix)
                 break
-        
+
         if not sku:
             continue
-            
+
         try:
             # 1. Propose
             proposed = operator.propose(
                 operation="sync_inventory",
-                payload={"sku": sku, "source_channel": "square", "tenant_id": tenant_id},
+                payload={
+                    "sku": sku,
+                    "source_channel": "square",
+                    "tenant_id": tenant_id,
+                    "order_id": order_id,
+                },
                 tenant_id=tenant_id,
             )
             review_id = proposed["review_id"]
             processed_skus.append(sku)
             logger.info("square_webhook.sync_proposed", sku=sku, review_id=review_id, tenant_id=tenant_id)
-            
+
         except Exception as exc:
             logger.error("square_webhook.sync_failed", sku=sku, tenant_id=tenant_id, error=str(exc))
-            # Continue processing other items even if one fails
+            failed = True
+            # Retry the notification; stable order IDs protect already-recorded copies.
 
     # Wake Corvus, the Vault Warden, to triage the newly populated queue
     try:
         from app.agents.corvus import CorvusWarden
+
         warden = CorvusWarden(operator)
         triage_results = warden.wake_and_triage()
         logger.info("corvus.triage.complete", **triage_results)
     except Exception as exc:
         logger.error("corvus.triage.failed", error=str(exc))
 
-    return {"accepted": True, "status": 200, "processed_skus": processed_skus}
+    return {
+        "accepted": not failed,
+        "status": 503 if failed else 200,
+        "processed_skus": processed_skus,
+    }

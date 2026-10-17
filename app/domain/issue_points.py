@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
@@ -78,7 +78,15 @@ class BibliographicIssuePointDecoder:
         bce_reasons: list[str] = []
 
         # 0.1 Explicit text slugs
-        if any(term in copy_clean for term in ("book club edition", "book-of-the-month", "bomc", "book-of-the-month club selection")):
+        if any(
+            term in copy_clean
+            for term in (
+                "book club edition",
+                "book-of-the-month",
+                "bomc",
+                "book-of-the-month club selection",
+            )
+        ):
             is_bce = True
             bce_reasons.append("Explicit 'Book Club Edition' / 'BOMC' slug on copyright page")
 
@@ -100,11 +108,16 @@ class BibliographicIssuePointDecoder:
 
         # 0.4 Gutter date codes (e.g., Doubleday 5-digit code or letter-digit code like 'H37' in gutter)
         gutter_match = re.search(r"\b([a-m]\s*\d{2})\b", copy_clean)
-        if gutter_match and not any(k in pub_clean for k in ("harper", "brothers")):
+        if (
+            gutter_match
+            and not any(k in pub_clean for k in ("harper", "brothers"))
+            and ("doubleday" in pub_clean or "guild" in copy_clean)
+        ):
             # Note: Harper uses letter-letter or letter-year, whereas gutter letter+2-digits on novels is Doubleday BCE
-            if "doubleday" in pub_clean or "guild" in copy_clean:
-                is_bce = True
-                bce_reasons.append(f"Book Club printing code detected in gutter/copyright: '{gutter_match.group(1).upper()}'")
+            is_bce = True
+            bce_reasons.append(
+                f"Book Club printing code detected in gutter/copyright: '{gutter_match.group(1).upper()}'"
+            )
 
         if is_bce:
             disqualifications.extend(bce_reasons)
@@ -132,10 +145,15 @@ class BibliographicIssuePointDecoder:
         # ------------------------------------------------------------------
         numbers = cls._extract_numberline_integers(raw_copyright_text)
         if numbers:
-            evidence.append(f"Parsed numberline sequence: {' '.join(str(n) for n in numbers)} (min integer: {min(numbers)})")
+            evidence.append(
+                f"Parsed numberline sequence: {' '.join(str(n) for n in numbers)} (min integer: {min(numbers)})"
+            )
 
         has_stated_first = bool(
-            re.search(r"\b(first\s+edition|first\s+printing|first\s+published|stated\s+first)\b", copy_clean)
+            re.search(
+                r"\b(first\s+edition|first\s+printing|first\s+published|stated\s+first)\b",
+                copy_clean,
+            )
         )
         if has_stated_first:
             evidence.append("Found explicit 'First Edition' / 'First Printing' statement")
@@ -151,7 +169,9 @@ class BibliographicIssuePointDecoder:
                 if numbers:
                     min_num = min(numbers)
                     if min_num == 2:
-                        evidence.append("Random House rule matched: 'First Edition' present with numberline starting/containing 2")
+                        evidence.append(
+                            "Random House rule matched: 'First Edition' present with numberline starting/containing 2"
+                        )
                         return IssuePointResult(
                             classification=EditionClassification.FIRST_EDITION_FIRST_PRINTING,
                             is_first_edition=True,
@@ -191,7 +211,10 @@ class BibliographicIssuePointDecoder:
                             is_book_club=False,
                             impression_number=min_num,
                             publisher_rule_name="Random House (Later Impression)",
-                            reasoning_trace=f"Numberline minimum integer is {min_num}; indicates later impression ({min_num}th printing).",
+                            reasoning_trace=(
+                                f"Numberline minimum integer is {min_num}; indicates later impression "
+                                f"({min_num}th printing)."
+                            ),
                             evidence_points=tuple(evidence),
                             confidence="conclusive",
                             pricing_tier="standard_used",
@@ -206,7 +229,10 @@ class BibliographicIssuePointDecoder:
                         is_book_club=False,
                         impression_number=1,
                         publisher_rule_name="Random House (Pre-1970 Convention)",
-                        reasoning_trace="Stated 'First Edition' with no numbers on copyright page marks true first printing for pre-1970 Random House volumes.",
+                        reasoning_trace=(
+                            "Stated 'First Edition' with no numbers on copyright page marks true "
+                            "first printing for pre-1970 Random House volumes."
+                        ),
                         evidence_points=tuple(evidence),
                         confidence="conclusive",
                         pricing_tier="collectible_first",
@@ -265,24 +291,27 @@ class BibliographicIssuePointDecoder:
         # RULE 3: DOUBLEDAY & COMPANY
         # Stated "First Edition" on copyright page. Dropped on 2nd printing without adding numbers.
         # ------------------------------------------------------------------
-        if "doubleday" in pub_clean:
-            if has_stated_first and not re.search(r"\b(second|2nd|third|3rd|reprinted)\b", copy_clean):
-                evidence.append("Doubleday rule matched: Explicit 'First Edition' statement present")
-                return IssuePointResult(
-                    classification=EditionClassification.FIRST_EDITION_FIRST_PRINTING,
-                    is_first_edition=True,
-                    is_first_impression=True,
-                    is_book_club=False,
-                    impression_number=1,
-                    publisher_rule_name="Doubleday & Company (Classic Convention)",
-                    reasoning_trace=(
-                        "Doubleday classic first edition point confirmed: 'First Edition' explicitly stated. "
-                        "(Doubleday dropped the statement on the second printing without adding a numberline)."
-                    ),
-                    evidence_points=tuple(evidence),
-                    confidence="conclusive",
-                    pricing_tier="collectible_first",
-                )
+        if (
+            "doubleday" in pub_clean
+            and has_stated_first
+            and not re.search(r"\b(second|2nd|third|3rd|reprinted)\b", copy_clean)
+        ):
+            evidence.append("Doubleday rule matched: Explicit 'First Edition' statement present")
+            return IssuePointResult(
+                classification=EditionClassification.FIRST_EDITION_FIRST_PRINTING,
+                is_first_edition=True,
+                is_first_impression=True,
+                is_book_club=False,
+                impression_number=1,
+                publisher_rule_name="Doubleday & Company (Classic Convention)",
+                reasoning_trace=(
+                    "Doubleday classic first edition point confirmed: 'First Edition' explicitly stated. "
+                    "(Doubleday dropped the statement on the second printing without adding a numberline)."
+                ),
+                evidence_points=tuple(evidence),
+                confidence="conclusive",
+                pricing_tier="collectible_first",
+            )
 
         # ------------------------------------------------------------------
         # RULE 4: HARPER & ROW / HARPER & BROTHERS
@@ -301,8 +330,8 @@ class BibliographicIssuePointDecoder:
                     impression_number=1,
                     publisher_rule_name="Harper & Row / Brothers (Date-Code Convention)",
                     reasoning_trace=(
-                        f"Harper convention matched: Stated 'First Edition' with valid date-code/sequence ({code_str}). "
-                        "Confirms true first printing."
+                        f"Harper convention matched: Stated 'First Edition' with valid "
+                        f"date-code/sequence ({code_str}). Confirms true first printing."
                     ),
                     evidence_points=tuple(evidence),
                     confidence="conclusive",
@@ -326,7 +355,10 @@ class BibliographicIssuePointDecoder:
                     is_book_club=False,
                     impression_number=1,
                     publisher_rule_name="The Viking Press (First Published Convention)",
-                    reasoning_trace=f"Viking Press syntax confirmed: 'First published in {year}' without subsequent impression lines.",
+                    reasoning_trace=(
+                        f"Viking Press syntax confirmed: 'First published in {year}' without "
+                        "subsequent impression lines."
+                    ),
                     evidence_points=tuple(evidence),
                     confidence="conclusive",
                     pricing_tier="collectible_first",
@@ -351,7 +383,11 @@ class BibliographicIssuePointDecoder:
                     publisher_rule_name="Standard Bibliographic Numberline",
                     reasoning_trace=(
                         "Standard numberline evaluation: Sequence contains lowest integer 1. "
-                        + ("Corroborated by explicit 'First Edition' statement." if has_stated_first else "Indicates first impression.")
+                        + (
+                            "Corroborated by explicit 'First Edition' statement."
+                            if has_stated_first
+                            else "Indicates first impression."
+                        )
                     ),
                     evidence_points=tuple(evidence),
                     confidence=conf,
@@ -366,7 +402,10 @@ class BibliographicIssuePointDecoder:
                     is_book_club=False,
                     impression_number=min_num,
                     publisher_rule_name="Standard Bibliographic Numberline",
-                    reasoning_trace=f"Standard numberline evaluation: Lowest integer is {min_num}, indicating {min_num}th impression (later printing).",
+                    reasoning_trace=(
+                        f"Standard numberline evaluation: Lowest integer is {min_num}, "
+                        f"indicating {min_num}th impression (later printing)."
+                    ),
                     evidence_points=tuple(evidence),
                     confidence="conclusive",
                     pricing_tier="standard_used",
@@ -384,7 +423,10 @@ class BibliographicIssuePointDecoder:
                 is_book_club=False,
                 impression_number=1,
                 publisher_rule_name="Stated First Edition Heuristic",
-                reasoning_trace="Copyright text explicitly states 'First Edition' or 'First Printing' with no conflicting subsequent reprint notes.",
+                reasoning_trace=(
+                    "Copyright text explicitly states 'First Edition' or 'First Printing' with "
+                    "no conflicting subsequent reprint notes."
+                ),
                 evidence_points=tuple(evidence),
                 confidence="probable",
                 pricing_tier="collectible_first",
@@ -398,7 +440,9 @@ class BibliographicIssuePointDecoder:
             is_book_club=False,
             impression_number=None,
             publisher_rule_name="Standard Antiquarian Inspection",
-            reasoning_trace="No distinctive publisher issue points or numberlines detected. Defaulting to standard cataloging.",
+            reasoning_trace=(
+                "No distinctive publisher issue points or numberlines detected. Defaulting to standard cataloging."
+            ),
             evidence_points=tuple(evidence),
             confidence="heuristic",
             pricing_tier="standard_used",

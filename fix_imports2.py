@@ -1,4 +1,4 @@
-with open("app/db/inventory.py", "r") as f:
+with open("app/db/inventory.py") as f:
     content = f.read()
 
 content = content.replace("import json", "import json\nfrom contextlib import contextmanager")

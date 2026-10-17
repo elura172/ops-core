@@ -86,9 +86,7 @@ def test_metrics_and_alerts_endpoints_require_read_and_serve(settings):
     from tests.conftest import REVIEWER_TOKEN, auth
 
     queue = seeded(ReviewQueue())
-    operator = OperatorService(
-        queue, ApprovedActionExecutor(TikTokClient("token", "shop", dry_run=True))
-    )
+    operator = OperatorService(queue, ApprovedActionExecutor(TikTokClient("token", "shop", dry_run=True)))
     client = TestClient(create_app(operator=operator, settings=settings))
 
     assert client.get("/metrics").status_code == 401

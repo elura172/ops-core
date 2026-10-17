@@ -5,6 +5,10 @@
 **Started At**: `2026-10-02T22:20:49.496364+00:00`
 **Completed At**: `2026-10-02T22:20:55.165776+00:00`
 
+> Historical evidence for the commit and environment recorded above. It does not
+> verify the current working tree; rerun the staging procedure before treating
+> this report as current release evidence.
+
 ---
 
 ## 1. Issue #4: Staging Deployment Verification

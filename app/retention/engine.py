@@ -14,9 +14,7 @@ class RetentionEngine:
     def __init__(self) -> None:
         self.processed_events: set[str] = set()
 
-    def plan(
-        self, event: LifecycleEvent, profile: CustomerProfile, channel: str = "email"
-    ) -> MessagePlan | None:
+    def plan(self, event: LifecycleEvent, profile: CustomerProfile, channel: str = "email") -> MessagePlan | None:
         if event.event_id in self.processed_events:
             return None
         template_info = TEMPLATES.get(event.name)
