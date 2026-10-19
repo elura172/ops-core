@@ -19,8 +19,11 @@ RUN useradd --create-home --uid 10001 ops \
     && mkdir -p /srv/data \
     && chown -R ops:ops /srv/data /srv/app
 USER ops
-# Order and review state are written at runtime, on a volume, not in the image.
-ENV ORDER_DB=/srv/data/orders.db REVIEW_DB=/srv/data/reviews.db
+ENV ORDER_DB=/srv/data/orders.db \
+    REVIEW_DB=/srv/data/reviews.db \
+    USER_DB=/srv/data/users.db \
+    INVENTORY_DB=/srv/data/inventory.db \
+    WANT_LIST_DB=/srv/data/wants.db
 
 EXPOSE 8000
 HEALTHCHECK --interval=15s --timeout=3s --start-period=5s \

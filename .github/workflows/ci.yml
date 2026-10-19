@@ -72,7 +72,7 @@ jobs:
         run: docker build -t ops-core:ci .
       - name: Boot in dry-run and check health
         run: |
-          docker run -d --name ops -p 8000:8000 -e DRY_RUN=true ops-core:ci
+          docker run -d --name ops -p 8000:8000 -e DRY_RUN=true -e JWT_SECRET_KEY="0123456789012345678901234567890123456789" ops-core:ci
           for _ in $(seq 1 30); do
             curl -sf localhost:8000/health && break
             sleep 1
@@ -91,6 +91,7 @@ jobs:
             -e TTS_ACCESS_TOKEN=t -e TTS_SHOP_ID=shop \
             -e TTS_WEBHOOK_SECRET=wh \
             -e OPS_TOKENS="$(printf 'ci-token' | sha256sum | cut -d' ' -f1):ci:admin" \
+            -e JWT_SECRET_KEY="0123456789012345678901234567890123456789" \
             ops-core:ci \
             python -c "from app.api.http import create_app; create_app()" 2>&1)
           status=$?
@@ -114,5 +115,6 @@ jobs:
             -e TTS_ACCESS_TOKEN=t -e TTS_SHOP_ID=shop \
             -e TTS_WEBHOOK_SECRET=wh \
             -e OPS_TOKENS="$(printf 'ci-token' | sha256sum | cut -d' ' -f1):ci:admin" \
+            -e JWT_SECRET_KEY="0123456789012345678901234567890123456789" \
             ops-core:ci \
             python -c "from app.api.http import create_app; create_app()"

@@ -1,6 +1,6 @@
 import logging
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, cast
 from urllib.parse import urlsplit
 
 import stripe
@@ -176,7 +176,7 @@ def get_billing_router(settings: Settings, user_store: UserStore) -> APIRouter:
         return None, None
 
     @router.post("/checkout")
-    def create_checkout_session(req: CheckoutRequest, request: Request):
+    def create_checkout_session(req: CheckoutRequest, request: Request) -> dict[str, Any]:
         tenant_id, email = tenant_from_request(request)
 
         billing = user_store.get_tenant_billing_status(tenant_id)
@@ -233,7 +233,7 @@ def get_billing_router(settings: Settings, user_store: UserStore) -> APIRouter:
             checkout_params["customer_email"] = email
 
         try:
-            session = stripe_client.v1.checkout.sessions.create(params=checkout_params)
+            session = stripe_client.v1.checkout.sessions.create(params=cast(Any, checkout_params))
             return {"checkout_url": session.url}
         except HTTPException:
             raise
@@ -241,7 +241,7 @@ def get_billing_router(settings: Settings, user_store: UserStore) -> APIRouter:
             raise HTTPException(502, "Unable to create Stripe checkout session") from exc
 
     @router.post("/verify-session")
-    def verify_checkout_session(req: CheckoutVerifyRequest, request: Request):
+    def verify_checkout_session(req: CheckoutVerifyRequest, request: Request) -> dict[str, Any]:
         tenant_id, _email = tenant_from_request(request)
         session_id = req.session_id.strip()
         if not session_id or not session_id.startswith("cs_"):
@@ -287,7 +287,7 @@ def get_billing_router(settings: Settings, user_store: UserStore) -> APIRouter:
         }
 
     @router.post("/portal")
-    def create_customer_portal_session(request: Request):
+    def create_customer_portal_session(request: Request) -> dict[str, Any]:
         tenant_id, _email = tenant_from_request(request)
         billing = user_store.get_tenant_billing_status(tenant_id)
         customer_id = billing.get("stripe_customer_id")
@@ -300,7 +300,7 @@ def get_billing_router(settings: Settings, user_store: UserStore) -> APIRouter:
     async def stripe_webhook(
         request: Request,
         stripe_signature: str | None = Header(default=None),
-    ):
+    ) -> dict[str, Any]:
         webhook_secret = settings.stripe_webhook_secret
         if not webhook_secret:
             raise HTTPException(503, "Stripe webhook is not configured")
