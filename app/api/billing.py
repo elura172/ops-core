@@ -1,4 +1,5 @@
 from collections.abc import Mapping
+import logging
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -8,6 +9,8 @@ from pydantic import BaseModel
 
 from app.config import Settings
 from app.db.users import UserStore
+
+logger = logging.getLogger(__name__)
 
 
 class CheckoutRequest(BaseModel):
@@ -78,6 +81,14 @@ def get_billing_router(settings: Settings, user_store: UserStore) -> APIRouter:
         try:
             subscription = stripe_client.v1.subscriptions.retrieve(subscription_id)
         except Exception as exc:
+            # Never log the exception message: authentication errors can include
+            # fragments of the supplied credential.
+            status = getattr(exc, "http_status", None)
+            logger.warning(
+                "Stripe subscription lookup failed: error_type=%s http_status=%s",
+                type(exc).__name__,
+                status if isinstance(status, int) else None,
+            )
             # Return a retryable response without exposing Stripe request details.
             raise HTTPException(503, "Unable to confirm subscription status") from exc
 
@@ -101,21 +112,22 @@ def get_billing_router(settings: Settings, user_store: UserStore) -> APIRouter:
         if tenant_id_int > 0:
             user_store.update_tenant_stripe_customer(tenant_id_int, customer_id)
 
-    @router.post("/checkout")
-    def create_checkout_session(req: CheckoutRequest, request: Request):
+    def tenant_from_request(request: Request) -> tuple[int, str]:
         auth_header = request.headers.get("Authorization")
         if not auth_header or not auth_header.startswith("Bearer "):
             raise HTTPException(401, "Missing token")
 
-        token = auth_header.split(" ", 1)[1]
         from app.auth import decode_access_token
 
         try:
-            payload = decode_access_token(token)
-            tenant_id = int(payload["tenant_id"])
-            email = payload["sub"]
+            payload = decode_access_token(auth_header.split(" ", 1)[1])
+            return int(payload["tenant_id"]), str(payload["sub"])
         except Exception as exc:
             raise HTTPException(401, "Invalid token") from exc
+
+    @router.post("/checkout")
+    def create_checkout_session(req: CheckoutRequest, request: Request):
+        tenant_id, email = tenant_from_request(request)
 
         billing = user_store.get_tenant_billing_status(tenant_id)
         if billing.get("subscription_status") in {"active", "trialing"}:
@@ -147,6 +159,27 @@ def get_billing_router(settings: Settings, user_store: UserStore) -> APIRouter:
             raise
         except Exception as exc:
             raise HTTPException(502, "Unable to create Stripe checkout session") from exc
+
+    @router.post("/portal")
+    def create_customer_portal_session(request: Request):
+        tenant_id, _email = tenant_from_request(request)
+        billing = user_store.get_tenant_billing_status(tenant_id)
+        customer_id = billing.get("stripe_customer_id")
+        if not customer_id:
+            raise HTTPException(409, "No billing account is linked to this workspace")
+        if stripe_client is None:
+            raise HTTPException(503, "Stripe is not configured")
+
+        try:
+            session = stripe_client.v1.billing_portal.sessions.create(
+                params={
+                    "customer": customer_id,
+                    "return_url": f"{str(request.base_url).rstrip('/')}/dashboard",
+                }
+            )
+            return {"portal_url": session.url}
+        except Exception as exc:
+            raise HTTPException(502, "Unable to open subscription management") from exc
 
     @router.post("/webhook")
     async def stripe_webhook(

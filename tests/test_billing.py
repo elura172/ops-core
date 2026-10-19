@@ -19,16 +19,24 @@ WEBHOOK_SECRET = "whsec_test_billing_secret"
 class FakeStripeClient:
     def __init__(self, _secret_key):
         self.checkout_params = None
+        self.portal_params = None
         self.subscriptions = {}
         self.fail_retrieve = False
         self.v1 = SimpleNamespace(
             checkout=SimpleNamespace(sessions=SimpleNamespace(create=self.create_checkout_session)),
+            billing_portal=SimpleNamespace(
+                sessions=SimpleNamespace(create=self.create_portal_session),
+            ),
             subscriptions=SimpleNamespace(retrieve=self.retrieve_subscription),
         )
 
     def create_checkout_session(self, *, params):
         self.checkout_params = params
         return SimpleNamespace(url="https://checkout.test/session")
+
+    def create_portal_session(self, *, params):
+        self.portal_params = params
+        return SimpleNamespace(url="https://billing.test/session")
 
     def retrieve_subscription(self, subscription_id):
         if self.fail_retrieve:
@@ -131,6 +139,32 @@ def test_checkout_rejects_external_return_urls(billing_env):
     assert response.status_code == 400
 
 
+def test_customer_portal_is_scoped_to_the_authenticated_tenant(billing_env):
+    client, user_store, stripe_client = billing_env
+    tenant_id = user_store.create_tenant("Portal tenant")
+    user_store.update_tenant_stripe_customer(tenant_id, "cus_portal")
+    token = create_access_token({"sub": "buyer@example.test", "tenant_id": tenant_id, "role": "admin"})
+
+    response = client.post("/billing/portal", headers=auth(token))
+
+    assert response.status_code == 200
+    assert response.json()["portal_url"] == "https://billing.test/session"
+    assert stripe_client.portal_params == {
+        "customer": "cus_portal",
+        "return_url": "https://ops-core.test/dashboard",
+    }
+
+
+def test_customer_portal_requires_a_linked_stripe_customer(billing_env):
+    client, user_store, _stripe_client = billing_env
+    tenant_id = user_store.create_tenant("Unlinked portal tenant")
+    token = create_access_token({"sub": "buyer@example.test", "tenant_id": tenant_id, "role": "admin"})
+
+    response = client.post("/billing/portal", headers=auth(token))
+
+    assert response.status_code == 409
+
+
 def test_checkout_stays_unavailable_without_a_stripe_price_id(settings, monkeypatch):
     stripe_client = FakeStripeClient("sk_test_unit")
     monkeypatch.setattr("stripe.StripeClient", lambda key: stripe_client)
@@ -225,7 +259,7 @@ def test_subscription_and_invoice_events_use_current_stripe_state(billing_env):
     assert user_store.get_tenant_billing_status(tenant_id)["subscription_status"] == "inactive"
 
 
-def test_current_subscription_lookup_failure_retries_webhook(billing_env):
+def test_current_subscription_lookup_failure_retries_webhook(billing_env, caplog):
     client, user_store, stripe_client = billing_env
     tenant_id = user_store.create_tenant("Retry tenant")
     user_store.update_tenant_stripe_customer(tenant_id, "cus_retry")
@@ -238,6 +272,8 @@ def test_current_subscription_lookup_failure_retries_webhook(billing_env):
     )
 
     assert response.status_code == 503
+    assert "error_type=RuntimeError" in caplog.text
+    assert "Stripe API unavailable" not in caplog.text
     assert user_store.get_tenant_billing_status(tenant_id)["subscription_status"] == "inactive"
 
 

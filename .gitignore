@@ -24,3 +24,6 @@ snapshots.db
 *.db-wal
 .env*.local
 .env*
+logs/
+.agents/
+skills-lock.json

@@ -67,6 +67,7 @@ function disconnect() {
   renderQueue();
   $("detail").replaceChildren();
   $("identity").textContent = ""; $("workspace").hidden = true; $("logout").hidden = true;
+  if ($("manage-billing")) $("manage-billing").hidden = true;
   $("mode").textContent = ""; $("mode").className = "badge";
   const holdsBadge = $("tab-holds-badge");
   if (holdsBadge) { holdsBadge.textContent = "0"; holdsBadge.style.display = "none"; }
@@ -983,6 +984,7 @@ async function handleAuth(path, body, button) {
     previewMode = identity.subscription_status !== "active";
     session = {name: identity.sub, permissions: ["review:read", "review:decide", "review:execute"], previewMode};
     $("identity").textContent = identity.sub;
+    $("manage-billing").hidden = previewMode;
     $("mode").textContent = previewMode ? "CATALOGUE PREVIEW" : "WORKSPACE";
     $("mode").className = `badge ${previewMode ? "pending" : "live"}`;
     document.querySelectorAll("[data-paid-only]").forEach(el => { el.hidden = previewMode; });
@@ -992,7 +994,7 @@ async function handleAuth(path, body, button) {
     if (previewMode) {
         $("workspace").hidden = true;
         $("onboarding-section").hidden = true;
-        $("billing-section").hidden = true;
+        $("billing-section").hidden = false;
         $("starter-section").hidden = false;
         
         // Setup checkout flow
@@ -1003,8 +1005,8 @@ async function handleAuth(path, body, button) {
             const checkout = await api("/billing/checkout", {
               method: "POST",
               body: JSON.stringify({
-                success_url: window.location.href,
-                cancel_url: window.location.href
+                success_url: `${window.location.origin}/dashboard?billing=success`,
+                cancel_url: `${window.location.origin}/dashboard?billing=cancelled`
               })
             });
             window.location.href = checkout.checkout_url;
@@ -1054,6 +1056,12 @@ if (new URLSearchParams(window.location.search).get("mode") === "signup") {
   $("login-panel").hidden = true;
   $("signup-panel").hidden = false;
 }
+const billingReturn = new URLSearchParams(window.location.search).get("billing");
+if (billingReturn === "success") {
+  message("Checkout completed. Log in to open your workspace. Payment confirmation may take a moment.");
+} else if (billingReturn === "cancelled") {
+  message("Checkout cancelled. Log in to continue your catalogue preview.");
+}
 
 $("form-login").onsubmit = async event => {
   event.preventDefault(); 
@@ -1093,6 +1101,18 @@ if ($("form-onboarding")) {
 }
 
 $("logout").onclick = ()=>{disconnect(); message("Disconnected. Your token and displayed action data have been cleared.");};
+$("manage-billing")?.addEventListener("click", async () => {
+  const button = $("manage-billing");
+  button.disabled = true;
+  message("");
+  try {
+    const portal = await api("/billing/portal", {method: "POST"});
+    window.location.href = portal.portal_url;
+  } catch (error) {
+    message(error.message);
+    button.disabled = false;
+  }
+});
 $("refresh").onclick = ()=>{message(""); refresh();};
 $("filter").onchange = renderQueue;
 $("propose-sync").onsubmit = async event => {
