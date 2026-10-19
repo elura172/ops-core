@@ -11,7 +11,14 @@ CREATE TABLE IF NOT EXISTS tenants (
   name TEXT NOT NULL,
   created_at TEXT NOT NULL,
   stripe_customer_id TEXT,
-  subscription_status TEXT DEFAULT 'inactive'
+  subscription_status TEXT DEFAULT 'inactive',
+  stripe_subscription_status TEXT
+);
+
+CREATE TABLE IF NOT EXISTS stripe_webhook_events (
+  event_id TEXT PRIMARY KEY,
+  event_type TEXT NOT NULL,
+  processed_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS users (
@@ -55,6 +62,8 @@ class SQLiteUserStore:
             self.connection.execute("ALTER TABLE tenants ADD COLUMN stripe_customer_id TEXT")
         with suppress(sqlite3.OperationalError):
             self.connection.execute("ALTER TABLE tenants ADD COLUMN subscription_status TEXT DEFAULT 'inactive'")
+        with suppress(sqlite3.OperationalError):
+            self.connection.execute("ALTER TABLE tenants ADD COLUMN stripe_subscription_status TEXT")
 
         # Keep the local sample tenant and mock integrations, but never provision
         # a shared public login. Remove only its historical seeded account.
@@ -157,12 +166,17 @@ class SQLiteUserStore:
     def get_tenant_billing_status(self, tenant_id: int) -> dict:
         with self._lock:
             row = self.connection.execute(
-                "SELECT stripe_customer_id, subscription_status FROM tenants WHERE tenant_id = ?",
+                "SELECT stripe_customer_id, subscription_status, stripe_subscription_status "
+                "FROM tenants WHERE tenant_id = ?",
                 (tenant_id,),
             ).fetchone()
             if row:
                 return dict(row)
-            return {"stripe_customer_id": None, "subscription_status": "inactive"}
+            return {
+                "stripe_customer_id": None,
+                "subscription_status": "inactive",
+                "stripe_subscription_status": None,
+            }
 
     def update_tenant_stripe_customer(self, tenant_id: int, stripe_customer_id: str):
         with self._lock:
@@ -171,12 +185,35 @@ class SQLiteUserStore:
                 (stripe_customer_id, tenant_id),
             )
 
-    def update_subscription_status(self, stripe_customer_id: str, status: str):
+    def update_subscription_status(
+        self,
+        stripe_customer_id: str,
+        status: str,
+        stripe_subscription_status: str | None = None,
+    ):
         with self._lock:
             self.connection.execute(
-                "UPDATE tenants SET subscription_status = ? WHERE stripe_customer_id = ?",
-                (status, stripe_customer_id),
+                "UPDATE tenants SET subscription_status = ?, stripe_subscription_status = ? "
+                "WHERE stripe_customer_id = ?",
+                (status, stripe_subscription_status or status, stripe_customer_id),
             )
+
+    def has_processed_webhook_event(self, event_id: str) -> bool:
+        with self._lock:
+            row = self.connection.execute(
+                "SELECT 1 FROM stripe_webhook_events WHERE event_id = ?",
+                (event_id,),
+            ).fetchone()
+            return row is not None
+
+    def record_webhook_event(self, event_id: str, event_type: str) -> bool:
+        with self._lock:
+            cursor = self.connection.execute(
+                "INSERT OR IGNORE INTO stripe_webhook_events (event_id, event_type, processed_at) "
+                "VALUES (?, ?, ?)",
+                (event_id, event_type, datetime.now(UTC).isoformat()),
+            )
+            return cursor.rowcount == 1
 
     def close(self) -> None:
         self.connection.close()
@@ -302,12 +339,17 @@ class PostgresUserStore:
     def get_tenant_billing_status(self, tenant_id: int) -> dict:
         with self.pool.connection() as conn:
             row = conn.execute(
-                "SELECT stripe_customer_id, subscription_status FROM tenants WHERE tenant_id = %s",
+                "SELECT stripe_customer_id, subscription_status, stripe_subscription_status "
+                "FROM tenants WHERE tenant_id = %s",
                 (tenant_id,),
             ).fetchone()
             if row:
                 return dict(row)
-            return {"stripe_customer_id": None, "subscription_status": "inactive"}
+            return {
+                "stripe_customer_id": None,
+                "subscription_status": "inactive",
+                "stripe_subscription_status": None,
+            }
 
     def update_tenant_stripe_customer(self, tenant_id: int, stripe_customer_id: str):
         with self.pool.connection() as conn:
@@ -316,12 +358,35 @@ class PostgresUserStore:
                 (stripe_customer_id, tenant_id),
             )
 
-    def update_subscription_status(self, stripe_customer_id: str, status: str):
+    def update_subscription_status(
+        self,
+        stripe_customer_id: str,
+        status: str,
+        stripe_subscription_status: str | None = None,
+    ):
         with self.pool.connection() as conn:
             conn.execute(
-                "UPDATE tenants SET subscription_status = %s WHERE stripe_customer_id = %s",
-                (status, stripe_customer_id),
+                "UPDATE tenants SET subscription_status = %s, stripe_subscription_status = %s "
+                "WHERE stripe_customer_id = %s",
+                (status, stripe_subscription_status or status, stripe_customer_id),
             )
+
+    def has_processed_webhook_event(self, event_id: str) -> bool:
+        with self.pool.connection() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM stripe_webhook_events WHERE event_id = %s",
+                (event_id,),
+            ).fetchone()
+            return row is not None
+
+    def record_webhook_event(self, event_id: str, event_type: str) -> bool:
+        with self.pool.connection() as conn:
+            cursor = conn.execute(
+                "INSERT INTO stripe_webhook_events (event_id, event_type) VALUES (%s, %s) "
+                "ON CONFLICT (event_id) DO NOTHING",
+                (event_id, event_type),
+            )
+            return cursor.rowcount == 1
 
     def close(self) -> None:
         self.pool.close()

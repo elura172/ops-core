@@ -18,6 +18,10 @@ class CheckoutRequest(BaseModel):
     cancel_url: str
 
 
+class CheckoutVerifyRequest(BaseModel):
+    session_id: str
+
+
 def _value(obj: Any, key: str) -> Any:
     if isinstance(obj, Mapping):
         return obj.get(key)
@@ -75,7 +79,7 @@ def get_billing_router(settings: Settings, user_store: UserStore) -> APIRouter:
     router = APIRouter()
     stripe_client = stripe.StripeClient(settings.stripe_secret_key) if settings.stripe_secret_key else None
 
-    def refresh_subscription_status(subscription_id: str) -> None:
+    def refresh_subscription_status(subscription_id: str) -> tuple[str, str | None]:
         if stripe_client is None:
             raise HTTPException(503, "Stripe is not configured")
         try:
@@ -93,24 +97,29 @@ def get_billing_router(settings: Settings, user_store: UserStore) -> APIRouter:
             raise HTTPException(503, "Unable to confirm subscription status") from exc
 
         customer_id = _object_id(_value(subscription, "customer"))
+        raw_status = _value(subscription, "status")
+        raw_status_str = str(raw_status) if isinstance(raw_status, str) else None
+        mapped_status = _mapped_subscription_status(raw_status_str)
         if customer_id:
-            status = _value(subscription, "status")
             user_store.update_subscription_status(
                 customer_id,
-                _mapped_subscription_status(status),
+                mapped_status,
+                raw_status_str,
             )
+        return mapped_status, raw_status_str
 
-    def link_checkout_customer(session: Any) -> None:
+    def link_checkout_customer(session: Any) -> int | None:
         tenant_id = _value(session, "client_reference_id")
         customer_id = _object_id(_value(session, "customer"))
-        if not customer_id or tenant_id is None:
-            return
+        if tenant_id is None:
+            return None
         try:
             tenant_id_int = int(tenant_id)
         except (TypeError, ValueError):
-            return
-        if tenant_id_int > 0:
+            return None
+        if tenant_id_int > 0 and customer_id:
             user_store.update_tenant_stripe_customer(tenant_id_int, customer_id)
+        return tenant_id_int if tenant_id_int > 0 else None
 
     def tenant_from_request(request: Request) -> tuple[int, str]:
         auth_header = request.headers.get("Authorization")
@@ -125,6 +134,47 @@ def get_billing_router(settings: Settings, user_store: UserStore) -> APIRouter:
         except Exception as exc:
             raise HTTPException(401, "Invalid token") from exc
 
+    def _create_portal_url(customer_id: str, request: Request) -> str:
+        if stripe_client is None:
+            raise HTTPException(503, "Stripe is not configured")
+        try:
+            session = stripe_client.v1.billing_portal.sessions.create(
+                params={
+                    "customer": customer_id,
+                    "return_url": f"{str(request.base_url).rstrip('/')}/dashboard",
+                }
+            )
+            return str(session.url)
+        except Exception as exc:
+            raise HTTPException(502, "Unable to open subscription management") from exc
+
+    def _find_existing_customer_subscription(customer_id: str) -> tuple[str | None, str | None]:
+        """Inspect live Stripe subscriptions for an existing customer before creating Checkout."""
+        if stripe_client is None:
+            return None, None
+        list_fn = getattr(stripe_client.v1.subscriptions, "list", None)
+        if not callable(list_fn):
+            return None, None
+        try:
+            result = list_fn(params={"customer": customer_id, "status": "all", "limit": 10})
+            items = _value(result, "data") or []
+        except Exception as exc:
+            status = getattr(exc, "http_status", None)
+            logger.warning(
+                "Stripe customer subscription list failed: error_type=%s http_status=%s",
+                type(exc).__name__,
+                status if isinstance(status, int) else None,
+            )
+            return None, None
+
+        for preferred in ("active", "trialing", "past_due", "unpaid"):
+            for sub in items:
+                sub_status = _value(sub, "status")
+                sub_id = _object_id(_value(sub, "id"))
+                if sub_status == preferred and sub_id:
+                    return sub_id, str(sub_status)
+        return None, None
+
     @router.post("/checkout")
     def create_checkout_session(req: CheckoutRequest, request: Request):
         tenant_id, email = tenant_from_request(request)
@@ -138,27 +188,103 @@ def get_billing_router(settings: Settings, user_store: UserStore) -> APIRouter:
         if not settings.stripe_price_id:
             raise HTTPException(503, "Stripe subscription price is not configured")
 
-        try:
-            session = stripe_client.v1.checkout.sessions.create(
-                params={
-                    "line_items": [
-                        {
-                            "price": settings.stripe_price_id,
-                            "quantity": 1,
-                        }
-                    ],
-                    "mode": "subscription",
-                    "success_url": req.success_url,
-                    "cancel_url": req.cancel_url,
-                    "customer_email": email,
-                    "client_reference_id": str(tenant_id),
+        existing_customer_id = billing.get("stripe_customer_id")
+        if existing_customer_id:
+            sub_id, live_status = _find_existing_customer_subscription(existing_customer_id)
+            if live_status in {"active", "trialing"}:
+                user_store.update_subscription_status(
+                    existing_customer_id,
+                    "active",
+                    live_status,
+                )
+                return {
+                    "already_active": True,
+                    "subscription_status": "active",
+                    "stripe_subscription_status": live_status,
                 }
-            )
+            if live_status in {"past_due", "unpaid"}:
+                user_store.update_subscription_status(
+                    existing_customer_id,
+                    "inactive",
+                    live_status,
+                )
+                portal_url = _create_portal_url(existing_customer_id, request)
+                return {
+                    "portal_url": portal_url,
+                    "subscription_status": "inactive",
+                    "stripe_subscription_status": live_status,
+                }
+
+        checkout_params: dict[str, Any] = {
+            "line_items": [
+                {
+                    "price": settings.stripe_price_id,
+                    "quantity": 1,
+                }
+            ],
+            "mode": "subscription",
+            "success_url": req.success_url,
+            "cancel_url": req.cancel_url,
+            "client_reference_id": str(tenant_id),
+        }
+        if existing_customer_id:
+            checkout_params["customer"] = existing_customer_id
+        else:
+            checkout_params["customer_email"] = email
+
+        try:
+            session = stripe_client.v1.checkout.sessions.create(params=checkout_params)
             return {"checkout_url": session.url}
         except HTTPException:
             raise
         except Exception as exc:
             raise HTTPException(502, "Unable to create Stripe checkout session") from exc
+
+    @router.post("/verify-session")
+    def verify_checkout_session(req: CheckoutVerifyRequest, request: Request):
+        tenant_id, _email = tenant_from_request(request)
+        session_id = req.session_id.strip()
+        if not session_id or not session_id.startswith("cs_"):
+            raise HTTPException(400, "Invalid checkout session ID")
+        if stripe_client is None:
+            raise HTTPException(503, "Stripe is not configured")
+
+        retrieve_fn = getattr(stripe_client.v1.checkout.sessions, "retrieve", None)
+        if not callable(retrieve_fn):
+            raise HTTPException(503, "Stripe checkout verification is unavailable")
+
+        try:
+            session = retrieve_fn(session_id)
+        except Exception as exc:
+            status = getattr(exc, "http_status", None)
+            logger.warning(
+                "Stripe checkout session lookup failed: error_type=%s http_status=%s",
+                type(exc).__name__,
+                status if isinstance(status, int) else None,
+            )
+            raise HTTPException(502, "Unable to verify checkout session") from exc
+
+        ref_tenant = _value(session, "client_reference_id")
+        try:
+            ref_tenant_int = int(ref_tenant) if ref_tenant is not None else None
+        except (TypeError, ValueError):
+            ref_tenant_int = None
+
+        if ref_tenant_int != tenant_id:
+            raise HTTPException(403, "Checkout session does not belong to this workspace")
+
+        link_checkout_customer(session)
+        payment_status = _value(session, "payment_status")
+        subscription_id = _object_id(_value(session, "subscription"))
+        if subscription_id and payment_status in {"paid", "no_payment_required"}:
+            refresh_subscription_status(subscription_id)
+
+        billing = user_store.get_tenant_billing_status(tenant_id)
+        return {
+            "subscription_status": billing.get("subscription_status", "inactive"),
+            "stripe_subscription_status": billing.get("stripe_subscription_status"),
+            "has_billing_account": bool(billing.get("stripe_customer_id")),
+        }
 
     @router.post("/portal")
     def create_customer_portal_session(request: Request):
@@ -167,19 +293,8 @@ def get_billing_router(settings: Settings, user_store: UserStore) -> APIRouter:
         customer_id = billing.get("stripe_customer_id")
         if not customer_id:
             raise HTTPException(409, "No billing account is linked to this workspace")
-        if stripe_client is None:
-            raise HTTPException(503, "Stripe is not configured")
-
-        try:
-            session = stripe_client.v1.billing_portal.sessions.create(
-                params={
-                    "customer": customer_id,
-                    "return_url": f"{str(request.base_url).rstrip('/')}/dashboard",
-                }
-            )
-            return {"portal_url": session.url}
-        except Exception as exc:
-            raise HTTPException(502, "Unable to open subscription management") from exc
+        portal_url = _create_portal_url(customer_id, request)
+        return {"portal_url": portal_url}
 
     @router.post("/webhook")
     async def stripe_webhook(
@@ -198,11 +313,18 @@ def get_billing_router(settings: Settings, user_store: UserStore) -> APIRouter:
         except stripe.error.SignatureVerificationError as exc:
             raise HTTPException(400, "Invalid signature") from exc
 
+        event_id = _object_id(_value(event, "id"))
         event_type = _value(event, "type")
+        event_type_str = str(event_type) if isinstance(event_type, str) else "unknown"
+
+        if event_id and hasattr(user_store, "has_processed_webhook_event"):
+            if user_store.has_processed_webhook_event(event_id):
+                return {"status": "duplicate"}
+
         event_data = _value(event, "data")
         resource = _value(event_data, "object") if event_data is not None else None
 
-        if event_type in {
+        if event_type_str in {
             "checkout.session.completed",
             "checkout.session.async_payment_succeeded",
             "checkout.session.async_payment_failed",
@@ -212,12 +334,12 @@ def get_billing_router(settings: Settings, user_store: UserStore) -> APIRouter:
             subscription_id = _object_id(_value(resource, "subscription"))
             if (
                 subscription_id
-                and event_type != "checkout.session.async_payment_failed"
+                and event_type_str != "checkout.session.async_payment_failed"
                 and payment_status in {"paid", "no_payment_required"}
-            ) or (subscription_id and event_type == "checkout.session.async_payment_failed"):
+            ) or (subscription_id and event_type_str == "checkout.session.async_payment_failed"):
                 refresh_subscription_status(subscription_id)
 
-        elif event_type in {
+        elif event_type_str in {
             "customer.subscription.created",
             "customer.subscription.updated",
             "customer.subscription.deleted",
@@ -228,12 +350,15 @@ def get_billing_router(settings: Settings, user_store: UserStore) -> APIRouter:
             if subscription_id:
                 refresh_subscription_status(subscription_id)
 
-        elif event_type in {"invoice.paid", "invoice.payment_failed"}:
+        elif event_type_str in {"invoice.paid", "invoice.payment_failed"}:
             subscription_id = _invoice_subscription_id(resource)
             if subscription_id:
                 # An invoice event alone does not prove the subscription is active;
                 # read Stripe's current subscription state before changing access.
                 refresh_subscription_status(subscription_id)
+
+        if event_id and hasattr(user_store, "record_webhook_event"):
+            user_store.record_webhook_event(event_id, event_type_str)
 
         return {"status": "success"}
 

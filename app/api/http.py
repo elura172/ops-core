@@ -2614,6 +2614,8 @@ def create_app(
             tenant_id = payload["tenant_id"]
             billing = user_store.get_tenant_billing_status(tenant_id)
             payload["subscription_status"] = billing.get("subscription_status", "inactive")
+            payload["stripe_subscription_status"] = billing.get("stripe_subscription_status")
+            payload["has_billing_account"] = bool(billing.get("stripe_customer_id"))
             return payload
         except Exception:
             raise HTTPException(401, "Invalid token") from None

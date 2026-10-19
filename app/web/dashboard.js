@@ -73,6 +73,7 @@ function disconnect() {
   if (holdsBadge) { holdsBadge.textContent = "0"; holdsBadge.style.display = "none"; }
   $("login-section").hidden = false; 
   if ($("billing-section")) $("billing-section").hidden = true;
+  if ($("btn-billing-portal")) $("btn-billing-portal").hidden = true;
   if ($("starter-section")) $("starter-section").hidden = true;
   if ($("onboarding-section")) $("onboarding-section").hidden = true;
   if (typeof switchTab === "function") switchTab("queue");
@@ -962,6 +963,157 @@ async function mutate(item, action, body) {
 
 $("show-signup").onclick = (e) => { e.preventDefault(); $("login-panel").hidden = true; $("signup-panel").hidden = false; };
 $("show-login").onclick = (e) => { e.preventDefault(); $("signup-panel").hidden = true; $("login-panel").hidden = false; };
+
+const CHECKOUT_TOKEN_STORAGE_KEY = "ops_core_checkout_return_token";
+
+function stashTokenForBillingRedirect() {
+  if (!token) return;
+  try {
+    window.sessionStorage.setItem(CHECKOUT_TOKEN_STORAGE_KEY, token);
+  } catch (_) {}
+}
+
+function consumeStashedBillingToken() {
+  try {
+    const saved = window.sessionStorage.getItem(CHECKOUT_TOKEN_STORAGE_KEY);
+    if (saved) {
+      window.sessionStorage.removeItem(CHECKOUT_TOKEN_STORAGE_KEY);
+      return saved;
+    }
+  } catch (_) {}
+  return "";
+}
+
+async function openBillingPortal(button) {
+  if (button) button.disabled = true;
+  message("");
+  try {
+    const portal = await api("/billing/portal", {method: "POST"});
+    stashTokenForBillingRedirect();
+    window.location.href = portal.portal_url;
+  } catch (error) {
+    message(error.message);
+    if (button) button.disabled = false;
+  }
+}
+
+function configureBillingBanner(identity) {
+  const rawStatus = identity.stripe_subscription_status || "";
+  const hasBillingAccount = Boolean(identity.has_billing_account);
+  const eyebrow = $("billing-eyebrow");
+  const title = $("billing-title");
+  const copy = $("billing-copy");
+  const subscribeBtn = $("btn-subscribe");
+  const portalBtn = $("btn-billing-portal");
+
+  if (rawStatus === "past_due" || rawStatus === "unpaid") {
+    if (eyebrow) eyebrow.textContent = "PAYMENT ISSUE";
+    if (title) title.textContent = "Update your payment method";
+    if (copy) copy.textContent = "Your last subscription payment did not go through. Update your card or view your invoice in the billing portal to reopen your workspace.";
+    if (subscribeBtn) subscribeBtn.hidden = true;
+    if (portalBtn) {
+      portalBtn.hidden = false;
+      portalBtn.textContent = "Update payment method";
+      portalBtn.className = "primary";
+    }
+  } else if (rawStatus === "canceled") {
+    if (eyebrow) eyebrow.textContent = "SUBSCRIPTION ENDED";
+    if (title) title.textContent = "Reactivate your workspace";
+    if (copy) copy.textContent = "Your subscription has ended. Start a new subscription to reopen your full bookshop workspace, or open the billing portal to view past invoices.";
+    if (subscribeBtn) {
+      subscribeBtn.hidden = false;
+      subscribeBtn.textContent = "Reactivate subscription";
+    }
+    if (portalBtn) {
+      portalBtn.hidden = !hasBillingAccount;
+      portalBtn.textContent = "View past invoices";
+      portalBtn.className = "secondary";
+    }
+  } else {
+    if (eyebrow) eyebrow.textContent = "SUBSCRIPTION REQUIRED";
+    if (title) title.textContent = "Open your workspace";
+    if (copy) copy.textContent = "Choose a subscription to manage your books and review changes.";
+    if (subscribeBtn) {
+      subscribeBtn.hidden = false;
+      subscribeBtn.textContent = "Choose a subscription";
+    }
+    if (portalBtn) {
+      portalBtn.hidden = !hasBillingAccount;
+      portalBtn.textContent = "Billing portal";
+      portalBtn.className = "secondary";
+    }
+  }
+}
+
+async function applyAuthenticatedSession(epoch) {
+  const identity = await api("/auth/me");
+  if (epoch !== generation) return;
+  previewMode = identity.subscription_status !== "active";
+  const hasBillingAccount = Boolean(identity.has_billing_account);
+  session = {name: identity.sub, permissions: ["review:read", "review:decide", "review:execute"], previewMode};
+  $("identity").textContent = identity.sub;
+  $("manage-billing").hidden = previewMode && !hasBillingAccount;
+  $("mode").textContent = previewMode ? "CATALOGUE PREVIEW" : "WORKSPACE";
+  $("mode").className = `badge ${previewMode ? "pending" : "live"}`;
+  document.querySelectorAll("[data-paid-only]").forEach(el => { el.hidden = previewMode; });
+  $("login-section").hidden = true;
+  $("logout").hidden = false;
+
+  if (previewMode) {
+    $("workspace").hidden = true;
+    $("onboarding-section").hidden = true;
+    $("billing-section").hidden = false;
+    $("starter-section").hidden = false;
+    configureBillingBanner(identity);
+
+    $("btn-subscribe").onclick = async () => {
+      const btn = $("btn-subscribe");
+      btn.disabled = true;
+      const originalLabel = btn.textContent;
+      btn.textContent = "Loading checkout...";
+      try {
+        const checkout = await api("/billing/checkout", {
+          method: "POST",
+          body: JSON.stringify({
+            success_url: `${window.location.origin}/dashboard?billing=success&session_id={CHECKOUT_SESSION_ID}`,
+            cancel_url: `${window.location.origin}/dashboard?billing=cancelled`
+          })
+        });
+        if (checkout.already_active) {
+          await applyAuthenticatedSession(epoch);
+          message("Your subscription is active. Welcome back to your workspace.");
+          return;
+        }
+        if (checkout.portal_url) {
+          stashTokenForBillingRedirect();
+          window.location.href = checkout.portal_url;
+          return;
+        }
+        stashTokenForBillingRedirect();
+        window.location.href = checkout.checkout_url;
+      } catch(e) {
+        message(e.message);
+        btn.disabled = false;
+        btn.textContent = originalLabel || "Choose a subscription";
+      }
+    };
+  } else {
+    $("starter-section").hidden = true;
+    $("billing-section").hidden = true;
+    const integrations = await api("/integrations");
+    if (epoch !== generation) return;
+
+    if (Object.keys(integrations.connected_providers || []).length === 0) {
+      $("workspace").hidden = true;
+      $("onboarding-section").hidden = false;
+    } else {
+      $("onboarding-section").hidden = true;
+      $("workspace").hidden = false;
+      await refresh();
+    }
+  }
+}
+
 async function handleAuth(path, body, button) {
   const epoch = ++generation;
   button.disabled = true; message("");
@@ -977,61 +1129,7 @@ async function handleAuth(path, body, button) {
     if (!res.ok) throw new Error(formatError(data.detail) || "Authentication failed");
     
     token = data.access_token;
-    
-    // Fetch identity
-    const identity = await api("/auth/me");
-    if (epoch !== generation) return;
-    previewMode = identity.subscription_status !== "active";
-    session = {name: identity.sub, permissions: ["review:read", "review:decide", "review:execute"], previewMode};
-    $("identity").textContent = identity.sub;
-    $("manage-billing").hidden = previewMode;
-    $("mode").textContent = previewMode ? "CATALOGUE PREVIEW" : "WORKSPACE";
-    $("mode").className = `badge ${previewMode ? "pending" : "live"}`;
-    document.querySelectorAll("[data-paid-only]").forEach(el => { el.hidden = previewMode; });
-    $("login-section").hidden = true;
-    $("logout").hidden = false;
-
-    if (previewMode) {
-        $("workspace").hidden = true;
-        $("onboarding-section").hidden = true;
-        $("billing-section").hidden = false;
-        $("starter-section").hidden = false;
-        
-        // Setup checkout flow
-        $("btn-subscribe").onclick = async () => {
-          $("btn-subscribe").disabled = true;
-          $("btn-subscribe").textContent = "Loading checkout...";
-          try {
-            const checkout = await api("/billing/checkout", {
-              method: "POST",
-              body: JSON.stringify({
-                success_url: `${window.location.origin}/dashboard?billing=success`,
-                cancel_url: `${window.location.origin}/dashboard?billing=cancelled`
-              })
-            });
-            window.location.href = checkout.checkout_url;
-          } catch(e) {
-            message(e.message);
-            $("btn-subscribe").disabled = false;
-            $("btn-subscribe").textContent = "Choose a subscription";
-          }
-        };
-    } else {
-        $("starter-section").hidden = true;
-        $("billing-section").hidden = true;
-        // Check integrations for onboarding
-        const integrations = await api("/integrations");
-        if (epoch !== generation) return;
-        
-        if (Object.keys(integrations.connected_providers || []).length === 0) {
-            $("workspace").hidden = true;
-            $("onboarding-section").hidden = false;
-        } else {
-            $("onboarding-section").hidden = true;
-            $("workspace").hidden = false;
-            await refresh();
-        }
-    }
+    await applyAuthenticatedSession(epoch);
   } catch(error) {
     disconnect();
     message(error.message);
@@ -1056,12 +1154,48 @@ if (new URLSearchParams(window.location.search).get("mode") === "signup") {
   $("login-panel").hidden = true;
   $("signup-panel").hidden = false;
 }
-const billingReturn = new URLSearchParams(window.location.search).get("billing");
-if (billingReturn === "success") {
-  message("Checkout completed. Log in to open your workspace. Payment confirmation may take a moment.");
-} else if (billingReturn === "cancelled") {
-  message("Checkout cancelled. Log in to continue your catalogue preview.");
-}
+
+(async function resumeFromBillingRedirect() {
+  const params = new URLSearchParams(window.location.search);
+  const billingReturn = params.get("billing");
+  const checkoutSessionId = params.get("session_id");
+  const stashedToken = consumeStashedBillingToken();
+
+  if (stashedToken) {
+    const epoch = ++generation;
+    token = stashedToken;
+    try {
+      if (billingReturn === "success" && checkoutSessionId) {
+        try {
+          await api("/billing/verify-session", {
+            method: "POST",
+            body: JSON.stringify({session_id: checkoutSessionId})
+          });
+        } catch (_) {}
+      }
+      await applyAuthenticatedSession(epoch);
+      if (billingReturn === "success") {
+        message(previewMode
+          ? "Checkout completed. Payment confirmation may take a moment."
+          : "Subscription confirmed. Your workspace is ready.");
+      } else if (billingReturn === "cancelled") {
+        message("Checkout cancelled. Continue exploring your catalogue preview.");
+      }
+      if (billingReturn || checkoutSessionId) {
+        window.history.replaceState({}, "", window.location.pathname);
+      }
+      return;
+    } catch (_) {
+      disconnect();
+    }
+  }
+
+  if (billingReturn === "success") {
+    message("Checkout completed. Log in to open your workspace. Payment confirmation may take a moment.");
+  } else if (billingReturn === "cancelled") {
+    message("Checkout cancelled. Log in to continue your catalogue preview.");
+  }
+})();
 
 $("form-login").onsubmit = async event => {
   event.preventDefault(); 
@@ -1100,19 +1234,13 @@ if ($("form-onboarding")) {
   };
 }
 
-$("logout").onclick = ()=>{disconnect(); message("Disconnected. Your token and displayed action data have been cleared.");};
-$("manage-billing")?.addEventListener("click", async () => {
-  const button = $("manage-billing");
-  button.disabled = true;
-  message("");
-  try {
-    const portal = await api("/billing/portal", {method: "POST"});
-    window.location.href = portal.portal_url;
-  } catch (error) {
-    message(error.message);
-    button.disabled = false;
-  }
-});
+$("logout").onclick = ()=>{
+  try { window.sessionStorage.removeItem(CHECKOUT_TOKEN_STORAGE_KEY); } catch (_) {}
+  disconnect();
+  message("Disconnected. Your token and displayed action data have been cleared.");
+};
+$("manage-billing")?.addEventListener("click", () => openBillingPortal($("manage-billing")));
+$("btn-billing-portal")?.addEventListener("click", () => openBillingPortal($("btn-billing-portal")));
 $("refresh").onclick = ()=>{message(""); refresh();};
 $("filter").onchange = renderQueue;
 $("propose-sync").onsubmit = async event => {

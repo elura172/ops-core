@@ -78,10 +78,13 @@
     <!-- BILLING ACCESS REQUIRED -->
     <section id="billing-section" class="panel billing" hidden>
       <div id="billing-panel">
-        <p class="eyebrow">SUBSCRIPTION REQUIRED</p>
-        <h2>Open your workspace</h2>
-        <p class="muted" style="margin-bottom: 24px;">Choose a subscription to manage your books and review changes.</p>
-        <button id="btn-subscribe" class="primary">Choose a subscription</button>
+        <p id="billing-eyebrow" class="eyebrow">SUBSCRIPTION REQUIRED</p>
+        <h2 id="billing-title">Open your workspace</h2>
+        <p id="billing-copy" class="muted" style="margin-bottom: 24px;">Choose a subscription to manage your books and review changes.</p>
+        <div class="billing-actions" style="display: flex; gap: 12px; flex-wrap: wrap;">
+          <button id="btn-subscribe" class="primary">Choose a subscription</button>
+          <button id="btn-billing-portal" class="secondary" hidden>Update payment method</button>
+        </div>
       </div>
     </section>
 
