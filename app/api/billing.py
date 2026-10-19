@@ -1,5 +1,5 @@
-from collections.abc import Mapping
 import logging
+from collections.abc import Mapping
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -317,9 +317,12 @@ def get_billing_router(settings: Settings, user_store: UserStore) -> APIRouter:
         event_type = _value(event, "type")
         event_type_str = str(event_type) if isinstance(event_type, str) else "unknown"
 
-        if event_id and hasattr(user_store, "has_processed_webhook_event"):
-            if user_store.has_processed_webhook_event(event_id):
-                return {"status": "duplicate"}
+        if (
+            event_id
+            and hasattr(user_store, "has_processed_webhook_event")
+            and user_store.has_processed_webhook_event(event_id)
+        ):
+            return {"status": "duplicate"}
 
         event_data = _value(event, "data")
         resource = _value(event_data, "object") if event_data is not None else None

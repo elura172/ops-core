@@ -209,8 +209,7 @@ class SQLiteUserStore:
     def record_webhook_event(self, event_id: str, event_type: str) -> bool:
         with self._lock:
             cursor = self.connection.execute(
-                "INSERT OR IGNORE INTO stripe_webhook_events (event_id, event_type, processed_at) "
-                "VALUES (?, ?, ?)",
+                "INSERT OR IGNORE INTO stripe_webhook_events (event_id, event_type, processed_at) VALUES (?, ?, ?)",
                 (event_id, event_type, datetime.now(UTC).isoformat()),
             )
             return cursor.rowcount == 1
