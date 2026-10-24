@@ -79,9 +79,51 @@ function disconnect() {
   if (typeof switchTab === "function") switchTab("queue");
   $("refresh").disabled = false;
 }
+
+// Configurable Server Connection & Native Utilities
+const DEFAULT_SERVER_URL = (typeof window !== "undefined" && window.location && window.location.origin && window.location.origin.startsWith("http") && !window.location.origin.includes("capacitor://"))
+  ? window.location.origin
+  : "http://127.0.0.1:8000";
+
+let targetServerUrl = localStorage.getItem("opscore_server_url") || DEFAULT_SERVER_URL;
+let targetTenantId = parseInt(localStorage.getItem("opscore_tenant_id") || "1", 10);
+let targetApiKey = localStorage.getItem("opscore_api_key") || "";
+
+function getTargetServerUrl() {
+  return targetServerUrl || DEFAULT_SERVER_URL;
+}
+
+function resolveApiUrl(path) {
+  if (path.startsWith("http://") || path.startsWith("https://")) return path;
+  const base = getTargetServerUrl().replace(/\/+$/, "");
+  const rel = path.replace(/^\/+/, "");
+  return `${base}/${rel}`;
+}
+
+function triggerHaptic(type = "light") {
+  try {
+    if (window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Haptics) {
+      if (type === "medium") {
+        window.Capacitor.Plugins.Haptics.impact({ style: "MEDIUM" });
+      } else if (type === "heavy") {
+        window.Capacitor.Plugins.Haptics.impact({ style: "HEAVY" });
+      } else {
+        window.Capacitor.Plugins.Haptics.impact({ style: "LIGHT" });
+      }
+    }
+  } catch (_) {}
+}
+
 async function api(path, options = {}) {
   const epoch = generation;
-  const response = await fetch(path, {...options, cache:"no-store", headers:{"Authorization":`Bearer ${token}`, "Content-Type":"application/json"}});
+  const url = resolveApiUrl(path);
+  const authHeader = token ? `Bearer ${token}` : (targetApiKey ? `Bearer ${targetApiKey}` : "");
+  const headers = {
+    "Content-Type": "application/json",
+    ...(authHeader ? { "Authorization": authHeader } : {}),
+    ...(options.headers || {}),
+  };
+  const response = await fetch(url, {...options, cache:"no-store", headers});
   if (epoch !== generation) throw new Error("Session changed.");
   const text = await response.text();
   if (epoch !== generation) throw new Error("Session changed.");
@@ -205,6 +247,7 @@ function renderQueue() {
   if ($("tab-queue-badge")) {
     $("tab-queue-badge").textContent = pendingCount ? String(pendingCount) : "";
   }
+  if (typeof updateDockBadges === "function") updateDockBadges();
 
   const list = $("items"); list.replaceChildren();
   const shown = items.filter(i => $("filter").value === "ALL" || i.status === $("filter").value);
@@ -332,7 +375,16 @@ function shelfImage(data, alt, className) {
 }
 function renderShelfDraft(item) {
   const detail = $("detail"), p = item.payload;
-  detail.replaceChildren(node("p", "SHELF CAPTURE", "eyebrow"), node("h2", "Check the physical copies"));
+  detail.replaceChildren();
+  if (window.innerWidth <= 840) {
+    const backBtn = node("button", "← Back to Queue", "mobile-back-btn");
+    backBtn.onclick = () => {
+      const q = $("queue-panel");
+      if (q) q.scrollIntoView({ behavior: "smooth", block: "start" });
+    };
+    detail.append(backBtn);
+  }
+  detail.append(node("p", "SHELF CAPTURE", "eyebrow"), node("h2", "Check the physical copies"));
   detail.append(node("p", "Compare the photos. Sightings of the same physical book belong to one copy. Two books with the same title can be separate copies.", "muted"));
   if (p.failed_images?.length || p.unidentified_spines) {
     detail.append(node("p", `${p.failed_images?.length || 0} photo(s) failed; ${p.unidentified_spines || 0} unreadable spine(s) were reported. This draft may be incomplete.`, "shelf-warning"));
@@ -447,6 +499,14 @@ function renderShelfDraft(item) {
 function renderDetail(item) {
   if (item.operation === "review_shelf_capture") return renderShelfDraft(item);
   const detail = $("detail"); detail.replaceChildren();
+  if (window.innerWidth <= 840) {
+    const backBtn = node("button", "← Back to Queue", "mobile-back-btn");
+    backBtn.onclick = () => {
+      const q = $("queue-panel");
+      if (q) q.scrollIntoView({ behavior: "smooth", block: "start" });
+    };
+    detail.append(backBtn);
+  }
   detail.append(node("p", "ACTION PREVIEW", "eyebrow"), node("h2", labels[item.operation] || human(item.operation)), node("span", human(item.status), `badge ${item.status.toLowerCase()}`));
   
   if (item.payload.shelf_evidence) {
@@ -464,6 +524,27 @@ function renderDetail(item) {
     const dis = item.payload.disambiguation;
     
     detail.append(node("h3", "Book Intake Details"));
+
+    const bookTitle = (dis.best_candidate ? dis.best_candidate.title : ext.title) || "Antiquarian Volume";
+    const bookAuthor = (ext.authors && ext.authors.length ? ext.authors.join(", ") : "Unknown Author");
+    const bookFormat = ext.format || "hardcover";
+    const bookGrade = val.condition_grade || "Good";
+
+    const bookPreview = node("div", undefined, "intake-preview-book");
+    bookPreview.innerHTML = `
+      <div class="intake-preview-cover">
+        <span class="intake-preview-icon">📖</span>
+        <h4 style="margin:4px 0 2px 0; font-family:var(--font-serif); font-size:1.2rem; color:var(--ink);">${bookTitle}</h4>
+        <p class="muted text-sm" style="margin:0 0 10px 0;">By ${bookAuthor}</p>
+        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+          <span class="status-badge">${human(bookFormat)}</span>
+          <span class="status-badge">${bookGrade}</span>
+          <span class="status-badge" style="color:var(--copper); font-weight:600;">$${Number(val.online_price_cad || 0).toFixed(2)} CAD</span>
+        </div>
+      </div>
+    `;
+    attachAntiquarian3DTilt(bookPreview);
+    detail.append(bookPreview);
     
     if (item.status === "PENDING" && session.permissions.includes("review:decide")) {
       const dl = node("dl");
@@ -911,7 +992,13 @@ async function select(id) {
   $("detail").replaceChildren(node("p", "Loading action…"));
   try {
     const item = await api(`/reviews/${encodeURIComponent(id)}`);
-    if (epoch === generation && request === selection) renderDetail(item);
+    if (epoch === generation && request === selection) {
+      renderDetail(item);
+      if (window.innerWidth <= 840) {
+        const detailPanel = $("queue-detail-panel");
+        if (detailPanel) detailPanel.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
+    }
   } catch(error) { if (epoch === generation && request === selection) { $("detail").replaceChildren(); message(error.message); } }
 }
 async function refresh() {
@@ -1118,7 +1205,7 @@ async function handleAuth(path, body, button) {
   const epoch = ++generation;
   button.disabled = true; message("");
   try {
-    const res = await fetch(path, {
+    const res = await fetch(resolveApiUrl(path), {
         method: "POST",
         headers: {"Content-Type": "application/json"},
         body: JSON.stringify(body)
@@ -1452,7 +1539,7 @@ if ($("btn-clear-staged")) {
   };
 }
 
-$("camera-file").onchange = event => {
+const handleStagedFileEvent = event => {
   const files = event.target.files ? Array.from(event.target.files) : [];
   if (!files.length) return;
 
@@ -1464,8 +1551,11 @@ $("camera-file").onchange = event => {
   }
   renderStagedTray();
   $("camera-status").textContent = `${stagedPhotos.length} photo${stagedPhotos.length > 1 ? "s" : ""} staged. Click 'Catalog Staged Photos' to begin.`;
-  $("camera-file").value = "";
+  event.target.value = "";
 };
+
+if ($("camera-file")) $("camera-file").onchange = handleStagedFileEvent;
+if ($("camera-file-direct")) $("camera-file-direct").onchange = handleStagedFileEvent;
 
 // Drag and drop onto intake dropzone
 const intakeDropzone = $("intake-panel") ? $("intake-panel").querySelector(".intake-dropzone") : null;
@@ -1757,6 +1847,115 @@ function updateBookshelfBatchBar(filtered) {
   }
 }
 
+/**
+ * Attaches 3D perspective tilt and dynamic specular sheen to a book card.
+ * Inspired by Emil Kowalski & ibelick/tilt.
+ */
+function attachAntiquarian3DTilt(element) {
+  if (!element || element.__tiltAttached) return;
+  element.__tiltAttached = true;
+  element.classList.add("antiquarian-3d-book");
+
+  // Create or retrieve specular sheen overlay
+  let sheen = element.querySelector(".book-glare-sheen");
+  if (!sheen) {
+    sheen = document.createElement("div");
+    sheen.className = "book-glare-sheen";
+    element.appendChild(sheen);
+  }
+
+  // Create spine crease if not present
+  if (!element.querySelector(".book-spine-crease")) {
+    const spine = document.createElement("div");
+    spine.className = "book-spine-crease";
+    element.appendChild(spine);
+  }
+
+  // Create text block edge layer if not present
+  if (!element.querySelector(".book-page-block")) {
+    const pages = document.createElement("div");
+    pages.className = "book-page-block";
+    element.appendChild(pages);
+  }
+
+  let rafId = null;
+  let targetRotateX = 0;
+  let targetRotateY = 0;
+  let targetGlareX = 50;
+  let targetGlareY = 50;
+  let targetOpacity = 0;
+
+  function updateTransform() {
+    element.style.transform = `perspective(1000px) rotateX(${targetRotateX}deg) rotateY(${targetRotateY}deg) scale3d(1.02, 1.02, 1.02)`;
+    sheen.style.background = `radial-gradient(circle at ${targetGlareX}% ${targetGlareY}%, rgba(217, 185, 140, 0.32) 0%, rgba(255, 255, 255, 0.08) 35%, rgba(0, 0, 0, 0) 75%)`;
+    sheen.style.opacity = String(targetOpacity);
+    rafId = null;
+  }
+
+  function handleMove(clientX, clientY) {
+    const rect = element.getBoundingClientRect();
+    const x = clientX - rect.left;
+    const y = clientY - rect.top;
+
+    const normX = (x / rect.width) * 2 - 1; // -1 to +1
+    const normY = (y / rect.height) * 2 - 1; // -1 to +1
+
+    targetRotateX = Math.round(-normY * 13 * 10) / 10;
+    targetRotateY = Math.round(normX * 13 * 10) / 10;
+
+    targetGlareX = Math.round((x / rect.width) * 100);
+    targetGlareY = Math.round((y / rect.height) * 100);
+    targetOpacity = 1;
+
+    element.style.transition = "transform 0.08s ease-out";
+    sheen.style.transition = "opacity 0.15s ease";
+
+    if (!rafId) {
+      rafId = requestAnimationFrame(updateTransform);
+    }
+  }
+
+  function handleLeave() {
+    targetRotateX = 0;
+    targetRotateY = 0;
+    targetOpacity = 0;
+
+    // Emil Kowalski spring easing recovery
+    element.style.transition = "transform 0.45s cubic-bezier(0.16, 1, 0.3, 1)";
+    sheen.style.transition = "opacity 0.35s ease";
+    element.style.transform = "perspective(1000px) rotateX(0deg) rotateY(0deg) scale3d(1, 1, 1)";
+    sheen.style.opacity = "0";
+
+    if (rafId) {
+      cancelAnimationFrame(rafId);
+      rafId = null;
+    }
+  }
+
+  // Mouse events
+  element.addEventListener("mousemove", (e) => {
+    handleMove(e.clientX, e.clientY);
+  });
+  element.addEventListener("mouseleave", handleLeave);
+
+  // Touch events (smooth touch drag)
+  element.addEventListener("touchstart", (e) => {
+    if (e.touches && e.touches[0]) {
+      triggerHaptic("light");
+      handleMove(e.touches[0].clientX, e.touches[0].clientY);
+    }
+  }, { passive: true });
+
+  element.addEventListener("touchmove", (e) => {
+    if (e.touches && e.touches[0]) {
+      handleMove(e.touches[0].clientX, e.touches[0].clientY);
+    }
+  }, { passive: true });
+
+  element.addEventListener("touchend", handleLeave, { passive: true });
+  element.addEventListener("touchcancel", handleLeave, { passive: true });
+}
+
 async function renderBookshelf() {
   const list = $("bookshelf-items"); list.replaceChildren();
 
@@ -1803,6 +2002,18 @@ async function renderBookshelf() {
     const card = node("div", undefined, "bookshelf-card");
     card.id = `card-${item.sku}`;
     if (selectedBookshelfSkus.has(item.sku)) card.classList.add("selected");
+    attachAntiquarian3DTilt(card);
+
+    // Antiquarian edition ribbon
+    const titleLower = (item.title || "").toLowerCase();
+    const notesLower = (item.condition_notes || "").toLowerCase();
+    if (titleLower.includes("first edition") || titleLower.includes("1st state") || notesLower.includes("first edition")) {
+      const rib = node("span", "1ST EDITION", "book-edition-ribbon first-ed");
+      card.append(rib);
+    } else if (item.format === "leather" || item.format === "half-leather") {
+      const rib = node("span", "MOROCCO LEATHER", "book-edition-ribbon");
+      card.append(rib);
+    }
     
     const cardHeader = node("div", undefined, "bookshelf-card-header");
     const cb = node("input", undefined, "bookshelf-card-select-cb");
@@ -2873,6 +3084,18 @@ function switchTab(active) {
     }
   }
 
+  // Synchronize Mobile Glass Dock active indicator
+  const dockMap = {
+    queue: $("dock-tab-desk"),
+    bookshelf: $("dock-tab-bookshelf"),
+    collectors: $("dock-tab-holds")
+  };
+  for (const [key, btn] of Object.entries(dockMap)) {
+    if (btn) {
+      btn.classList.toggle("active", key === active);
+    }
+  }
+
   if (active === "bookshelf") loadBookshelf();
   else if (active === "collectors") loadCollectorsView();
   else if (active === "analytics") loadAnalytics();
@@ -3866,21 +4089,25 @@ function createSampleBookShot(type) {
 }
 
 let visionMode = "3angle"; // "3angle" | "stack"
-const visionSlotFiles = { cover: null, title: null, copyright: null };
-const visionSlotUrls = { cover: null, title: null, copyright: null };
+const visionSlotFiles = { cover: null, spine: null, title: null, copyright: null, defect: null };
+const visionSlotUrls = { cover: null, spine: null, title: null, copyright: null, defect: null };
 let visionStackFiles = [];
 let visionCameraStream = null;
 let visionCameraTargetSlot = null;
 
 const slotTitles = {
-  cover: "Front Cover & Spine",
+  cover: "Front Cover",
+  spine: "Book Spine",
   title: "Title Page",
-  copyright: "Copyright / Colophon",
+  copyright: "Copyright / Slug",
+  defect: "Issue Point / Defect",
 };
 const slotIcons = {
   cover: "🖼️",
+  spine: "🏷️",
   title: "📖",
   copyright: "⚖️",
+  defect: "🔍",
 };
 
 function initVisionIntake() {
@@ -3901,7 +4128,13 @@ function initVisionIntake() {
   function updateRunButtonState() {
     if (!runBtn) return;
     if (visionMode === "3angle") {
-      const hasAny = Boolean(visionSlotFiles.cover || visionSlotFiles.title || visionSlotFiles.copyright);
+      const hasAny = Boolean(
+        visionSlotFiles.cover ||
+        visionSlotFiles.spine ||
+        visionSlotFiles.title ||
+        visionSlotFiles.copyright ||
+        visionSlotFiles.defect
+      );
       runBtn.disabled = !hasAny;
     } else {
       runBtn.disabled = visionStackFiles.length === 0;
@@ -4057,10 +4290,34 @@ function initVisionIntake() {
 
   // Wire slot buttons and file inputs
   document.querySelectorAll(".btn-slot-cam").forEach((btn) => {
-    btn.onclick = (e) => {
+    btn.onclick = async (e) => {
       e.stopPropagation();
       const target = btn.dataset.target;
-      if (target) startVisionCamera(target);
+      if (!target) return;
+
+      // Check for native Capacitor Camera
+      if (window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform() && window.Capacitor.Plugins && window.Capacitor.Plugins.Camera) {
+        try {
+          const photo = await window.Capacitor.Plugins.Camera.getPhoto({
+            quality: 90,
+            allowEditing: false,
+            resultType: "dataUrl",
+            source: "CAMERA",
+          });
+          if (photo && photo.dataUrl) {
+            const blob = await (await fetch(photo.dataUrl)).blob();
+            const file = new File([blob], `${target}_snap.jpg`, { type: "image/jpeg" });
+            setSlotFile(target, file);
+            triggerHaptic("light");
+            return;
+          }
+        } catch (err) {
+          if (String(err).includes("User cancelled") || String(err).includes("cancelled")) return;
+          console.warn("Capacitor camera error, falling back:", err);
+        }
+      }
+
+      startVisionCamera(target);
     };
   });
 
@@ -4414,7 +4671,7 @@ function initVisionIntake() {
         formData.append("section", $("vopt-section") ? $("vopt-section").value.trim() || "Rare Books" : "Rare Books");
         formData.append("shelf", $("vopt-shelf") ? $("vopt-shelf").value.trim() || "Vault-01" : "Vault-01");
 
-        const response = await fetch("/intake/sample-dune", {
+        const response = await fetch(resolveApiUrl("/intake/sample-dune"), {
           method: "POST",
           headers: { Authorization: `Bearer ${token}` },
           body: formData,
@@ -4447,7 +4704,13 @@ function initVisionIntake() {
     runBtn.onclick = async () => {
       const filesToUpload =
         visionMode === "3angle"
-          ? [visionSlotFiles.cover, visionSlotFiles.title, visionSlotFiles.copyright].filter(Boolean)
+          ? [
+              visionSlotFiles.cover,
+              visionSlotFiles.spine,
+              visionSlotFiles.title,
+              visionSlotFiles.copyright,
+              visionSlotFiles.defect,
+            ].filter(Boolean)
           : visionStackFiles;
 
       if (!filesToUpload.length) {
@@ -4490,7 +4753,7 @@ function initVisionIntake() {
         formData.append("shelf", $("vopt-shelf") ? $("vopt-shelf").value.trim() || "" : "");
         formData.append("auto_register", $("vopt-auto-register") ? $("vopt-auto-register").checked : true);
 
-        const response = await fetch("/intake/camera", {
+        const response = await fetch(resolveApiUrl("/intake/camera"), {
           method: "POST",
           headers: { Authorization: `Bearer ${token}` },
           body: formData,
@@ -4535,11 +4798,682 @@ function initVisionIntake() {
   }
 }
 
+function initServerSettings() {
+  const pillBtn = $("btn-server-settings");
+  const modal = $("modal-server-settings");
+  const closeBtn = $("btn-close-server-settings");
+  const form = $("form-server-settings");
+  const urlInput = $("server-endpoint-url");
+  const tenantInput = $("server-tenant-id");
+  const keyInput = $("server-api-key");
+  const testBtn = $("btn-test-server-connection");
+  const resultDiv = $("server-ping-result");
+  const statusLabel = $("server-connection-label");
+  const statusDot = pillBtn ? pillBtn.querySelector(".connection-status-dot") : null;
+
+  if (!pillBtn || !modal) return;
+
+  function updateStatusDisplay(online, labelText) {
+    if (statusLabel) statusLabel.textContent = labelText || (online ? "Connected" : "Offline");
+    if (statusDot) {
+      statusDot.className = `connection-status-dot ${online ? "online" : "offline"}`;
+    }
+  }
+
+  // Populate initial values
+  if (urlInput) urlInput.value = targetServerUrl;
+  if (tenantInput) tenantInput.value = targetTenantId;
+  if (keyInput) keyInput.value = targetApiKey;
+
+  // Background health probe
+  async function testConnection(url) {
+    const target = url || (urlInput ? urlInput.value.trim() : "") || DEFAULT_SERVER_URL;
+    try {
+      if (statusDot) statusDot.className = "connection-status-dot testing";
+      if (resultDiv) {
+        resultDiv.textContent = "Testing connection...";
+        resultDiv.style.color = "var(--ink-muted, #94a3b8)";
+      }
+      const testPath = `${target.replace(/\/+$/, "")}/health`;
+      const res = await fetch(testPath, { method: "GET", cache: "no-store" });
+      if (res.ok) {
+        updateStatusDisplay(true, "Connected");
+        if (resultDiv) {
+          resultDiv.textContent = `✓ Successfully reached Ops-Core (HTTP ${res.status})`;
+          resultDiv.style.color = "#10b981";
+        }
+        return true;
+      } else {
+        updateStatusDisplay(false, "Error");
+        if (resultDiv) {
+          resultDiv.textContent = `✕ Server returned HTTP ${res.status}`;
+          resultDiv.style.color = "#ef4444";
+        }
+        return false;
+      }
+    } catch (err) {
+      updateStatusDisplay(false, "Unreachable");
+      if (resultDiv) {
+        resultDiv.textContent = `✕ Cannot reach host: ${err.message}`;
+        resultDiv.style.color = "#ef4444";
+      }
+      return false;
+    }
+  }
+
+  // Initial silent probe
+  testConnection(targetServerUrl);
+
+  pillBtn.onclick = () => {
+    modal.hidden = false;
+    if (urlInput) urlInput.value = targetServerUrl;
+    if (tenantInput) tenantInput.value = targetTenantId;
+    if (keyInput) keyInput.value = targetApiKey;
+    if (resultDiv) resultDiv.textContent = "";
+  };
+
+  if (closeBtn) closeBtn.onclick = () => { modal.hidden = true; };
+  modal.onclick = (e) => { if (e.target === modal) modal.hidden = true; };
+
+  if (testBtn) {
+    testBtn.onclick = () => testConnection();
+  }
+
+  if (form) {
+    form.onsubmit = async (e) => {
+      e.preventDefault();
+      const newUrl = urlInput.value.trim();
+      const newTenant = parseInt(tenantInput.value.trim() || "1", 10);
+      const newKey = keyInput.value.trim();
+
+      targetServerUrl = newUrl;
+      targetTenantId = newTenant;
+      targetApiKey = newKey;
+
+      localStorage.setItem("opscore_server_url", newUrl);
+      localStorage.setItem("opscore_tenant_id", String(newTenant));
+      localStorage.setItem("opscore_api_key", newKey);
+
+      modal.hidden = true;
+      triggerHaptic("medium");
+      await testConnection(newUrl);
+      if (typeof refresh === "function") refresh();
+    };
+  }
+}
+
+function initCommandPalette() {
+  const triggerBtn = $("btn-command-palette-trigger");
+  const backdrop = $("modal-command-palette");
+  const input = $("cmd-palette-input");
+  const clearBtn = $("cmd-palette-clear");
+  const list = $("cmd-palette-list");
+  const empty = $("cmd-palette-empty");
+
+  if (!backdrop || !input || !list) return;
+
+  let selectedIndex = 0;
+  let currentFilteredItems = [];
+
+  const COMMANDS = [
+    // Group: Quick Actions
+    {
+      group: "Quick Actions",
+      id: "act-snap",
+      title: "Snap Bibliographic Dossier",
+      desc: "5-angle camera intake: Cover, Spine, Title, Copyright, Defect",
+      icon: "📷",
+      badge: "C",
+      keywords: "snap camera photo 5-slot intake isbn spine dossier inspect",
+      action: () => {
+        closePalette();
+        const intakeBtn = $("btn-open-vision-intake") || $("btn-starter-upload");
+        if (intakeBtn) intakeBtn.click();
+      }
+    },
+    {
+      group: "Quick Actions",
+      id: "act-desk",
+      title: "Review Desk Queue",
+      desc: "Review and approve staged items, prices, and marketplace changes",
+      icon: "⚡",
+      badge: "Q",
+      keywords: "desk queue review items approve reject triage",
+      action: () => {
+        closePalette();
+        switchTab("queue");
+      }
+    },
+    {
+      group: "Quick Actions",
+      id: "act-bookshelf",
+      title: "Physical Bookshelf Inventory",
+      desc: "Browse cataloged stock, locations, barcodes, and print slips",
+      icon: "📚",
+      badge: "B",
+      keywords: "bookshelf books catalog inventory stock search",
+      action: () => {
+        closePalette();
+        switchTab("bookshelf");
+      }
+    },
+    {
+      group: "Quick Actions",
+      id: "act-audit",
+      title: "Physical Shelf Reconciliation Audit",
+      desc: "Audit a physical shelf against digital inventory and detect misplaced books",
+      icon: "🏷️",
+      badge: "/audit",
+      keywords: "audit shelf verify missing barcode physical stocktaking",
+      action: () => {
+        closePalette();
+        switchTab("bookshelf");
+        const auditBtn = $("btn-start-shelf-audit");
+        if (auditBtn) auditBtn.click();
+      }
+    },
+    {
+      group: "Quick Actions",
+      id: "act-holds",
+      title: "Collector Want Lists & Priority Holds",
+      desc: "Manage antiquarian collector CRM and active 48-hour courtesy holds",
+      icon: "⭐",
+      badge: "/wants",
+      keywords: "wants holds collectors crm abaa priority courtesy reservation",
+      action: () => {
+        closePalette();
+        switchTab("collectors");
+      }
+    },
+    {
+      group: "Quick Actions",
+      id: "act-sync",
+      title: "Force Marketplace Delist Sync",
+      desc: "Sync stock levels across Amazon, eBay, AbeBooks, and Biblio",
+      icon: "🔄",
+      badge: "/sync",
+      keywords: "sync delist amazon ebay abebooks biblio reconcile",
+      action: async () => {
+        closePalette();
+        message("Broadcasting multi-channel delist reconciliation...");
+        try {
+          await api("/publish/reconcile-all", { method: "POST" });
+          message("✓ Multi-channel sync completed.");
+        } catch (_) {
+          refresh();
+        }
+      }
+    },
+    {
+      group: "Quick Actions",
+      id: "act-server",
+      title: "Server & Host Connection Settings",
+      desc: "Configure target Ops-Core instance URL, tenant ID, and auth tokens",
+      icon: "⚙️",
+      badge: "/server",
+      keywords: "server connection host endpoint tenant api port localhost",
+      action: () => {
+        closePalette();
+        const serverBtn = $("btn-server-settings");
+        if (serverBtn) serverBtn.click();
+      }
+    },
+
+    // Group: Shelf Quick-Jumper
+    {
+      group: "Jump to Shelf",
+      id: "shelf-vault",
+      title: "Antiquarian Vault (VAULT-1 / GLASS-CASE)",
+      desc: "High-value first editions, morocco leather, incunabula",
+      icon: "🏛️",
+      badge: "VAULT",
+      keywords: "/shelf vault rare first edition morocco kelmscott high-value",
+      action: () => {
+        closePalette();
+        switchTab("bookshelf");
+        jumpToLocation("Antiquarian Vault", "VAULT-1");
+      }
+    },
+    {
+      group: "Jump to Shelf",
+      id: "shelf-scifi",
+      title: "Sci-Fi & Fantasy (SF-01)",
+      desc: "Chilton Dune, speculative fiction, early Arkham House",
+      icon: "🚀",
+      badge: "SF-01",
+      keywords: "/shelf sf scifi fantasy dune herbert asimov clarke",
+      action: () => {
+        closePalette();
+        switchTab("bookshelf");
+        jumpToLocation("Sci-Fi & Fantasy", "SF-01");
+      }
+    },
+    {
+      group: "Jump to Shelf",
+      id: "shelf-americana",
+      title: "History & Americana (H-01)",
+      desc: "Pre-1900 voyages, local histories, explorer logs",
+      icon: "📜",
+      badge: "H-01",
+      keywords: "/shelf h history americana civil war voyages exploration",
+      action: () => {
+        closePalette();
+        switchTab("bookshelf");
+        jumpToLocation("History & Americana", "H-01");
+      }
+    },
+    {
+      group: "Jump to Shelf",
+      id: "shelf-fiction",
+      title: "Literature & Fiction (A-01)",
+      desc: "Modern first editions, 20th century trade literature",
+      icon: "📖",
+      badge: "A-01",
+      keywords: "/shelf a fiction literature hemingway fitzgerald joyce woolf",
+      action: () => {
+        closePalette();
+        switchTab("bookshelf");
+        jumpToLocation("Fiction", "A-01");
+      }
+    },
+    {
+      group: "Jump to Shelf",
+      id: "shelf-esoterica",
+      title: "Philosophy & Esoterica (P-01)",
+      desc: "Hermetica, alchemy, classical philosophy, metaphysics",
+      icon: "🔮",
+      badge: "P-01",
+      keywords: "/shelf p philosophy esoterica alchemy occult metaphysics",
+      action: () => {
+        closePalette();
+        switchTab("bookshelf");
+        jumpToLocation("Philosophy & Esoterica", "P-01");
+      }
+    },
+    {
+      group: "Jump to Shelf",
+      id: "shelf-art",
+      title: "Art & Illustrated (ART-01)",
+      desc: "Fine bindings, woodcuts, copperplates, Arthur Rackham",
+      icon: "🎨",
+      badge: "ART-01",
+      keywords: "/shelf art illustrated engravings plates rackham blake",
+      action: () => {
+        closePalette();
+        switchTab("bookshelf");
+        jumpToLocation("Art & Illustrated", "ART-01");
+      }
+    }
+  ];
+
+  function jumpToLocation(section, shelf) {
+    setTimeout(() => {
+      const secSelect = $("bookshelf-filter-section");
+      const shelfInput = $("bookshelf-filter-shelf");
+      if (secSelect) {
+        secSelect.value = section;
+      }
+      if (shelfInput) {
+        shelfInput.value = shelf;
+      }
+      if (typeof renderBookshelf === "function") {
+        renderBookshelf();
+      }
+    }, 50);
+  }
+
+  function openPalette() {
+    backdrop.hidden = false;
+    input.value = "";
+    if (clearBtn) clearBtn.hidden = true;
+    renderFilteredItems("");
+    input.focus();
+    triggerHaptic("light");
+  }
+
+  function closePalette() {
+    backdrop.hidden = true;
+    input.blur();
+  }
+
+  function renderFilteredItems(query) {
+    const q = query.trim().toLowerCase();
+    list.replaceChildren();
+
+    // 1. Filter default commands
+    let matchedCommands = COMMANDS.filter(cmd => {
+      if (!q) return true;
+      return (
+        cmd.title.toLowerCase().includes(q) ||
+        cmd.desc.toLowerCase().includes(q) ||
+        cmd.keywords.toLowerCase().includes(q) ||
+        cmd.badge.toLowerCase().includes(q)
+      );
+    });
+
+    // 2. If there's an author/title/SKU query, also search in-memory inventoryItems
+    let matchedBooks = [];
+    if (q && typeof inventoryItems !== "undefined" && Array.isArray(inventoryItems)) {
+      matchedBooks = inventoryItems.filter(item => {
+        const title = (item.title || "").toLowerCase();
+        const authors = (item.authors || []).join(" ").toLowerCase();
+        const sku = (item.sku || "").toLowerCase();
+        return title.includes(q) || authors.includes(q) || sku.includes(q);
+      }).slice(0, 5).map(item => ({
+        group: "Matching Catalog Volumes",
+        id: `book-${item.sku}`,
+        title: item.title,
+        desc: `${(item.authors || []).join(", ")} · ${item.format || "Cloth"} · $${item.in_store_price_cad || "0.00"} CAD`,
+        icon: "📕",
+        badge: item.sku,
+        action: () => {
+          closePalette();
+          switchTab("bookshelf");
+          setTimeout(() => {
+            const searchInput = $("bookshelf-search");
+            if (searchInput) searchInput.value = item.sku;
+            if (typeof renderBookshelf === "function") renderBookshelf();
+          }, 50);
+        }
+      }));
+    }
+
+    currentFilteredItems = [...matchedCommands, ...matchedBooks];
+
+    if (currentFilteredItems.length === 0) {
+      if (empty) empty.hidden = false;
+      return;
+    }
+
+    if (empty) empty.hidden = true;
+    selectedIndex = Math.min(selectedIndex, currentFilteredItems.length - 1);
+    if (selectedIndex < 0) selectedIndex = 0;
+
+    // Group items by group name
+    const groups = {};
+    currentFilteredItems.forEach((item, index) => {
+      const g = item.group || "Commands";
+      if (!groups[g]) groups[g] = [];
+      groups[g].push({ item, globalIndex: index });
+    });
+
+    for (const [groupName, groupItems] of Object.entries(groups)) {
+      const groupEl = node("div", undefined, "cmd-group");
+      const heading = node("div", groupName, "cmd-group-heading");
+      groupEl.append(heading);
+
+      groupItems.forEach(({ item, globalIndex }) => {
+        const itemEl = node("div", undefined, `cmd-item${globalIndex === selectedIndex ? " selected" : ""}`);
+        itemEl.dataset.index = String(globalIndex);
+        itemEl.role = "option";
+        itemEl.setAttribute("aria-selected", globalIndex === selectedIndex ? "true" : "false");
+
+        const iconEl = node("span", item.icon, "cmd-item-icon");
+        const contentEl = node("div", undefined, "cmd-item-content");
+        const titleEl = node("span", item.title, "cmd-item-title");
+        const descEl = node("span", item.desc, "cmd-item-desc");
+        contentEl.append(titleEl, descEl);
+
+        const badgeEl = node("span", item.badge, "cmd-item-badge");
+
+        itemEl.append(iconEl, contentEl, badgeEl);
+
+        itemEl.onmouseenter = () => {
+          selectedIndex = globalIndex;
+          updateSelectedVisual();
+        };
+
+        itemEl.onclick = () => {
+          triggerHaptic("medium");
+          item.action();
+        };
+
+        groupEl.append(itemEl);
+      });
+
+      list.append(groupEl);
+    }
+
+    scrollSelectedIntoView();
+  }
+
+  function updateSelectedVisual() {
+    const items = list.querySelectorAll(".cmd-item");
+    items.forEach((el) => {
+      const idx = parseInt(el.dataset.index, 10);
+      const isSelected = idx === selectedIndex;
+      el.classList.toggle("selected", isSelected);
+      el.setAttribute("aria-selected", isSelected ? "true" : "false");
+    });
+  }
+
+  function scrollSelectedIntoView() {
+    const selectedEl = list.querySelector(`.cmd-item[data-index="${selectedIndex}"]`);
+    if (selectedEl) {
+      selectedEl.scrollIntoView({ block: "nearest" });
+    }
+  }
+
+  // Input events
+  input.oninput = () => {
+    if (clearBtn) clearBtn.hidden = !input.value;
+    selectedIndex = 0;
+    renderFilteredItems(input.value);
+  };
+
+  if (clearBtn) {
+    clearBtn.onclick = () => {
+      input.value = "";
+      clearBtn.hidden = true;
+      selectedIndex = 0;
+      renderFilteredItems("");
+      input.focus();
+    };
+  }
+
+  // Key navigation inside input
+  input.onkeydown = (e) => {
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      if (currentFilteredItems.length > 0) {
+        selectedIndex = (selectedIndex + 1) % currentFilteredItems.length;
+        updateSelectedVisual();
+        scrollSelectedIntoView();
+        triggerHaptic("light");
+      }
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      if (currentFilteredItems.length > 0) {
+        selectedIndex = (selectedIndex - 1 + currentFilteredItems.length) % currentFilteredItems.length;
+        updateSelectedVisual();
+        scrollSelectedIntoView();
+        triggerHaptic("light");
+      }
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      if (currentFilteredItems[selectedIndex]) {
+        triggerHaptic("medium");
+        currentFilteredItems[selectedIndex].action();
+      }
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      closePalette();
+    }
+  };
+
+  // Click trigger & backdrop
+  if (triggerBtn) {
+    triggerBtn.onclick = () => {
+      if (backdrop.hidden) openPalette();
+      else closePalette();
+    };
+  }
+
+  backdrop.onclick = (e) => {
+    if (e.target === backdrop) closePalette();
+  };
+
+  // Global hotkeys (⌘K, Ctrl+K, and '/')
+  document.addEventListener("keydown", (e) => {
+    const isCmdK = (e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k";
+    if (isCmdK) {
+      e.preventDefault();
+      if (backdrop.hidden) openPalette();
+      else closePalette();
+      return;
+    }
+
+    if (e.key === "Escape" && !backdrop.hidden) {
+      e.preventDefault();
+      closePalette();
+      return;
+    }
+
+    // Quick slash jumper when not typing in form field
+    if (e.key === "/" && backdrop.hidden) {
+      const activeTag = (document.activeElement && document.activeElement.tagName) || "";
+      if (activeTag !== "INPUT" && activeTag !== "TEXTAREA" && activeTag !== "SELECT") {
+        e.preventDefault();
+        openPalette();
+      }
+    }
+  });
+}
+
+function updateDockBadges() {
+  const deskBadge = $("dock-desk-badge");
+  if (deskBadge) {
+    const pendingCount = items ? items.filter(i => i.status === "PENDING").length : 0;
+    deskBadge.textContent = String(pendingCount);
+    deskBadge.hidden = pendingCount === 0;
+  }
+  const holdsBadge = $("dock-holds-badge");
+  const tabHoldsBadge = $("tab-holds-badge");
+  if (holdsBadge && tabHoldsBadge) {
+    holdsBadge.textContent = tabHoldsBadge.textContent;
+    holdsBadge.hidden = !tabHoldsBadge.textContent || tabHoldsBadge.style.display === "none";
+  }
+}
+
+function initMobileGlassDock() {
+  const dock = $("floating-mobile-dock");
+  const container = dock ? dock.querySelector(".dock-container") : null;
+  if (!dock || !container) return;
+
+  const deskBtn = $("dock-tab-desk");
+  const shelfBtn = $("dock-tab-bookshelf");
+  const snapBtn = $("dock-tab-snap");
+  const holdsBtn = $("dock-tab-holds");
+  const cmdBtn = $("dock-tab-cmd");
+
+  if (deskBtn) {
+    deskBtn.onclick = () => {
+      triggerHaptic("medium");
+      switchTab("queue");
+    };
+  }
+  if (shelfBtn) {
+    shelfBtn.onclick = () => {
+      triggerHaptic("medium");
+      switchTab("bookshelf");
+    };
+  }
+  if (snapBtn) {
+    snapBtn.onclick = () => {
+      triggerHaptic("heavy");
+      const openVision = $("btn-open-vision-intake") || $("btn-starter-upload");
+      if (openVision) openVision.click();
+    };
+  }
+  if (holdsBtn) {
+    holdsBtn.onclick = () => {
+      triggerHaptic("medium");
+      switchTab("collectors");
+    };
+  }
+  if (cmdBtn) {
+    cmdBtn.onclick = () => {
+      triggerHaptic("light");
+      const cmdTrigger = $("btn-command-palette-trigger");
+      if (cmdTrigger) cmdTrigger.click();
+    };
+  }
+
+  // Fluid Proximity Magnification (ibelick/dock)
+  const dockItems = container.querySelectorAll(".dock-item:not(.dock-shutter-hero)");
+  const maxDistance = 110;
+  let rafDockId = null;
+
+  function applyMagnification(clientX) {
+    dockItems.forEach((item) => {
+      const rect = item.getBoundingClientRect();
+      const itemCenterX = rect.left + rect.width / 2;
+      const dist = Math.abs(itemCenterX - clientX);
+
+      if (dist < maxDistance) {
+        const scale = 1 + 0.24 * Math.cos((dist / maxDistance) * (Math.PI / 2));
+        const lift = (scale - 1) * 16;
+        item.style.transform = `scale(${scale}) translateY(-${lift}px)`;
+      } else {
+        item.style.transform = "scale(1) translateY(0)";
+      }
+    });
+    rafDockId = null;
+  }
+
+  function resetMagnification() {
+    dockItems.forEach((item) => {
+      item.style.transition = "transform 0.3s cubic-bezier(0.16, 1, 0.3, 1)";
+      item.style.transform = "scale(1) translateY(0)";
+    });
+    setTimeout(() => {
+      dockItems.forEach((item) => {
+        item.style.transition = "transform 0.15s cubic-bezier(0.16, 1, 0.3, 1)";
+      });
+    }, 300);
+  }
+
+  container.addEventListener("mousemove", (e) => {
+    dockItems.forEach(i => i.style.transition = "none");
+    if (!rafDockId) {
+      rafDockId = requestAnimationFrame(() => applyMagnification(e.clientX));
+    }
+  });
+
+  container.addEventListener("mouseleave", () => {
+    if (rafDockId) cancelAnimationFrame(rafDockId);
+    resetMagnification();
+  });
+
+  container.addEventListener("touchmove", (e) => {
+    if (e.touches && e.touches[0]) {
+      dockItems.forEach(i => i.style.transition = "none");
+      if (!rafDockId) {
+        rafDockId = requestAnimationFrame(() => applyMagnification(e.touches[0].clientX));
+      }
+    }
+  }, { passive: true });
+
+  container.addEventListener("touchend", () => {
+    if (rafDockId) cancelAnimationFrame(rafDockId);
+    resetMagnification();
+  }, { passive: true });
+
+  updateDockBadges();
+}
+
 // Initialize on script load
-if (document.readyState === "loading") {
-  document.addEventListener("DOMContentLoaded", initVisionIntake);
-} else {
+function initCockpitApp() {
   initVisionIntake();
+  initServerSettings();
+  initCommandPalette();
+  initMobileGlassDock();
+}
+
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", initCockpitApp);
+} else {
+  initCockpitApp();
 }
 
 

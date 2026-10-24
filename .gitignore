@@ -27,3 +27,4 @@ snapshots.db
 logs/
 .agents/
 skills-lock.json
+node_modules/

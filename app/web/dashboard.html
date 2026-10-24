@@ -2,7 +2,10 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=5, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Ops Core">
   <meta name="theme-color" content="#0B0A13">
   <title>Ops Core · Your Bookshop Workspace</title>
   <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;0,600;1,300;1,400;1,500&family=JetBrains+Mono:wght@300;400;500&family=Space+Grotesk:wght@300;400;500;600&display=swap" rel="stylesheet">
@@ -16,6 +19,15 @@
       <span class="caption">Your books, connected.</span>
     </div>
     <div class="header-right">
+      <button id="btn-command-palette-trigger" class="command-trigger-btn" type="button" title="Quick-Jumper & Commands (⌘K)">
+        <span class="cmd-trigger-icon">🔍</span>
+        <span class="cmd-trigger-text">Search & Commands</span>
+        <kbd class="cmd-trigger-kbd">⌘K</kbd>
+      </button>
+      <button id="btn-server-settings" class="ghost-sm connection-pill" title="Configure Ops-Core Server Endpoint">
+        <span class="connection-status-dot online"></span>
+        <span id="server-connection-label">Server</span>
+      </button>
       <span id="identity" class="identity-badge"></span>
       <button id="manage-billing" hidden class="ghost-sm">Manage subscription</button>
       <button id="logout" hidden class="ghost-sm">Log out</button>
@@ -414,12 +426,20 @@
               </label>
             </div>
 
-            <label class="camera-snap-cta">
-              <input type="file" id="camera-file" accept="image/*,.heic,.heif,.jpg,.jpeg,.png,.webp" multiple hidden>
-              <span class="snap-icon">📷</span>
-              <span class="snap-title">Take or choose photos</span>
-              <span class="snap-sub">For shelf capture, aim for 20–30 spines per photo. Include a wide view for context and overlapping close-ups for readable titles.</span>
-            </label>
+            <div class="camera-snap-buttons-row">
+              <label class="camera-snap-cta mobile-snap-direct">
+                <input type="file" id="camera-file-direct" accept="image/*" capture="environment" hidden>
+                <span class="snap-icon">📸</span>
+                <span class="snap-title">Open Camera</span>
+                <span class="snap-sub">Snap shelf or volume live</span>
+              </label>
+              <label class="camera-snap-cta">
+                <input type="file" id="camera-file" accept="image/*,.heic,.heif,.jpg,.jpeg,.png,.webp" multiple hidden>
+                <span class="snap-icon">🖼️</span>
+                <span class="snap-title">Photo Library</span>
+                <span class="snap-sub">Pick existing shelf photos</span>
+              </label>
+            </div>
 
             <!-- STAGED PHOTOS TRAY -->
             <div id="staged-photos-tray" class="staged-photos-tray" hidden>
@@ -634,15 +654,15 @@
           </div>
         </div>
 
-        <!-- 3-ANGLE CAPTURE SLOTS -->
-        <div id="vslots-3angle-container" class="vslots-grid">
-          <!-- Slot 1: Cover / Spine -->
+        <!-- 5-SLOT BIBLIOGRAPHIC DOSSIER CAPTURE SLOTS -->
+        <div id="vslots-3angle-container" class="vslots-grid vslots-grid-5">
+          <!-- Slot 1: Front Cover -->
           <div class="vslot-card" data-slot="cover" id="slot-card-cover">
             <div class="vslot-header">
               <span class="vslot-num">1</span>
-              <span class="vslot-title">Front Cover & Spine</span>
+              <span class="vslot-title">Front Cover</span>
             </div>
-            <p class="vslot-desc">Full dust jacket or cloth binding & spine title</p>
+            <p class="vslot-desc">Full dust jacket or cloth binding artwork</p>
             <div class="vslot-preview" id="vslot-preview-cover">
               <div class="vslot-empty-state">
                 <span class="vslot-icon">🖼️</span>
@@ -658,13 +678,35 @@
             </div>
           </div>
 
-          <!-- Slot 2: Title Page -->
-          <div class="vslot-card" data-slot="title" id="slot-card-title">
+          <!-- Slot 2: Spine -->
+          <div class="vslot-card" data-slot="spine" id="slot-card-spine">
             <div class="vslot-header">
               <span class="vslot-num">2</span>
+              <span class="vslot-title">Book Spine</span>
+            </div>
+            <p class="vslot-desc">Spine title, publisher imprint, gilt lettering</p>
+            <div class="vslot-preview" id="vslot-preview-spine">
+              <div class="vslot-empty-state">
+                <span class="vslot-icon">🏷️</span>
+                <span>Drop photo or snap</span>
+              </div>
+            </div>
+            <div class="vslot-actions">
+              <button type="button" class="ghost-sm btn-slot-cam" data-target="spine">📷 Camera</button>
+              <label class="ghost-sm btn-slot-upload">
+                📁 File
+                <input type="file" accept="image/*" class="slot-file-input" data-target="spine" hidden>
+              </label>
+            </div>
+          </div>
+
+          <!-- Slot 3: Title Page -->
+          <div class="vslot-card" data-slot="title" id="slot-card-title">
+            <div class="vslot-header">
+              <span class="vslot-num">3</span>
               <span class="vslot-title">Title Page</span>
             </div>
-            <p class="vslot-desc">Full subtitle, publisher house, illustrator, translator</p>
+            <p class="vslot-desc">Full subtitle, publisher house, illustrator</p>
             <div class="vslot-preview" id="vslot-preview-title">
               <div class="vslot-empty-state">
                 <span class="vslot-icon">📖</span>
@@ -680,13 +722,13 @@
             </div>
           </div>
 
-          <!-- Slot 3: Copyright / Colophon -->
+          <!-- Slot 4: Copyright / Colophon -->
           <div class="vslot-card" data-slot="copyright" id="slot-card-copyright">
             <div class="vslot-header">
-              <span class="vslot-num">3</span>
-              <span class="vslot-title">Copyright / Colophon</span>
+              <span class="vslot-num">4</span>
+              <span class="vslot-title">Copyright / Slug</span>
             </div>
-            <p class="vslot-desc">Numberline (e.g. 1-10), "First Edition", date, BCE cues</p>
+            <p class="vslot-desc">Numberline (e.g. 1-10), "First Edition", date</p>
             <div class="vslot-preview" id="vslot-preview-copyright">
               <div class="vslot-empty-state">
                 <span class="vslot-icon">⚖️</span>
@@ -698,6 +740,28 @@
               <label class="ghost-sm btn-slot-upload">
                 📁 File
                 <input type="file" accept="image/*" class="slot-file-input" data-target="copyright" hidden>
+              </label>
+            </div>
+          </div>
+
+          <!-- Slot 5: Issue Point / Defect -->
+          <div class="vslot-card" data-slot="defect" id="slot-card-defect">
+            <div class="vslot-header">
+              <span class="vslot-num">5</span>
+              <span class="vslot-title">Issue Point / Defect</span>
+            </div>
+            <p class="vslot-desc">Inscriptions, typos, bookplate, foxing, collation</p>
+            <div class="vslot-preview" id="vslot-preview-defect">
+              <div class="vslot-empty-state">
+                <span class="vslot-icon">🔍</span>
+                <span>Drop photo or snap</span>
+              </div>
+            </div>
+            <div class="vslot-actions">
+              <button type="button" class="ghost-sm btn-slot-cam" data-target="defect">📷 Camera</button>
+              <label class="ghost-sm btn-slot-upload">
+                📁 File
+                <input type="file" accept="image/*" class="slot-file-input" data-target="defect" hidden>
               </label>
             </div>
           </div>
@@ -758,7 +822,128 @@
       </div>
     </div>
 
+    <!-- SERVER SETTINGS MODAL (for mobile & configurable endpoints) -->
+    <div id="modal-server-settings" class="vision-intake-modal-backdrop" hidden>
+      <div class="vision-intake-modal" role="dialog" aria-modal="true" aria-labelledby="server-settings-title" style="max-width: 520px;">
+        <div class="vision-modal-header">
+          <div>
+            <span class="vision-badge">⚡ HOST CONNECTION</span>
+            <h3 id="server-settings-title" style="margin: 4px 0 0 0;">Ops-Core Server Endpoint</h3>
+          </div>
+          <button type="button" id="btn-close-server-settings" class="vision-close-btn" aria-label="Close settings">✕</button>
+        </div>
+        <p class="muted text-sm" style="margin-top: 8px;">Connect this Corvus cockpit to your in-store local server or managed cloud cluster.</p>
+
+        <form id="form-server-settings" style="margin-top: 16px; display: flex; flex-direction: column; gap: 14px;">
+          <div>
+            <label for="server-endpoint-url" style="display: block; font-size: 13px; font-weight: 500; margin-bottom: 6px;">Server URL</label>
+            <input type="url" id="server-endpoint-url" required placeholder="http://192.168.1.50:8000 or https://ops.store.com" style="width: 100%; box-sizing: border-box;">
+            <p class="muted text-xs" style="margin-top: 4px;">Default is local origin or http://127.0.0.1:8000.</p>
+          </div>
+
+          <div>
+            <label for="server-tenant-id" style="display: block; font-size: 13px; font-weight: 500; margin-bottom: 6px;">Tenant ID</label>
+            <input type="number" id="server-tenant-id" value="1" min="1" style="width: 100%; box-sizing: border-box;">
+          </div>
+
+          <div>
+            <label for="server-api-key" style="display: block; font-size: 13px; font-weight: 500; margin-bottom: 6px;">Admin Token / API Key (Optional)</label>
+            <input type="password" id="server-api-key" placeholder="test-admin-secret-token" style="width: 100%; box-sizing: border-box;">
+          </div>
+
+          <div id="server-ping-result" class="muted text-sm" style="min-height: 20px;"></div>
+
+          <div style="display: flex; gap: 10px; margin-top: 8px; justify-content: flex-end;">
+            <button type="button" id="btn-test-server-connection" class="secondary">Test Connection</button>
+            <button type="submit" class="primary">Save & Connect</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- ORIGINUI COMMAND PALETTE & QUICK-JUMPER MODAL -->
+    <div id="modal-command-palette" class="cmd-palette-backdrop" hidden>
+      <div class="cmd-palette-dialog" role="dialog" aria-modal="true" aria-label="Command Palette and Quick Jumper">
+        <div class="cmd-palette-input-wrap">
+          <span class="cmd-input-icon">🔍</span>
+          <input
+            type="text"
+            id="cmd-palette-input"
+            class="cmd-palette-input"
+            placeholder="Type a command, /shelf, author, or search..."
+            autocomplete="off"
+            spellcheck="false"
+          >
+          <button type="button" id="cmd-palette-clear" class="cmd-clear-btn" hidden aria-label="Clear search">✕</button>
+          <kbd class="cmd-esc-kbd">ESC</kbd>
+        </div>
+
+        <div class="cmd-palette-body">
+          <div id="cmd-palette-empty" class="cmd-empty-state" hidden>
+            <p>No matching commands or volumes found.</p>
+            <span class="muted text-xs">Try searching for an author, a shelf code, or "snap"</span>
+          </div>
+
+          <div id="cmd-palette-list" class="cmd-list" role="listbox">
+            <!-- Populated dynamically via dashboard.js -->
+          </div>
+        </div>
+
+        <div class="cmd-palette-footer">
+          <div class="cmd-footer-hints">
+            <span><kbd>↑</kbd> <kbd>↓</kbd> Navigate</span>
+            <span><kbd>↵</kbd> Execute</span>
+            <span><kbd>esc</kbd> Dismiss</span>
+          </div>
+          <span class="cmd-footer-badge">Corvus Quick-Jumper ◈ OriginUI</span>
+        </div>
+      </div>
+    </div>
+
     <footer>◈ &nbsp; Prepared by automation. Directed by you.</footer>
   </main>
+
+  <!-- FLOATING MOBILE GLASS DOCK (ibelick/dock) -->
+  <nav id="floating-mobile-dock" class="mobile-glass-dock" aria-label="Mobile Navigation Dock">
+    <div class="dock-container">
+      <!-- 1. Review Desk -->
+      <button type="button" id="dock-tab-desk" class="dock-item active" data-tab="queue" title="Review Desk">
+        <span class="dock-icon">⚡</span>
+        <span class="dock-label">Desk</span>
+        <span id="dock-desk-badge" class="dock-badge" hidden>0</span>
+        <span class="dock-dot"></span>
+      </button>
+
+      <!-- 2. Bookshelf -->
+      <button type="button" id="dock-tab-bookshelf" class="dock-item" data-tab="bookshelf" title="Physical Bookshelf">
+        <span class="dock-icon">📚</span>
+        <span class="dock-label">Books</span>
+        <span class="dock-dot"></span>
+      </button>
+
+      <!-- 3. Hero Camera Shutter (Center Raised Action) -->
+      <button type="button" id="dock-tab-snap" class="dock-item dock-shutter-hero" title="Snap Book Dossier">
+        <div class="shutter-inner">
+          <span class="shutter-icon">📷</span>
+        </div>
+        <span class="dock-label">Snap</span>
+      </button>
+
+      <!-- 4. Collector Holds & CRM -->
+      <button type="button" id="dock-tab-holds" class="dock-item" data-tab="collectors" title="Collector Holds & CRM">
+        <span class="dock-icon">⭐</span>
+        <span class="dock-label">Holds</span>
+        <span id="dock-holds-badge" class="dock-badge" hidden>0</span>
+        <span class="dock-dot"></span>
+      </button>
+
+      <!-- 5. Command Palette (⌘K) -->
+      <button type="button" id="dock-tab-cmd" class="dock-item" title="Quick-Jumper & Search (⌘K)">
+        <span class="dock-icon">🔍</span>
+        <span class="dock-label">Search</span>
+        <span class="dock-kbd">⌘K</span>
+      </button>
+    </div>
+  </nav>
 </body>
 </html>

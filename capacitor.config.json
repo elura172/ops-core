@@ -1,0 +1,25 @@
+{
+  "appId": "com.corvus.antiquarian",
+  "appName": "Corvus Antiquarian",
+  "webDir": "app/web",
+  "bundledWebRuntime": false,
+  "server": {
+    "androidScheme": "https",
+    "iosScheme": "https",
+    "cleartext": true
+  },
+  "plugins": {
+    "Camera": {
+      "permissions": ["camera", "photos"]
+    },
+    "Keyboard": {
+      "resize": "body",
+      "style": "dark",
+      "resizeOnFullScreen": true
+    },
+    "StatusBar": {
+      "style": "dark",
+      "backgroundColor": "#0f172a"
+    }
+  }
+}

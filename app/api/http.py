@@ -2966,13 +2966,5 @@ def create_app(
     return app
 
 
-_lazy_app: FastAPI | None = None
-
-
-def __getattr__(name: str) -> Any:
-    global _lazy_app
-    if name == "app":
-        if _lazy_app is None:
-            _lazy_app = create_app()
-        return _lazy_app
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+app = create_app()
+handler = app
