@@ -64,8 +64,9 @@ class ReconciliationService:
             creds["biblio_dealer_id"] = self.settings.biblio_dealer_id
         if "abebooks" not in creds and self.settings.abebooks_api_key:
             creds["abebooks"] = self.settings.abebooks_api_key
-        if "abebooks_client_id" not in creds and getattr(self.settings, "abebooks_client_id", ""):
-            creds["abebooks_client_id"] = self.settings.abebooks_client_id
+        abe_client_id = str(getattr(self.settings, "abebooks_client_id", "") or "")
+        if "abebooks_client_id" not in creds and abe_client_id:
+            creds["abebooks_client_id"] = abe_client_id
 
         return creds
 

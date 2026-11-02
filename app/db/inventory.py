@@ -115,10 +115,11 @@ def _row_to_item(row: dict[str, Any]) -> InventoryItem:
 
 class PostgresInventoryStore:
     def __init__(self, dsn: str, *, pool_size: int = 3) -> None:
-        from psycopg.rows import dict_row
+        import psycopg
+        from psycopg.rows import DictRow, dict_row
         from psycopg_pool import ConnectionPool
 
-        self.pool = ConnectionPool(
+        self.pool: ConnectionPool[psycopg.Connection[DictRow]] = ConnectionPool(
             dsn,
             min_size=1,
             max_size=pool_size,

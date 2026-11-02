@@ -1641,9 +1641,9 @@ async function executeBatchIntake() {
       : `Analyzing ${preparedFiles.length} stack photos & deduplicating cross-image spines...`;
 
     const epoch = generation;
-    const response = await fetch("/intake/camera", {
+    const response = await fetch(resolveApiUrl("/intake/camera"), {
       method: "POST",
-      headers: { "Authorization": `Bearer ${token}` },
+      headers: { "Authorization": `Bearer ${token || targetApiKey}` },
       body: formData
     });
 
@@ -2217,10 +2217,10 @@ async function loadBookshelf() {
 async function downloadSelectedExport(format) {
   if (selectedBookshelfSkus.size === 0) return;
   try {
-    const res = await fetch("/inventory/export", {
+    const res = await fetch(resolveApiUrl("/inventory/export"), {
       method: "POST",
       headers: {
-        "Authorization": `Bearer ${token}`,
+        "Authorization": `Bearer ${token || targetApiKey}`,
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
@@ -2798,9 +2798,9 @@ async function showShelfAuditModal() {
       fd.append("section", sec);
       fd.append("shelf", sh);
 
-      const res = await fetch("/inventory/audit", {
+      const res = await fetch(resolveApiUrl("/inventory/audit"), {
         method: "POST",
-        headers: { "Authorization": `Bearer ${token}` },
+        headers: { "Authorization": `Bearer ${token || targetApiKey}` },
         body: fd
       });
       const data = await res.json();
@@ -3199,7 +3199,7 @@ async function triggerReconciliationPulse(demo = false) {
   }
 
   try {
-    const res = await api(`/api/cron/sync${demo ? "?demo=true" : ""}`, { method: "POST" });
+    const res = await api(`/reconcile/pulse${demo ? "?demo=true" : ""}`, { method: "POST" });
     const polledTotal = (res.orders_polled?.biblio || 0) + (res.orders_polled?.abebooks || 0);
     const approved = res.corvus_actions?.approved || 0;
     const collisions = res.collisions_detected || 0;
@@ -3231,9 +3231,9 @@ if ($("btn-trigger-demo-pulse")) {
 if ($("btn-export-uiee")) {
   $("btn-export-uiee").onclick = () => {
     const sec = $("bookshelf-filter-section") ? $("bookshelf-filter-section").value : "ALL";
-    const token = session ? session.token : "";
-    const url = `/inventory/export/uiee?status=active&section=${encodeURIComponent(sec)}`;
-    fetch(url, { headers: { "Authorization": `Bearer ${token}` } })
+    const activeToken = token || targetApiKey || "";
+    const url = resolveApiUrl(`/inventory/export/uiee?status=active&section=${encodeURIComponent(sec)}`);
+    fetch(url, { headers: activeToken ? { "Authorization": `Bearer ${activeToken}` } : {} })
       .then(res => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return res.blob();
@@ -4997,8 +4997,9 @@ function initCommandPalette() {
         closePalette();
         message("Broadcasting multi-channel delist reconciliation...");
         try {
-          await api("/publish/reconcile-all", { method: "POST" });
+          await api("/reconcile/pulse", { method: "POST" });
           message("✓ Multi-channel sync completed.");
+          refresh();
         } catch (_) {
           refresh();
         }

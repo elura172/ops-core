@@ -411,7 +411,7 @@ class StockLedger:
                 (tenant, channel, order_id, sku),
             ).fetchone()
             if old:
-                return old["outcome"]
+                return str(old["outcome"])
             row = db.inventory(tenant, sku)
             if not row:
                 return "unknown"

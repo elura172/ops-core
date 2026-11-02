@@ -44,7 +44,7 @@ class OperatorService:
         if existing and existing.operation == "review_shelf_capture" and approve:
             from app.domain.shelf_capture import validate_decisions
 
-            payload_update = validate_decisions(existing.payload, payload_update)
+            payload_update = validate_decisions(existing.payload, payload_update or {})
         item = self.reviews.decide(
             review_id,
             approve=approve,
@@ -125,7 +125,7 @@ class OperatorService:
         }
 
     def execute(
-        self, review_id: str, actor: str, tenant_id: int = 1, credentials: dict[str, str] = None
+        self, review_id: str, actor: str, tenant_id: int = 1, credentials: dict[str, str] | None = None
     ) -> dict[str, Any]:
         outcome = self.executor.execute(
             self.reviews, review_id, actor=actor, tenant_id=tenant_id, credentials=credentials

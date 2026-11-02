@@ -56,7 +56,7 @@ class PostgresReviewStore:
     """Postgres-backed review store."""
 
     def __init__(self, dsn: str, *, pool_size: int = 3) -> None:
-        self.pool = ConnectionPool(
+        self.pool: ConnectionPool[psycopg.Connection[DictRow]] = ConnectionPool(
             dsn,
             min_size=1,
             max_size=pool_size,
@@ -102,7 +102,6 @@ class PostgresReviewStore:
 
     def get(self, review_id: str, tenant_id: int = 1) -> ReviewItem | None:
         with self.pool.connection() as connection:
-            connection.row_factory = dict_row
             row = connection.execute(
                 "SELECT * FROM reviews WHERE review_id = %s AND tenant_id = %s",
                 (review_id, tenant_id),
@@ -116,7 +115,6 @@ class PostgresReviewStore:
             query += " AND status = %s"
             params.append(ReviewStatus.PENDING.value)
         with self.pool.connection() as connection:
-            connection.row_factory = dict_row
             rows = connection.execute(query + " ORDER BY created_at", tuple(params)).fetchall()
         return [_row_to_item(row) for row in rows]
 
@@ -339,13 +337,11 @@ class PostgresReviewStore:
             query += " AND resource_id = %s"
             params.append(resource_id)
         with self.pool.connection() as connection:
-            connection.row_factory = dict_row
             rows = connection.execute(query + " ORDER BY sequence", tuple(params)).fetchall()
         return [dict(row) for row in rows]
 
-    def get_tenant_analytics(self, tenant_id: int) -> dict[str, Any]:
+    def get_tenant_analytics(self, tenant_id: int = 1) -> dict[str, Any]:
         with self.pool.connection() as connection:
-            connection.row_factory = dict_row
             rows = connection.execute(
                 "SELECT operation, payload, status FROM reviews WHERE tenant_id = %s",
                 (tenant_id,),
@@ -388,4 +384,5 @@ def _json_safe(value: dict[str, Any]) -> dict[str, Any]:
     """Match the SQLite store, which serializes results with ``default=str``."""
     import json
 
-    return json.loads(json.dumps(value, default=str))
+    res: dict[str, Any] = json.loads(json.dumps(value, default=str))
+    return res

@@ -290,3 +290,87 @@ def test_cron_endpoint_with_demo_query(recon_env):
     # Verify inventory was delisted
     updated = inv_store.get("BK-DUNE-1965", tenant_id=1)
     assert updated.status == "delisted"
+
+
+def test_operator_reconcile_pulse_endpoint(recon_env):
+    """Verify operator JWTs can trigger /reconcile/pulse without hitting the /api/cron/sync 401 guard."""
+    client = recon_env["client"]
+    jwt_token = create_access_token({"sub": "operator@opscore.io", "tenant_id": 1, "role": "admin"})
+    res = client.post(
+        "/reconcile/pulse?demo=true",
+        headers={"Authorization": f"Bearer {jwt_token}"},
+    )
+    assert res.status_code == 200
+    body = res.json()
+    assert body["status"] == "success"
+    assert body["tenants_checked"] == 1
+
+
+def test_collector_hold_notification_dispatches_valid_email():
+    """Regression test: _collector_hold_notification must construct CustomerResponse with body & response_id."""
+    from app.customer_support.email import DryRunMailer
+    from app.review.executor import ApprovedActionExecutor
+
+    mailer = DryRunMailer()
+    executor = ApprovedActionExecutor(object(), mailer=mailer)
+    outcome = executor._collector_hold_notification(
+        {
+            "collector_email": "arthur.pendelton@sympatico.ca",
+            "collector_name": "Dr. Arthur Pendelton",
+            "title": "Two Solitudes",
+            "price_cad": "85.00",
+            "expires_at": "2026-11-03T22:00:00Z",
+        }
+    )
+    assert outcome["status"] == "notified"
+    assert len(mailer.sent) == 1
+    assert mailer.sent[0].recipient == "arthur.pendelton@sympatico.ca"
+    assert "Two Solitudes" in mailer.sent[0].body
+    assert mailer.sent[0].approved is True
+
+
+def test_gemini_vision_usage_ledger_records_tokens():
+    """Regression test: _parse_gemini_response must pass a dict to UsageLedger.record."""
+    from app.ai.book_vision import GeminiBookVisionProvider
+
+    provider = GeminiBookVisionProvider(api_key="test-key")
+    raw_resp = {
+        "candidates": [
+            {
+                "content": {
+                    "parts": [
+                        {"text": '{"books": [], "orientation": "horizontal_stack", "unidentified_spines_count": 0}'}
+                    ]
+                }
+            }
+        ],
+        "usageMetadata": {
+            "promptTokenCount": 420,
+            "candidatesTokenCount": 180,
+        },
+    }
+    provider._parse_gemini_response(raw_resp)
+    assert provider.usage.input_tokens == 420
+    assert provider.usage.output_tokens == 180
+    assert provider.usage.total_tokens == 600
+
+
+def test_sqlite_review_store_audit_trail_tenant_isolation(tmp_path):
+    """Regression test: SQLiteReviewStore._record must store tenant_id on audit_events."""
+    from app.db.review_store import SQLiteReviewStore
+    from app.review.queue import ReviewItem
+
+    store = SQLiteReviewStore(tmp_path / "reviews_audit.db")
+    try:
+        store.submit(ReviewItem(review_id="rev-t2", operation="sync_inventory", payload={"sku": "BK-2"}), tenant_id=2)
+        store.decide("rev-t2", approve=True, reviewer="alice", reason="ok", tenant_id=2)
+        store.claim_for_execution("rev-t2", actor="alice", tenant_id=2)
+        store.complete_execution("rev-t2", {"status": "ok"}, tenant_id=2)
+
+        t2_events = store.audit_trail(tenant_id=2)
+        t1_events = store.audit_trail(tenant_id=1)
+        assert len(t2_events) == 2
+        assert all(ev["tenant_id"] == 2 for ev in t2_events)
+        assert len(t1_events) == 0
+    finally:
+        store.close()

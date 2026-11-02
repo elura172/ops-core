@@ -83,7 +83,7 @@ class PricingEngine:
             logger.debug("pricing.amazon.skipped_or_failed", error=str(exc))
 
         # 2. Try AbeBooks keyless live comps
-        raw_comps = ()
+        raw_comps: Any = ()
         if not amazon_comps:
             try:
                 raw_comps = self.comps_provider.fetch_comps(title=title, author=author)

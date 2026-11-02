@@ -1224,7 +1224,7 @@ def create_app(
                     "price_cad": price_data["recommended_price_cad"],
                 }
                 w_match = w_matcher.find_best_match(active_wants, collectors_map, w_cand)
-                if w_match and w_match.matched:
+                if w_match and w_match.matched and w_match.want_item:
                     c_name = w_match.collector.name if w_match.collector else "Collector"
                     payload["disambiguation"]["triage_reason"] = (
                         f"MATCHES COLLECTOR WANT: {c_name} has an active want for '{w_match.want_item.title}' "
@@ -1235,7 +1235,7 @@ def create_app(
                         "matched": True,
                         "collector_name": c_name,
                         "collector_id": w_match.collector.id if w_match.collector else "",
-                        "want_id": w_match.want_item.id if w_match.want_item else "",
+                        "want_id": w_match.want_item.id,
                         "match_score": w_match.match_score,
                     }
             except Exception as w_exc:
@@ -1450,7 +1450,7 @@ def create_app(
                             "price_cad": book["online_price_cad"],
                         },
                     )
-                    if match and match.matched:
+                    if match and match.matched and match.want_item:
                         collector_name = match.collector.name if match.collector else "Collector"
                         payload["disambiguation"]["triage_reason"] = (
                             f"MATCHES COLLECTOR WANT: {collector_name} has an active want for "
@@ -1461,7 +1461,7 @@ def create_app(
                             "matched": True,
                             "collector_name": collector_name,
                             "collector_id": match.collector.id if match.collector else "",
-                            "want_id": match.want_item.id if match.want_item else "",
+                            "want_id": match.want_item.id,
                             "match_score": match.match_score,
                         }
                 except Exception as exc:
@@ -1524,7 +1524,7 @@ def create_app(
         )
         channel_strat = "antiquarian_first_edition_vault"
 
-        payload = {
+        payload: dict[str, Any] = {
             "section": section,
             "shelf": shelf,
             "extraction": {
@@ -1598,7 +1598,7 @@ def create_app(
                 "price_cad": Decimal("850.00"),
             }
             w_match = w_matcher.find_best_match(active_wants, collectors_map, w_cand)
-            if w_match and w_match.matched:
+            if w_match and w_match.matched and w_match.want_item:
                 c_name = w_match.collector.name if w_match.collector else "Collector"
                 payload["disambiguation"]["triage_reason"] = (
                     f"MATCHES COLLECTOR WANT: {c_name} has an active want for '{w_match.want_item.title}' "
@@ -1609,7 +1609,7 @@ def create_app(
                     "matched": True,
                     "collector_name": c_name,
                     "collector_id": w_match.collector.id if w_match.collector else "",
-                    "want_id": w_match.want_item.id if w_match.want_item else "",
+                    "want_id": w_match.want_item.id,
                     "match_score": w_match.match_score,
                 }
         except Exception as w_exc:
@@ -2582,10 +2582,23 @@ def create_app(
         result["custom_site_deliveries"] = custom_site_service.drain()
         return result
 
+    @app.post("/reconcile/pulse")
+    def operator_reconcile_pulse(
+        demo: bool = False,
+        principal: Principal = Depends(require_decide),
+    ) -> dict[str, Any]:
+        """Operator-authenticated reconciliation pulse scoped to the active tenant."""
+        result = reconciliation_service.run_reconciliation_cycle(
+            demo_sample=demo,
+            force_tenant_id=principal.tenant_id,
+        )
+        result["custom_site_deliveries"] = custom_site_service.drain()
+        return result
+
     from app.auth import create_access_token, get_password_hash, verify_password
 
     @app.post("/auth/signup")
-    def signup(req: SignupRequest):
+    def signup(req: SignupRequest) -> dict[str, str]:
         if user_store.get_user_by_email(req.email):
             raise HTTPException(400, "Email already registered")
 
@@ -2597,7 +2610,7 @@ def create_app(
         return {"access_token": token, "token_type": "bearer"}
 
     @app.post("/auth/login")
-    def login(req: LoginRequest):
+    def login(req: LoginRequest) -> dict[str, str]:
         user = user_store.get_user_by_email(req.email)
         if not user or not verify_password(req.password, user.password_hash):
             raise HTTPException(401, "Invalid credentials")
@@ -2606,7 +2619,7 @@ def create_app(
         return {"access_token": token, "token_type": "bearer"}
 
     @app.get("/auth/me")
-    def auth_me(token: str = Depends(get_bearer_token)):
+    def auth_me(token: str = Depends(get_bearer_token)) -> dict[str, Any]:
         from app.auth import decode_access_token
 
         try:
@@ -2623,7 +2636,7 @@ def create_app(
     from app.vault import encrypt_credential
 
     @app.post("/integrations")
-    def add_integration(req: IntegrationRequest, token: str = Depends(get_bearer_token)):
+    def add_integration(req: IntegrationRequest, token: str = Depends(get_bearer_token)) -> dict[str, str]:
         from app.auth import decode_access_token
 
         try:
@@ -2639,7 +2652,7 @@ def create_app(
         return {"status": "ok", "provider": req.provider}
 
     @app.get("/integrations")
-    def list_integrations(token: str = Depends(get_bearer_token)):
+    def list_integrations(token: str = Depends(get_bearer_token)) -> dict[str, Any]:
         from app.auth import decode_access_token
 
         try:
@@ -2651,13 +2664,13 @@ def create_app(
         _require_active_subscription(user_store, tenant_id)
 
         providers = user_store.list_tenant_providers(tenant_id)
-        result = {"connected_providers": providers}
+        result: dict[str, Any] = {"connected_providers": providers}
         for p in providers:
             result[p] = True
         return result
 
     @app.get("/analytics")
-    def get_analytics(token: str = Depends(get_bearer_token)):
+    def get_analytics(token: str = Depends(get_bearer_token)) -> dict[str, Any]:
         from app.auth import decode_access_token
 
         try:
@@ -2909,7 +2922,7 @@ def create_app(
 
     @app.post("/holds/{hold_id}/claim")
     def claim_hold_endpoint(
-        hold_id: str, payload: dict[str, Any] = None, principal: Principal = Depends(require_decide)
+        hold_id: str, payload: dict[str, Any] | None = None, principal: Principal = Depends(require_decide)
     ) -> dict[str, Any]:
         payload = payload or {}
         outcome = operator.executor.handlers["claim_collector_hold"](
@@ -2923,7 +2936,7 @@ def create_app(
 
     @app.post("/holds/{hold_id}/release")
     def release_hold_endpoint(
-        hold_id: str, payload: dict[str, Any] = None, principal: Principal = Depends(require_decide)
+        hold_id: str, payload: dict[str, Any] | None = None, principal: Principal = Depends(require_decide)
     ) -> dict[str, Any]:
         payload = payload or {}
         outcome = operator.executor.handlers["release_collector_hold"](
@@ -2937,7 +2950,7 @@ def create_app(
 
     @app.post("/holds/{hold_id}/extend")
     def extend_hold_endpoint(
-        hold_id: str, payload: dict[str, Any] = None, principal: Principal = Depends(require_decide)
+        hold_id: str, payload: dict[str, Any] | None = None, principal: Principal = Depends(require_decide)
     ) -> dict[str, Any]:
         from datetime import timedelta
 

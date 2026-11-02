@@ -160,7 +160,8 @@ class AbeBooksCompsProvider(CompsProvider):
                 with urlopen(req, timeout=self.timeout) as resp:
                     if resp.status in RETRYABLE_STATUS:
                         raise HTTPError(url, resp.status, "Retryable", resp.headers, None)
-                    return resp.read().decode("utf-8", errors="replace")
+                    html: str = resp.read().decode("utf-8", errors="replace")
+                    return html
             except HTTPError as exc:
                 if exc.code not in RETRYABLE_STATUS or attempt >= self.retries.max_attempts:
                     logger.debug(f"AbeBooks HTTP {exc.code} for {url}")
@@ -242,8 +243,9 @@ class BookValuationEngine:
 
     @staticmethod
     def _pick_author(cand: object | None, spine: SpineExtractionItem) -> str | None:
-        if cand and hasattr(cand, "authors") and cand.authors:  # type: ignore[union-attr]
-            return cand.authors[0]  # type: ignore[union-attr]
+        authors = getattr(cand, "authors", None) if cand else None
+        if authors:
+            return str(authors[0])
         if spine.authors:
             return spine.authors[0]
         return None

@@ -26,7 +26,7 @@ dependencies = [
 # Explicit discovery so `tests` is never packaged. Note this does NOT catch a
 # build that cannot see `app/` -- that still installs an empty package silently;
 # the import check in the Dockerfile is what actually catches it.
-packages = { find = { include = ["app*"] } }
+packages = { find = { include = ["app*"], exclude = ["tests*"] } }
 
 [tool.setuptools.package-data]
 "app.web" = ["*.html", "*.css", "*.js"]
@@ -57,25 +57,6 @@ strict = true
 [[tool.mypy.overrides]]
 module = ["shippo", "shippo.*", "dotenv", "passlib.*", "google.*"]
 ignore_missing_imports = true
-
-[[tool.mypy.overrides]]
-module = [
-    "app.db.users",
-    "app.db.postgres",
-    "app.db.inventory",
-    "app.db.want_list",
-    "app.agents.*",
-    "app.ai.*",
-    "app.discovery.*",
-    "app.pricing.*",
-    "app.publish.*",
-    "app.review.executor",
-    "app.api.operator",
-    "app.api.reconciliation_service",
-    "app.api.http",
-    "app.integrations.stock",
-]
-ignore_errors = true
 
 [tool.ruff]
 line-length = 120

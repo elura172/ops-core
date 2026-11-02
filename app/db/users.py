@@ -4,6 +4,7 @@ from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS tenants (
@@ -109,7 +110,7 @@ class SQLiteUserStore:
                 "INSERT INTO tenants(name, created_at) VALUES (?, ?)",
                 (name, datetime.now(UTC).isoformat()),
             )
-            return cursor.lastrowid
+            return int(cursor.lastrowid or 0)
 
     def create_user(self, tenant_id: int, email: str, password_hash: str, role: str = "admin") -> int:
         with self._lock:
@@ -117,7 +118,7 @@ class SQLiteUserStore:
                 "INSERT INTO users(tenant_id, email, password_hash, role) VALUES (?, ?, ?, ?)",
                 (tenant_id, email, password_hash, role),
             )
-            return cursor.lastrowid
+            return int(cursor.lastrowid or 0)
 
     def get_user_by_email(self, email: str) -> User | None:
         with self._lock:
@@ -163,7 +164,7 @@ class SQLiteUserStore:
             ).fetchall()
             return [row["provider"] for row in rows]
 
-    def get_tenant_billing_status(self, tenant_id: int) -> dict:
+    def get_tenant_billing_status(self, tenant_id: int) -> dict[str, Any]:
         with self._lock:
             row = self.connection.execute(
                 "SELECT stripe_customer_id, subscription_status, stripe_subscription_status "
@@ -178,7 +179,7 @@ class SQLiteUserStore:
                 "stripe_subscription_status": None,
             }
 
-    def update_tenant_stripe_customer(self, tenant_id: int, stripe_customer_id: str):
+    def update_tenant_stripe_customer(self, tenant_id: int, stripe_customer_id: str) -> None:
         with self._lock:
             self.connection.execute(
                 "UPDATE tenants SET stripe_customer_id = ? WHERE tenant_id = ?",
@@ -190,7 +191,7 @@ class SQLiteUserStore:
         stripe_customer_id: str,
         status: str,
         stripe_subscription_status: str | None = None,
-    ):
+    ) -> None:
         with self._lock:
             self.connection.execute(
                 "UPDATE tenants SET subscription_status = ?, stripe_subscription_status = ? "
@@ -220,10 +221,11 @@ class SQLiteUserStore:
 
 class PostgresUserStore:
     def __init__(self, dsn: str, *, pool_size: int = 3) -> None:
-        from psycopg.rows import dict_row
+        import psycopg
+        from psycopg.rows import DictRow, dict_row
         from psycopg_pool import ConnectionPool
 
-        self.pool = ConnectionPool(
+        self.pool: ConnectionPool[psycopg.Connection[DictRow]] = ConnectionPool(
             dsn,
             min_size=1,
             max_size=pool_size,
@@ -278,7 +280,7 @@ class PostgresUserStore:
                 "INSERT INTO tenants (name, created_at) VALUES (%s, %s) RETURNING tenant_id",
                 (name, datetime.now(UTC)),
             ).fetchone()
-            return row["tenant_id"]
+            return int(row["tenant_id"]) if row else 0
 
     def create_user(self, tenant_id: int, email: str, password_hash: str, role: str = "admin") -> int:
         with self.pool.connection() as conn:
@@ -286,7 +288,7 @@ class PostgresUserStore:
                 "INSERT INTO users (tenant_id, email, password_hash, role) VALUES (%s, %s, %s, %s) RETURNING user_id",
                 (tenant_id, email, password_hash, role),
             ).fetchone()
-            return row["user_id"]
+            return int(row["user_id"]) if row else 0
 
     def get_user_by_email(self, email: str) -> User | None:
         with self.pool.connection() as conn:
@@ -335,7 +337,7 @@ class PostgresUserStore:
             ).fetchall()
             return [row["provider"] for row in rows]
 
-    def get_tenant_billing_status(self, tenant_id: int) -> dict:
+    def get_tenant_billing_status(self, tenant_id: int) -> dict[str, Any]:
         with self.pool.connection() as conn:
             row = conn.execute(
                 "SELECT stripe_customer_id, subscription_status, stripe_subscription_status "
@@ -350,7 +352,7 @@ class PostgresUserStore:
                 "stripe_subscription_status": None,
             }
 
-    def update_tenant_stripe_customer(self, tenant_id: int, stripe_customer_id: str):
+    def update_tenant_stripe_customer(self, tenant_id: int, stripe_customer_id: str) -> None:
         with self.pool.connection() as conn:
             conn.execute(
                 "UPDATE tenants SET stripe_customer_id = %s WHERE tenant_id = %s",
@@ -362,7 +364,7 @@ class PostgresUserStore:
         stripe_customer_id: str,
         status: str,
         stripe_subscription_status: str | None = None,
-    ):
+    ) -> None:
         with self.pool.connection() as conn:
             conn.execute(
                 "UPDATE tenants SET subscription_status = %s, stripe_subscription_status = %s "
@@ -394,7 +396,7 @@ class PostgresUserStore:
 UserStore = SQLiteUserStore
 
 
-def open_user_store(target: str | Path):
+def open_user_store(target: str | Path) -> SQLiteUserStore | PostgresUserStore:
     target_str = str(target)
     if target_str.startswith(("postgres://", "postgresql://")):
         from app.db.migrate import migrate

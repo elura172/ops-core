@@ -360,7 +360,7 @@ class OrderContentionManager:
             operation="resolve_order_contention",
             payload=payload,
         )
-        review_id = proposed.get("review_id")
+        review_id: str | None = proposed.get("review_id")
         logger.info(
             "order.contention.review_proposed",
             review_id=review_id,

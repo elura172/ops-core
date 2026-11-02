@@ -63,8 +63,8 @@ class ApprovedActionExecutor:
         amazon_sp_api_seller_id: str = "",
         amazon_sp_api_marketplace_id: str = "A2EUQ1WTGCTBG2",
     ) -> None:
-        self._tenant_context = ContextVar("executor_tenant", default=1)
-        self._credential_context = ContextVar("executor_credentials", default=None)
+        self._tenant_context: ContextVar[int] = ContextVar("executor_tenant", default=1)
+        self._credential_context: ContextVar[dict[str, str] | None] = ContextVar("executor_credentials", default=None)
         self.client = client
         self.audit = audit
         self.shippo_api_key = shippo_api_key
@@ -75,6 +75,8 @@ class ApprovedActionExecutor:
         self.amazon_sp_api_marketplace_id = amazon_sp_api_marketplace_id
         self.inventory_store = inventory_store
         self.want_list_store = want_list_store
+        self.stock_ledger: Any | None = None
+        self.custom_site_service: Any | None = None
         if inventory_store is not None:
             from app.integrations.stock import StockLedger
 
@@ -107,29 +109,29 @@ class ApprovedActionExecutor:
         }
 
     @property
-    def current_tenant_id(self):
+    def current_tenant_id(self) -> int:
         return self._tenant_context.get()
 
     @current_tenant_id.setter
-    def current_tenant_id(self, value):
+    def current_tenant_id(self, value: int) -> None:
         self._tenant_context.set(value)
 
     @property
-    def current_credentials(self):
+    def current_credentials(self) -> dict[str, str]:
         return self._credential_context.get() or {}
 
     @current_credentials.setter
-    def current_credentials(self, value):
+    def current_credentials(self, value: dict[str, str] | None) -> None:
         self._credential_context.set(value)
 
     @property
     def allowed_operations(self) -> frozenset[str]:
         return frozenset(self.handlers)
 
-    def _review_shelf_capture(self, payload):
+    def _review_shelf_capture(self, payload: dict[str, Any]) -> dict[str, Any]:
         raise PermissionError("Shelf captures execute through the durable review store")
 
-    def _amazon_adapter(self, credentials: dict[str, str]):
+    def _amazon_adapter(self, credentials: dict[str, str]) -> AmazonSPAPIAdapter:
         return AmazonSPAPIAdapter(
             # Keep this channel in simulation until Amazon sandbox, listing
             # requirements, order intake, and stock-claim checks are complete.
@@ -141,7 +143,7 @@ class ApprovedActionExecutor:
             marketplace_id=self.amazon_sp_api_marketplace_id,
         )
 
-    def _review_stock_conflict(self, payload):
+    def _review_stock_conflict(self, payload: dict[str, Any]) -> dict[str, Any]:
         raise PermissionError("Resolve the competing orders and physical stock before relisting this copy")
 
     def _publish_custom_site(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -152,12 +154,13 @@ class ApprovedActionExecutor:
         tenant_id = getattr(self, "current_tenant_id", 1)
         if not connection or connection.tenant_id != tenant_id or not connection.enabled:
             raise PermissionError("Custom website connection is not available for this workspace")
-        return service.ledger.publish(
+        res: dict[str, Any] = service.ledger.publish(
             connection,
             payload["sku"],
             payload.get("publication", "published"),
             expected_digest=payload.get("catalogue_digest"),
         )
+        return res
 
     def _update_location(self, payload: dict[str, Any]) -> dict[str, Any]:
         sku = payload["sku"]
@@ -198,7 +201,8 @@ class ApprovedActionExecutor:
                     logger.warning("inventory_store.relist_failed", sku=sku, error=str(exc))
 
         if hasattr(self.client, "update_inventory"):
-            return self.client.update_inventory(changes)
+            inv_res: dict[str, Any] = self.client.update_inventory(changes)
+            return inv_res
 
         return {"operation": "update_inventory", "changes": changes, "dry_run": True}
 
@@ -223,7 +227,8 @@ class ApprovedActionExecutor:
                 logger.warning("inventory_store.update_prices_failed", sku=sku, error=str(exc))
 
         if hasattr(self.client, "update_prices"):
-            return self.client.update_prices(changes)
+            price_res: dict[str, Any] = self.client.update_prices(changes)
+            return price_res
 
         return {"operation": "update_prices", "changes": changes, "dry_run": True}
 
@@ -427,12 +432,15 @@ class ApprovedActionExecutor:
         message = payload.get("message", "")
 
         if self.mailer and collector_email:
+            import uuid
+
             try:
                 self.mailer.send(
                     CustomerResponse(
+                        response_id=str(payload.get("response_id") or f"hold-{uuid.uuid4().hex[:10]}"),
                         recipient=collector_email,
                         subject=f"Priority Courtesy Hold: '{title}' at Elura Antiquarian Books",
-                        body_text=(
+                        body=(
                             f"Dear {collector_name},\n\n"
                             f"We have acquired a volume matching your active want list:\n\n"
                             f"'{title}'\n"
@@ -445,6 +453,7 @@ class ApprovedActionExecutor:
                             f"Warm regards,\n"
                             f"Elura Antiquarian Vault"
                         ),
+                        approved=True,
                     )
                 )
             except Exception as exc:
@@ -741,7 +750,7 @@ class ApprovedActionExecutor:
         self,
         operation: str,
         payload: dict[str, Any],
-        credentials: dict[str, str] = None,
+        credentials: dict[str, str] | None = None,
         tenant_id: int = 1,
     ) -> dict[str, Any]:
         handler = self.handlers.get(operation)
@@ -784,7 +793,7 @@ class ApprovedActionExecutor:
         *,
         actor: str,
         tenant_id: int = 1,
-        credentials: dict[str, str] = None,
+        credentials: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         item = store.get(review_id, tenant_id=tenant_id)
         if item is None:

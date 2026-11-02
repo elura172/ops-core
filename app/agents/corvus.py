@@ -1,7 +1,8 @@
-import logging
 from typing import Any, Protocol
 
-logger = logging.getLogger("corvus")
+from app.observability.logging import get_logger
+
+logger = get_logger("corvus")
 
 
 class Operator(Protocol):
@@ -16,7 +17,7 @@ class Operator(Protocol):
         tenant_id: int = 1,
     ) -> dict[str, Any]: ...
     def execute(
-        self, review_id: str, actor: str, tenant_id: int = 1, credentials: dict[str, str] = None
+        self, review_id: str, actor: str, tenant_id: int = 1, credentials: dict[str, str] | None = None
     ) -> dict[str, Any]: ...
     def review_detail(self, review_id: str, tenant_id: int = 1) -> dict[str, Any]: ...
 

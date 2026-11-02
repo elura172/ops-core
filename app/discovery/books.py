@@ -275,7 +275,8 @@ class OpenLibraryMetadataResolver(MetadataResolver):
                     if resp.status in RETRYABLE_STATUS:
                         raise HTTPError(url, resp.status, "Retryable", resp.headers, None)
                     payload = json.loads(resp.read().decode("utf-8"))
-                    return payload.get("docs", [])
+                    docs: list[dict[str, Any]] = payload.get("docs", [])
+                    return docs
             except HTTPError as exc:
                 if exc.code not in RETRYABLE_STATUS or attempt >= self.retries.max_attempts:
                     logger.warning(f"OpenLibrary query failed: HTTP {exc.code} for {url}")

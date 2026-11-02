@@ -311,8 +311,8 @@ def prepare_vision_image(image_bytes: bytes, raw_mime: str | None = None) -> tup
 
     # Pillow normalization & EXIF auto-rotation
     try:
-        with Image.open(io.BytesIO(image_bytes)) as img:
-            img = ImageOps.exif_transpose(img)
+        with Image.open(io.BytesIO(image_bytes)) as raw_img:
+            img: Image.Image = ImageOps.exif_transpose(raw_img)
             max_dim = 1600
             if img.width > max_dim or img.height > max_dim:
                 img.thumbnail((max_dim, max_dim), Image.Resampling.LANCZOS)
@@ -395,8 +395,7 @@ class GeminiBookVisionProvider(BookVisionProvider):
         # Model cascade: try primary model, then fallbacks
         models_to_try = [self.model] if self.model not in self.fallback_models else []
         models_to_try.extend(self.fallback_models)
-        seen: set[str] = set()
-        unique_models = [m for m in models_to_try if not (m in seen or seen.add(m))]
+        unique_models = list(dict.fromkeys(models_to_try))
 
         last_error: Exception | None = None
         for model in unique_models:
@@ -574,8 +573,7 @@ class GeminiBookVisionProvider(BookVisionProvider):
 
         models_to_try = [self.model] if self.model not in self.fallback_models else []
         models_to_try.extend(self.fallback_models)
-        seen: set[str] = set()
-        unique_models = [m for m in models_to_try if not (m in seen or seen.add(m))]
+        unique_models = list(dict.fromkeys(models_to_try))
 
         last_error: Exception | None = None
         for model in unique_models:
@@ -608,7 +606,8 @@ class GeminiBookVisionProvider(BookVisionProvider):
                         raise TransientProviderError(f"Gemini returned HTTP {resp.status}")
                     if resp.status >= 300:
                         raise TerminalProviderError(f"Gemini returned HTTP {resp.status}")
-                    return json.loads(resp.read().decode("utf-8"))
+                    parsed_resp: dict[str, Any] = json.loads(resp.read().decode("utf-8"))
+                    return parsed_resp
             except HTTPError as exc:
                 if exc.code == 429:
                     if attempt >= self.retries.max_attempts:
@@ -662,9 +661,9 @@ class GeminiBookVisionProvider(BookVisionProvider):
         # Record usage if metadata exists
         usage_meta = raw_resp.get("usageMetadata", {})
         if usage_meta and hasattr(self.usage, "record"):
-            prompt_tokens = usage_meta.get("promptTokenCount", 0)
-            candidates_tokens = usage_meta.get("candidatesTokenCount", 0)
+            prompt_tokens = int(usage_meta.get("promptTokenCount", 0) or 0)
+            candidates_tokens = int(usage_meta.get("candidatesTokenCount", 0) or 0)
             with contextlib.suppress(Exception):
-                self.usage.record(self.model, prompt_tokens, candidates_tokens)
+                self.usage.record({"input_tokens": prompt_tokens, "output_tokens": candidates_tokens})
 
         return BookStackExtraction.from_dict(parsed_json)

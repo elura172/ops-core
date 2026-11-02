@@ -224,6 +224,7 @@ class SQLiteReviewStore:
                     review_id,
                     {"operation": item.operation},
                 ),
+                tenant_id=tenant_id,
             )
             return self._fetch(connection, review_id, tenant_id)
 
@@ -268,6 +269,7 @@ class SQLiteReviewStore:
                     review_id,
                     {"operation": item.operation, "approved_by": item.reviewer or "unknown"},
                 ),
+                tenant_id=tenant_id,
             )
             return self._fetch(connection, review_id, tenant_id)
 
@@ -292,6 +294,7 @@ class SQLiteReviewStore:
                     review_id,
                     {"operation": item.operation},
                 ),
+                tenant_id=tenant_id,
             )
             return self._fetch(connection, review_id, tenant_id)
 
@@ -325,6 +328,7 @@ class SQLiteReviewStore:
                         row["review_id"],
                         {"operation": row["operation"]},
                     ),
+                    tenant_id=int(row["tenant_id"] or 1),
                 )
             return [_row_to_item(row) for row in rows]
 
@@ -371,11 +375,12 @@ class SQLiteReviewStore:
                 )
             return int(res.rowcount or 0)
 
-    def _record(self, connection: sqlite3.Connection, event: AuditEvent) -> None:
+    def _record(self, connection: sqlite3.Connection, event: AuditEvent, tenant_id: int = 1) -> None:
         connection.execute(
-            "INSERT INTO audit_events(action, actor, outcome, resource_id, detail, occurred_at) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT INTO audit_events(tenant_id, action, actor, outcome, resource_id, detail, occurred_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
             (
+                tenant_id,
                 event.action,
                 event.actor,
                 event.outcome,
@@ -395,7 +400,7 @@ class SQLiteReviewStore:
             rows = self.connection.execute(query + " ORDER BY sequence", params).fetchall()
         return [dict(row) for row in rows]
 
-    def get_tenant_analytics(self, tenant_id: int) -> dict[str, Any]:
+    def get_tenant_analytics(self, tenant_id: int = 1) -> dict[str, Any]:
         with self._lock:
             rows = self.connection.execute(
                 "SELECT operation, payload, status FROM reviews WHERE tenant_id = ?", (tenant_id,)

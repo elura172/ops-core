@@ -66,6 +66,7 @@ class ReviewStore(Protocol):
     def delete(self, review_id: str, tenant_id: int = 1) -> bool: ...
     def delete_batch(self, review_ids: list[str], tenant_id: int = 1) -> int: ...
     def clear(self, tenant_id: int = 1, status: str | None = None) -> int: ...
+    def get_tenant_analytics(self, tenant_id: int = 1) -> dict[str, Any]: ...
 
 
 def _validate_claim(item: ReviewItem) -> None:
@@ -215,3 +216,33 @@ class ReviewQueue:
         for rid in to_delete:
             del self.items[rid]
         return len(to_delete)
+
+    def get_tenant_analytics(self, tenant_id: int = 1) -> dict[str, Any]:
+        total_actions = 0
+        syncs = 0
+        contentions_prevented = 0
+        revenue_protected_cad = 0.0
+
+        for item in self.items.values():
+            if item.tenant_id != tenant_id:
+                continue
+            if item.status in (ReviewStatus.APPROVED, ReviewStatus.EXECUTING, ReviewStatus.EXECUTED):
+                total_actions += 1
+                if item.operation == "sync_inventory":
+                    syncs += 1
+                elif item.operation == "resolve_order_contention":
+                    contentions_prevented += 1
+                    try:
+                        loser = item.payload.get("loser_claim", {})
+                        winner = item.payload.get("winner_claim", {})
+                        val = float(winner.get("price_cad", loser.get("price_cad", 0)))
+                        revenue_protected_cad += val
+                    except Exception:
+                        pass
+
+        return {
+            "total_automated_actions": total_actions,
+            "inventory_syncs": syncs,
+            "collisions_prevented": contentions_prevented,
+            "revenue_protected_cad": round(revenue_protected_cad, 2),
+        }

@@ -371,8 +371,8 @@ class CorvusSanctuary:
                 logger.debug("corvus.sanctuary.postgres_fetch_failed", error=str(exc))
         elif self.db_url and not self.db_url.startswith(":memory:"):
             try:
-                with sqlite3.connect(self.db_url) as conn:
-                    cur = conn.execute(
+                with sqlite3.connect(self.db_url) as sq_conn:
+                    sq_cur = sq_conn.execute(
                         """
                         SELECT id, tenant_id, token_type, operation, review_id, subject,
                                inscription, details, created_at
@@ -382,7 +382,7 @@ class CorvusSanctuary:
                         """,
                         (tenant_id,),
                     )
-                    rows = cur.fetchall()
+                    rows = sq_cur.fetchall()
                     return [
                         WardenTribute(
                             id=r[0],
@@ -432,8 +432,8 @@ class CorvusSanctuary:
                 logger.debug("corvus.sanctuary.postgres_blessing_fetch_failed", error=str(exc))
         elif self.db_url and not self.db_url.startswith(":memory:"):
             try:
-                with sqlite3.connect(self.db_url) as conn:
-                    cur = conn.execute(
+                with sqlite3.connect(self.db_url) as sq_conn:
+                    sq_cur = sq_conn.execute(
                         """
                         SELECT id, tenant_id, sender, message, created_at
                         FROM corvus_blessings
@@ -442,7 +442,7 @@ class CorvusSanctuary:
                         """,
                         (tenant_id,),
                     )
-                    rows = cur.fetchall()
+                    rows = sq_cur.fetchall()
                     return [
                         WardenBlessing(
                             id=r[0],

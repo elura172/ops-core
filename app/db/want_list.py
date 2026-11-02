@@ -401,7 +401,7 @@ class SQLiteWantListStore:
                 "DELETE FROM collectors WHERE id = ? AND tenant_id = ?",
                 (collector_id, tenant_id),
             )
-            return cur.rowcount > 0
+            return bool(cur.rowcount and cur.rowcount > 0)
 
     # Want operations
     def create_want(self, want: WantItem) -> WantItem:
@@ -487,7 +487,7 @@ class SQLiteWantListStore:
                 "DELETE FROM want_items WHERE id = ? AND tenant_id = ?",
                 (want_id, tenant_id),
             )
-            return cur.rowcount > 0
+            return bool(cur.rowcount and cur.rowcount > 0)
 
     # Hold operations
     def create_hold(self, hold: CollectorHold) -> CollectorHold:
@@ -581,10 +581,11 @@ class SQLiteWantListStore:
 
 class PostgresWantListStore:
     def __init__(self, dsn: str, *, pool_size: int = 3) -> None:
-        from psycopg.rows import dict_row
+        import psycopg
+        from psycopg.rows import DictRow, dict_row
         from psycopg_pool import ConnectionPool
 
-        self.pool = ConnectionPool(
+        self.pool: ConnectionPool[psycopg.Connection[DictRow]] = ConnectionPool(
             dsn,
             min_size=1,
             max_size=pool_size,
