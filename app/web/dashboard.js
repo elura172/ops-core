@@ -2146,6 +2146,11 @@ async function renderBookshelf() {
         }
       };
 
+      const igDropBtn = node("button", "📸 IG Drop", "ghost-sm");
+      igDropBtn.style.color = "#f59e0b";
+      igDropBtn.title = "Open Bookstagram Drop Studio (4:5 Spec Card + Caption + DM Hold)";
+      igDropBtn.onclick = () => showBookstagramDropModal(item);
+
       const deleteBookBtn = node("button", "🗑️ Delete", "danger-sm delete-btn");
       deleteBookBtn.title = "Permanently delete book from database";
       deleteBookBtn.onclick = async () => {
@@ -2161,7 +2166,7 @@ async function renderBookshelf() {
         }
       };
 
-      channelsRow.append(checkoutBtn, pushSquareBtn, pushEbayBtn, deleteBookBtn);
+      channelsRow.append(checkoutBtn, pushSquareBtn, pushEbayBtn, igDropBtn, deleteBookBtn);
       actions.append(priceRow, channelsRow);
     } else {
       const inactiveRow = node("div", undefined, "bookshelf-channels-row");
@@ -4974,6 +4979,28 @@ function initCommandPalette() {
     },
     {
       group: "Quick Actions",
+      id: "act-bookstagram",
+      title: "Bookstagram Drop & Affiliate Studio",
+      desc: "Generate 4:5 antiquarian collector spec cards, captions, hashtags, and lock 48h DM holds",
+      icon: "📸",
+      badge: "/ig",
+      keywords: "bookstagram readergram instagram drop social card affiliate reel dm hold",
+      action: async () => {
+        closePalette();
+        switchTab("bookshelf");
+        if (!inventoryItems.length) {
+          try { inventoryItems = await api("/inventory"); } catch (_) {}
+        }
+        const firstActive = inventoryItems.find(i => i.status === "active") || inventoryItems[0];
+        if (firstActive) {
+          showBookstagramDropModal(firstActive);
+        } else {
+          message("Add or intake a book first to launch the Bookstagram Drop Studio.");
+        }
+      }
+    },
+    {
+      group: "Quick Actions",
       id: "act-holds",
       title: "Collector Want Lists & Priority Holds",
       desc: "Manage antiquarian collector CRM and active 48-hour courtesy holds",
@@ -5461,6 +5488,487 @@ function initMobileGlassDock() {
   }, { passive: true });
 
   updateDockBadges();
+}
+
+// =========================================================================
+// Bookstagram / Readergram Drop & Affiliate Flywheel Studio
+// =========================================================================
+
+function wrapCanvasText(ctx, text, maxWidth, maxLines = 3) {
+  const words = String(text || "").split(/\s+/);
+  const lines = [];
+  let current = "";
+  for (const w of words) {
+    const test = current ? `${current} ${w}` : w;
+    if (ctx.measureText(test).width > maxWidth && current) {
+      lines.push(current);
+      current = w;
+      if (lines.length >= maxLines - 1) break;
+    } else {
+      current = test;
+    }
+  }
+  const consumed = lines.join(" ").split(/\s+/).filter(Boolean).length;
+  const remaining = words.slice(consumed).join(" ");
+  if (remaining) {
+    let last = remaining;
+    while (ctx.measureText(last + "…").width > maxWidth && last.length > 3) {
+      last = last.slice(0, -1);
+    }
+    lines.push(last === remaining ? last : last.trim() + "…");
+  } else if (current) {
+    lines.push(current);
+  }
+  return lines.slice(0, maxLines);
+}
+
+function renderBookstagramSpecCanvas(canvas, drop, themeKey = "obsidian") {
+  const ctx = canvas.getContext("2d");
+  const W = 1080;
+  const H = 1350;
+  canvas.width = W;
+  canvas.height = H;
+
+  const themes = {
+    obsidian: {
+      bgTop: "#0b0f19",
+      bgBot: "#151c2c",
+      cardBg: "rgba(18, 25, 38, 0.92)",
+      gold: "#d4af37",
+      goldSoft: "rgba(212, 175, 55, 0.35)",
+      textMain: "#f8fafc",
+      textSub: "#cbd5e1",
+      textMuted: "#94a3b8",
+      pillBg: "rgba(212, 175, 55, 0.16)",
+      ctaBg: "#1e293b",
+    },
+    vellum: {
+      bgTop: "#f5efe6",
+      bgBot: "#e8dec8",
+      cardBg: "rgba(251, 247, 238, 0.95)",
+      gold: "#8b6508",
+      goldSoft: "rgba(139, 101, 8, 0.35)",
+      textMain: "#1c1917",
+      textSub: "#44403c",
+      textMuted: "#78716c",
+      pillBg: "rgba(139, 101, 8, 0.12)",
+      ctaBg: "#efe6d5",
+    },
+    oxblood: {
+      bgTop: "#23090d",
+      bgBot: "#3b0d15",
+      cardBg: "rgba(44, 11, 18, 0.92)",
+      gold: "#e5c158",
+      goldSoft: "rgba(229, 193, 88, 0.35)",
+      textMain: "#fef2f2",
+      textSub: "#fecdd3",
+      textMuted: "#fda4af",
+      pillBg: "rgba(229, 193, 88, 0.16)",
+      ctaBg: "#4c111b",
+    },
+  };
+  const t = themes[themeKey] || themes.obsidian;
+  const spec = drop.card_spec || {};
+
+  // Background gradient
+  const grad = ctx.createLinearGradient(0, 0, W, H);
+  grad.addColorStop(0, t.bgTop);
+  grad.addColorStop(1, t.bgBot);
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, W, H);
+
+  // Outer & Inner Antiquarian Gilt Frame
+  ctx.strokeStyle = t.gold;
+  ctx.lineWidth = 3;
+  ctx.strokeRect(48, 48, W - 96, H - 96);
+
+  ctx.strokeStyle = t.goldSoft;
+  ctx.lineWidth = 1.5;
+  ctx.strokeRect(64, 64, W - 128, H - 128);
+
+  // Corner ornaments
+  const corners = [
+    [48, 48, 1, 1],
+    [W - 48, 48, -1, 1],
+    [48, H - 48, 1, -1],
+    [W - 48, H - 48, -1, -1],
+  ];
+  ctx.fillStyle = t.gold;
+  for (const [cx, cy] of corners) {
+    ctx.beginPath();
+    ctx.arc(cx, cy, 6, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Shop Header
+  ctx.fillStyle = t.gold;
+  ctx.font = "600 24px Georgia, serif";
+  ctx.textAlign = "center";
+  ctx.fillText((spec.shop_name || drop.shop_name || "ELURA ANTIQUARIAN VAULT").toUpperCase(), W / 2, 128);
+
+  ctx.fillStyle = t.textMuted;
+  ctx.font = "400 20px -apple-system, BlinkMacSystemFont, sans-serif";
+  ctx.fillText(`${spec.instagram_handle || drop.instagram_handle} · SKU ${drop.sku}`, W / 2, 162);
+
+  // Edition Crest Pill
+  const crestText = `✦ ${spec.header_crest || drop.edition_badge || "CURATED VAULT ACQUISITION"} ✦`;
+  ctx.font = "700 22px -apple-system, BlinkMacSystemFont, sans-serif";
+  const crestW = Math.min(W - 220, ctx.measureText(crestText).width + 64);
+  ctx.fillStyle = t.pillBg;
+  ctx.fillRect((W - crestW) / 2, 198, crestW, 50);
+  ctx.strokeStyle = t.gold;
+  ctx.lineWidth = 1.5;
+  ctx.strokeRect((W - crestW) / 2, 198, crestW, 50);
+  ctx.fillStyle = t.gold;
+  ctx.fillText(crestText, W / 2, 231);
+
+  // Book Title
+  ctx.fillStyle = t.textMain;
+  ctx.font = "700 58px Georgia, 'Times New Roman', serif";
+  const titleLines = wrapCanvasText(ctx, drop.title, W - 200, 3);
+  let y = 345;
+  for (const line of titleLines) {
+    ctx.fillText(line, W / 2, y);
+    y += 70;
+  }
+
+  // Author
+  y += 12;
+  ctx.fillStyle = t.gold;
+  ctx.font = "italic 36px Georgia, serif";
+  const authorLines = wrapCanvasText(ctx, `by ${drop.authors_display}`, W - 220, 2);
+  for (const line of authorLines) {
+    ctx.fillText(line, W / 2, y);
+    y += 46;
+  }
+
+  // Divider rule
+  y += 24;
+  ctx.strokeStyle = t.goldSoft;
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(220, y);
+  ctx.lineTo(W - 220, y);
+  ctx.stroke();
+
+  // Bibliographic Specs Box
+  y += 50;
+  const boxX = 110;
+  const boxW = W - 220;
+  const boxH = 310;
+  ctx.fillStyle = t.cardBg;
+  ctx.fillRect(boxX, y, boxW, boxH);
+  ctx.strokeStyle = t.goldSoft;
+  ctx.lineWidth = 1.5;
+  ctx.strokeRect(boxX, y, boxW, boxH);
+
+  ctx.textAlign = "left";
+  const padX = boxX + 42;
+  let specY = y + 54;
+
+  ctx.fillStyle = t.gold;
+  ctx.font = "700 22px -apple-system, BlinkMacSystemFont, sans-serif";
+  ctx.fillText("FORMAT & IMPRINT", padX, specY);
+  ctx.fillStyle = t.textMain;
+  ctx.font = "500 28px Georgia, serif";
+  ctx.fillText(`${drop.format_label} · ${drop.publisher_line}`, padX, specY + 38);
+
+  specY += 105;
+  ctx.fillStyle = t.gold;
+  ctx.font = "700 22px -apple-system, BlinkMacSystemFont, sans-serif";
+  ctx.fillText(`CONDITION GRADE: ${String(drop.condition_grade).toUpperCase()}`, padX, specY);
+
+  ctx.fillStyle = t.textSub;
+  ctx.font = "400 24px Georgia, serif";
+  const blurbLines = wrapCanvasText(ctx, drop.condition_blurb, boxW - 84, 3);
+  let bY = specY + 38;
+  for (const line of blurbLines) {
+    ctx.fillText(line, padX, bY);
+    bY += 34;
+  }
+
+  // Offering Price Seal
+  ctx.textAlign = "center";
+  const priceY = y + boxH + 85;
+  ctx.fillStyle = t.gold;
+  ctx.font = "700 64px Georgia, serif";
+  ctx.fillText(`$${drop.price_cad} CAD`, W / 2, priceY);
+
+  ctx.fillStyle = t.textMuted;
+  ctx.font = "400 22px -apple-system, BlinkMacSystemFont, sans-serif";
+  ctx.fillText(`Shelved at ${spec.location || drop.section} · Instant Multi-Channel Hold Protection`, W / 2, priceY + 42);
+
+  // Call to Action Bar
+  const ctaY = H - 205;
+  ctx.fillStyle = t.ctaBg;
+  ctx.fillRect(110, ctaY, W - 220, 74);
+  ctx.strokeStyle = t.gold;
+  ctx.lineWidth = 2;
+  ctx.strokeRect(110, ctaY, W - 220, 74);
+
+  ctx.fillStyle = t.textMain;
+  ctx.font = "600 25px -apple-system, BlinkMacSystemFont, sans-serif";
+  ctx.fillText(spec.cta_line || `DM ${drop.instagram_handle} or comment CLAIM for a 48h Hold`, W / 2, ctaY + 46);
+
+  // Viral Corvus Watermark Footer
+  ctx.fillStyle = t.gold;
+  ctx.font = "500 20px -apple-system, BlinkMacSystemFont, sans-serif";
+  ctx.fillText(spec.watermark || `✦ Verified via Corvus Antiquarian · ref:${drop.affiliate_code}`, W / 2, H - 82);
+}
+
+async function showBookstagramDropModal(item) {
+  const overlay = node("div", undefined, "sanctuary-modal-overlay");
+  const modal = node("div", undefined, "bulk-price-modal");
+  modal.style.maxWidth = "960px";
+  modal.style.width = "95vw";
+  modal.style.maxHeight = "92vh";
+  modal.style.overflowY = "auto";
+
+  const header = node("div", undefined, "sanctuary-header");
+  header.append(node("h3", `📸 Bookstagram Drop Studio — ${item.title}`));
+  const closeBtn = node("button", "✕", "ghost-sm");
+  closeBtn.onclick = () => overlay.remove();
+  header.append(closeBtn);
+  modal.append(header);
+
+  const savedShop = localStorage.getItem("opscore_ig_shop_name") || "Elura Antiquarian Vault";
+  const savedHandle = localStorage.getItem("opscore_ig_handle") || "@elura.antiquarian";
+  const savedAff = localStorage.getItem("opscore_ig_affiliate") || "elura172";
+
+  const bodyGrid = node("div");
+  bodyGrid.style.display = "grid";
+  bodyGrid.style.gridTemplateColumns = "repeat(auto-fit, minmax(340px, 1fr))";
+  bodyGrid.style.gap = "20px";
+  bodyGrid.style.marginTop = "12px";
+
+  // Left Column: 4:5 Canvas Preview & Download
+  const leftCol = node("div");
+  leftCol.style.display = "flex";
+  leftCol.style.flexDirection = "column";
+  leftCol.style.alignItems = "center";
+  leftCol.style.gap = "10px";
+
+  const themeRow = node("div");
+  themeRow.style.display = "flex";
+  themeRow.style.gap = "8px";
+  themeRow.style.width = "100%";
+  themeRow.style.justifyContent = "center";
+
+  let currentTheme = "obsidian";
+  let currentDrop = null;
+
+  const canvas = document.createElement("canvas");
+  canvas.style.width = "100%";
+  canvas.style.maxWidth = "360px";
+  canvas.style.aspectRatio = "4 / 5";
+  canvas.style.borderRadius = "10px";
+  canvas.style.boxShadow = "0 14px 34px rgba(0,0,0,0.45)";
+
+  [
+    ["obsidian", "🌑 Obsidian & Gilt"],
+    ["vellum", "📜 Vellum & Ink"],
+    ["oxblood", "📕 Oxblood Morocco"],
+  ].forEach(([key, label]) => {
+    const btn = node("button", label, "ghost-sm");
+    btn.onclick = () => {
+      currentTheme = key;
+      if (currentDrop) renderBookstagramSpecCanvas(canvas, currentDrop, currentTheme);
+    };
+    themeRow.append(btn);
+  });
+
+  const downloadCardBtn = node("button", "⬇️ Download 4:5 Instagram Spec Card (PNG)", "primary");
+  downloadCardBtn.style.width = "100%";
+  downloadCardBtn.style.maxWidth = "360px";
+  downloadCardBtn.onclick = () => {
+    const dataUrl = canvas.toDataURL("image/png");
+    const a = document.createElement("a");
+    a.href = dataUrl;
+    a.download = `bookstagram_${item.sku.toLowerCase()}_${currentTheme}.png`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    message(`Downloaded 4:5 Bookstagram spec card for "${item.title}".`);
+  };
+
+  leftCol.append(themeRow, canvas, downloadCardBtn);
+
+  // Right Column: Brand/Affiliate bar, Caption Tabs, & Instant DM Hold
+  const rightCol = node("div");
+  rightCol.style.display = "flex";
+  rightCol.style.flexDirection = "column";
+  rightCol.style.gap = "12px";
+
+  const brandBox = node("div");
+  brandBox.style.display = "grid";
+  brandBox.style.gridTemplateColumns = "1fr 1fr 1fr";
+  brandBox.style.gap = "8px";
+
+  const shopInput = node("input");
+  shopInput.value = savedShop;
+  shopInput.placeholder = "Shop Name";
+  shopInput.title = "Shop Name displayed on card & caption";
+
+  const handleInput = node("input");
+  handleInput.value = savedHandle;
+  handleInput.placeholder = "@instagram_handle";
+  handleInput.title = "Instagram Handle for DM claims";
+
+  const affInput = node("input");
+  affInput.value = savedAff;
+  affInput.placeholder = "Affiliate Code";
+  affInput.title = "Partner/Affiliate referral code embedded in card & link";
+
+  brandBox.append(shopInput, handleInput, affInput);
+  rightCol.append(brandBox);
+
+  const captionTabs = node("div");
+  captionTabs.style.display = "flex";
+  captionTabs.style.gap = "6px";
+
+  let activeCaptionStyle = "dark_academia";
+  const captionArea = node("textarea");
+  captionArea.rows = 10;
+  captionArea.style.width = "100%";
+  captionArea.style.fontFamily = "inherit";
+  captionArea.style.fontSize = "13px";
+  captionArea.style.padding = "10px";
+  captionArea.style.borderRadius = "8px";
+
+  [
+    ["dark_academia", "🕯️ Dark Academia"],
+    ["vault_drop", "⚡ Rare Vault Drop"],
+    ["stack_haul", "✨ Fresh Stack Haul"],
+  ].forEach(([styleKey, label]) => {
+    const tabBtn = node("button", label, "ghost-sm");
+    tabBtn.onclick = () => {
+      activeCaptionStyle = styleKey;
+      if (currentDrop && currentDrop.captions) {
+        captionArea.value = currentDrop.captions[activeCaptionStyle] || "";
+      }
+    };
+    captionTabs.append(tabBtn);
+  });
+
+  const copyRow = node("div");
+  copyRow.style.display = "flex";
+  copyRow.style.gap = "8px";
+
+  const copyCaptionBtn = node("button", "📋 Copy Caption + Hashtags", "primary");
+  copyCaptionBtn.onclick = async () => {
+    try {
+      await navigator.clipboard.writeText(captionArea.value);
+      copyCaptionBtn.textContent = "✓ Copied to Clipboard!";
+      setTimeout(() => { copyCaptionBtn.textContent = "📋 Copy Caption + Hashtags"; }, 2000);
+    } catch (_) {
+      captionArea.select();
+      document.execCommand("copy");
+    }
+  };
+
+  const copyAffBtn = node("button", "🔗 Copy Affiliate Referral URL", "ghost-sm");
+  copyAffBtn.onclick = async () => {
+    if (!currentDrop) return;
+    try {
+      await navigator.clipboard.writeText(currentDrop.referral_url);
+      copyAffBtn.textContent = "✓ Link Copied!";
+      setTimeout(() => { copyAffBtn.textContent = "🔗 Copy Affiliate Referral URL"; }, 2000);
+    } catch (_) {}
+  };
+
+  copyRow.append(copyCaptionBtn, copyAffBtn);
+
+  // Instant Instagram DM Claim -> 48h Courtesy Hold Box
+  const dmHoldBox = node("div");
+  dmHoldBox.style.padding = "12px";
+  dmHoldBox.style.borderRadius = "8px";
+  dmHoldBox.style.border = "1px solid rgba(212, 175, 55, 0.35)";
+  dmHoldBox.style.background = "rgba(15, 23, 42, 0.45)";
+
+  const dmTitle = node("h4", "🔒 Instant Instagram DM Claim → 48h Priority Courtesy Hold");
+  dmTitle.style.margin = "0 0 6px 0";
+  const dmDesc = node("p", "Someone commented CLAIM or DMed you? Lock this SKU for 48 hours so AbeBooks, Biblio, or eBay cannot double-sell it:", "muted");
+  dmDesc.style.fontSize = "12px";
+  dmDesc.style.margin = "0 0 8px 0";
+
+  const dmInputRow = node("div");
+  dmInputRow.style.display = "flex";
+  dmInputRow.style.gap = "8px";
+
+  const buyerHandleInput = node("input");
+  buyerHandleInput.placeholder = "@collector_ig_handle";
+  buyerHandleInput.style.flex = "1";
+
+  const buyerEmailInput = node("input");
+  buyerEmailInput.placeholder = "collector@email.com (optional)";
+  buyerEmailInput.style.flex = "1";
+
+  const lockHoldBtn = node("button", "🔒 Lock 48h Hold", "primary");
+  lockHoldBtn.onclick = async () => {
+    const igBuyer = buyerHandleInput.value.trim();
+    if (!igBuyer) {
+      alert("Enter the collector's @instagram_handle to lock a courtesy hold.");
+      return;
+    }
+    lockHoldBtn.disabled = true;
+    try {
+      const res = await api(`/inventory/${encodeURIComponent(item.sku)}/bookstagram/claim-hold`, {
+        method: "POST",
+        body: JSON.stringify({
+          instagram_handle: igBuyer,
+          collector_name: igBuyer,
+          email: buyerEmailInput.value.trim(),
+          hours: 48,
+        }),
+      });
+      message(`✓ 48h Priority Courtesy Hold locked for ${res.instagram_handle} (Hold ID: ${res.hold_id}).`);
+      lockHoldBtn.textContent = "✓ 48h Hold Locked";
+      loadBookshelf();
+    } catch (err) {
+      alert(err.message);
+      lockHoldBtn.disabled = false;
+    }
+  };
+
+  dmInputRow.append(buyerHandleInput, buyerEmailInput, lockHoldBtn);
+  dmHoldBox.append(dmTitle, dmDesc, dmInputRow);
+
+  rightCol.append(captionTabs, captionArea, copyRow, dmHoldBox);
+  bodyGrid.append(leftCol, rightCol);
+  modal.append(bodyGrid);
+  overlay.append(modal);
+  overlay.onclick = e => { if (e.target === overlay) overlay.remove(); };
+  document.body.append(overlay);
+
+  async function refreshDrop() {
+    const sName = shopInput.value.trim() || "Elura Antiquarian Vault";
+    const iHandle = handleInput.value.trim() || "@elura.antiquarian";
+    const aCode = affInput.value.trim() || "elura172";
+    localStorage.setItem("opscore_ig_shop_name", sName);
+    localStorage.setItem("opscore_ig_handle", iHandle);
+    localStorage.setItem("opscore_ig_affiliate", aCode);
+
+    try {
+      currentDrop = await api(`/inventory/${encodeURIComponent(item.sku)}/bookstagram/drop`, {
+        method: "POST",
+        body: JSON.stringify({
+          shop_name: sName,
+          instagram_handle: iHandle,
+          affiliate_code: aCode,
+        }),
+      });
+      renderBookstagramSpecCanvas(canvas, currentDrop, currentTheme);
+      captionArea.value = (currentDrop.captions && currentDrop.captions[activeCaptionStyle]) || "";
+    } catch (err) {
+      captionArea.value = `Failed to generate Bookstagram drop: ${err.message}`;
+    }
+  }
+
+  shopInput.onchange = refreshDrop;
+  handleInput.onchange = refreshDrop;
+  affInput.onchange = refreshDrop;
+
+  await refreshDrop();
 }
 
 // Initialize on script load

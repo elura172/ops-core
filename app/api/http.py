@@ -2972,6 +2972,133 @@ def create_app(
             "expires_at": updated.expires_at.isoformat() if updated else new_expires.isoformat(),
         }
 
+    # =========================================================================
+    # Bookstagram / Readergram Drop Studio & Instant DM Claim Hold
+    # =========================================================================
+
+    @app.post("/inventory/{sku}/bookstagram/drop")
+    def generate_bookstagram_drop_endpoint(
+        sku: str,
+        payload: dict[str, Any] | None = None,
+        principal: Principal = Depends(require_read),
+    ) -> dict[str, Any]:
+        from app.domain.bookstagram import BookstagramDropGenerator
+
+        item = inventory_store.get(sku, tenant_id=principal.tenant_id)
+        if not item:
+            raise HTTPException(404, "Book not found in inventory")
+
+        body = payload or {}
+        shop_name = str(body.get("shop_name") or "Elura Antiquarian Vault").strip()
+        instagram_handle = str(body.get("instagram_handle") or "@elura.antiquarian").strip()
+        affiliate_code = str(body.get("affiliate_code") or "").strip()
+
+        drop = BookstagramDropGenerator.generate(
+            item,
+            shop_name=shop_name,
+            instagram_handle=instagram_handle,
+            affiliate_code=affiliate_code,
+        )
+        return drop.to_dict()
+
+    @app.post("/inventory/{sku}/bookstagram/claim-hold")
+    def claim_bookstagram_dm_hold_endpoint(
+        sku: str,
+        payload: dict[str, Any] | None = None,
+        principal: Principal = Depends(require_decide),
+    ) -> dict[str, Any]:
+        import uuid
+        from datetime import UTC, datetime, timedelta
+
+        from app.db.want_list import Collector, CollectorHold
+
+        item = inventory_store.get(sku, tenant_id=principal.tenant_id)
+        if not item:
+            raise HTTPException(404, "Book not found in inventory")
+
+        body = payload or {}
+        raw_handle = str(body.get("instagram_handle") or "").strip()
+        if not raw_handle:
+            raise HTTPException(400, "Instagram handle (@username) is required to lock a DM hold")
+        clean_handle = raw_handle if raw_handle.startswith("@") else f"@{raw_handle}"
+        collector_name = str(body.get("collector_name") or clean_handle).strip()
+        email = str(body.get("email") or "").strip()
+        hours = max(1, min(168, int(body.get("hours") or 48)))
+        custom_notes = str(body.get("notes") or "").strip()
+
+        existing_hold = want_list_store.get_active_hold_for_sku(sku, tenant_id=principal.tenant_id)
+        if existing_hold:
+            raise HTTPException(
+                409,
+                f"SKU {sku} already has an active courtesy hold for {existing_hold.collector_name}",
+            )
+
+        # Find or create collector record for the Bookstagrammer
+        matched_collector: Collector | None = None
+        for col in want_list_store.list_collectors(tenant_id=principal.tenant_id):
+            if clean_handle.lower() in (col.name.lower(), col.notes.lower()):
+                matched_collector = col
+                break
+
+        if not matched_collector:
+            matched_collector = want_list_store.create_collector(
+                Collector(
+                    id=f"col-ig-{uuid.uuid4().hex[:8]}",
+                    tenant_id=principal.tenant_id,
+                    name=collector_name,
+                    email=email,
+                    phone="",
+                    notes=f"Bookstagram collector ({clean_handle})",
+                )
+            )
+
+        now = datetime.now(UTC)
+        expires_at = now + timedelta(hours=hours)
+        effective_price = item.online_price_cad if item.online_price_cad > 0 else item.in_store_price_cad
+        hold_notes = f"Bookstagram DM claim by {clean_handle} ({hours}h hold)." + (
+            f" {custom_notes}" if custom_notes else ""
+        )
+
+        from dataclasses import replace
+
+        hold = CollectorHold(
+            id=f"hld-ig-{uuid.uuid4().hex[:8]}",
+            tenant_id=principal.tenant_id,
+            sku=sku,
+            want_item_id="bookstagram_dm_claim",
+            collector_id=matched_collector.id,
+            held_at=now,
+            expires_at=expires_at,
+            status="active",
+            notes=hold_notes,
+            book_title=item.title,
+            book_author=item.authors[0] if item.authors else "Unknown",
+            collector_name=matched_collector.name,
+            price_cad=effective_price,
+        )
+        inventory_store.add(
+            replace(
+                item,
+                status="on_hold",
+                updated_at=now,
+                held_until=expires_at.isoformat(),
+                patron_info=f"{matched_collector.name} ({clean_handle})",
+            ),
+            tenant_id=principal.tenant_id,
+        )
+        want_list_store.create_hold(hold)
+
+        return {
+            "status": "held",
+            "sku": sku,
+            "hold_id": hold.id,
+            "instagram_handle": clean_handle,
+            "collector_id": matched_collector.id,
+            "collector_name": matched_collector.name,
+            "expires_at": expires_at.isoformat(),
+            "hours": hours,
+        }
+
     from app.api.billing import get_billing_router
 
     app.include_router(get_billing_router(settings, user_store), prefix="/billing")
